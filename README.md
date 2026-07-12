@@ -154,6 +154,21 @@ posts under `blog/`.)
 
 ## Vendoring and licenses
 
+Why vendor at all? Because OCaml links statically at compile time:
+the opam-installed base_quickcheck is sealed against the opam
+splittable_random (module references are resolved when it is built,
+with interface digests), and there is no LD_PRELOAD equivalent to
+swap a library underneath it. For base_quickcheck to draw through the
+tape shim it must be recompiled against the shim, and a dune
+workspace with vendored sources is the only way to arrange that
+without touching your opam switch. It doubles as the proof of the
+zero-changes claim: the vendored copies are pristine release
+tarballs, and the short list of exceptions is right here. (Two paths
+make the copies unnecessary later: an `opam pin` of a patched
+splittable_random, which would rebuild the whole switch against the
+shim, or upstreaming the tape hooks, a dozen functions defaulting to
+no-ops.)
+
 This repo is MIT (LICENSE.md). `vendor/` contains Jane Street code,
 also MIT, vendored from the v0.17 opam release tarballs with a
 LICENSE.md in each directory:
