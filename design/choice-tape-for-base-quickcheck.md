@@ -79,6 +79,31 @@ functions therefore do not shrink; Hypothesis has the same limitation.
    parallel shrink attempts via the Parallel API with modes proving
    data-race freedom; benchmark generation with unboxed floats.
 
+## Findings from milestone 3 (things Jane Street will care about)
+
+- Generator-structural bias traps shortlex shrinking.
+  Generator.int_inclusive is weighted_union [0.05 return lo; 0.05
+  return hi; 0.9 uniform]. A failing case that lands on a constant
+  branch records only the selector choice; escaping to the shrinkable
+  uniform branch would LENGTHEN the tape, which shortlex ordering
+  forbids. Hypothesis avoids this class of trap by putting
+  distributional bias in the sampler (one typed choice, biased
+  distribution), exactly like our proptest phase-6 generation. Concrete
+  upstream suggestion: express boundary bias inside the primitive
+  draw, not as generator structure.
+- One list element spans several choices. list_generic draws a length,
+  a size-budget distribution (Log_uniform per unit), a permutation
+  shuffle, then the elements: removing one element must delete a
+  shuffle draw AND an element draw. The lower-and-delete pass therefore
+  deletes contiguous BLOCKS (k in 1..4) alongside lowering the length
+  integer. With spans unavailable at the splittable_random seam (the
+  shim cannot see generator boundaries), block deletion recovers most
+  of what proptest gets from explicit spans.
+- Pass order matters: minimizing values before deleting elements
+  strands the search at minimal-sum-many-elements local optima; the
+  redistribute-pairs pass (move weight from an earlier integer to a
+  later one, preserving the sum) turns those into zeros-then-delete.
+
 ## Presentation
 
 The pitch to Jane Street mirrors the proptest one: no generator
