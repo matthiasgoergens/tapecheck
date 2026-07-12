@@ -8,7 +8,10 @@ only if the test still fails and the recording got shorter or simpler.
 A shrink proposal can never violate a generator invariant, because a
 proposal is not a value: it is an input to your own generator.
 
-This is a port of the Conjecture model (Python Hypothesis) to OCaml,
+This is a port of the [Conjecture
+model](https://hypothesis.works/articles/how-hypothesis-works/) (the
+engine inside [Python
+Hypothesis](https://github.com/HypothesisWorks/hypothesis)) to OCaml,
 sibling of the same engine for Rust's proptest
 ([proptest-rs/proptest#658](https://github.com/proptest-rs/proptest/pull/658)).
 As far as we know it is the first choice-sequence shrinker in the

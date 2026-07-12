@@ -38,7 +38,8 @@ was built from a value that no longer exists, and the usual answers
 (regenerate, or freeze the outer value) both lose.
 
 There is a third model, and as far as I can tell nobody had brought it
-to OCaml: Hypothesis's Conjecture engine. Record every random decision
+to OCaml: Hypothesis's [Conjecture
+engine](https://hypothesis.works/articles/how-hypothesis-works/). Record every random decision
 the generator makes as a typed choice. To shrink, edit the recorded
 tape and run the generator again against it, accepting the edit only
 if the test still fails and the new recording is shorter or simpler.
