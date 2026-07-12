@@ -1,7 +1,7 @@
 # The mode checker reviewed my code
 
 DRAFT. Voice: Matthias, first person. Follow-up to "Your generators
-already know how to shrink" [LINK]. Every compiler message and number
+already know how to shrink" [LINK: fill with post 1 URL when published]. Every compiler message and number
 below is real; sources in blog/materials/.
 
 ---
@@ -144,4 +144,5 @@ refactor a good reviewer would have demanded, and the refactor paid
 for itself the same afternoon with a 4.6x wall-clock win.
 
 The engine itself, and the shrinking results that motivated all of
-this, are the subject of the previous post [LINK]. Code at [LINK].
+this, are the subject of the previous post [LINK: post 1 URL]. Code at
+https://github.com/matthiasgoergens/ocaml-tape.

@@ -2,7 +2,8 @@
 
 DRAFT. Voice: Matthias, first person. Target: discuss.ocaml.org and
 blog, with Jane Street readers specifically in mind. Numbers below are
-real, from the repo at [LINK].
+real, from the repo at https://github.com/matthiasgoergens/ocaml-tape.
+(Repo URL is presumptive until pushed; verify before publishing.)
 
 ---
 
@@ -48,8 +49,7 @@ input to the generator. Whatever comes out went through every filter,
 every smart constructor, every dependent bind, exactly like the
 original.
 
-I spent last week porting this model into Rust's proptest [LINK to
-proptest-rs/proptest#658], which required migrating strategies one by
+I spent last week porting this model into [Rust's proptest](https://github.com/proptest-rs/proptest/pull/658), which required migrating strategies one by
 one to record typed choices. Then I looked at base_quickcheck and
 realized something pleasing: OCaml gets this almost for free.
 
@@ -140,21 +140,19 @@ compilers: byte-identical results, down to the same 10129 total shrink
 attempts across 200 runs. For a testing tool, determinism across
 compiler forks is a feature worth stating.
 
-The part I am genuinely excited about is not ported yet. Shrink
-attempts are embarrassingly parallel: independent replays of edited
-tapes, racing to find an accepted improvement. My current engine has
-exactly one piece of state that prevents this, a global
-`For_tape.current : Tape.t option ref` that the shim consults. Under
-OxCaml's mode system that global is not portable, and the compiler
-will say so, at which point the fix it forces (thread the tape through
-per-domain state) is the design a careful reviewer would have asked
-for anyway. I want to write that up as its own post: the mode checker
-as a code reviewer for a real refactor, with a parallel speedup at the
-end.
+Shrink attempts are also embarrassingly parallel: independent replays
+of edited tapes, racing to find an accepted improvement. My first
+engine had exactly one piece of state in the way, a convenient global
+the shim consulted, and OxCaml's mode checker rejected it by
+inference, with a paper trail, before any parallelism existed to go
+wrong. The refactor it forced bought a 4.6x wall-clock win the same
+afternoon (and Flambda2 runs the sequential engine 12 percent faster
+while we are at it). That story, with the compiler's actual review
+comments, is the next post.
 
 ## Where this could go
 
-The repo [LINK] has a drop-in `Tape_test` module mirroring
+The [repo](https://github.com/matthiasgoergens/ocaml-tape) has a drop-in `Tape_test` module mirroring
 `Base_quickcheck.Test.run/run_exn/result`; existing suites switch by
 renaming one module, and the `quickcheck_shrinker` they already
 declare is simply ignored. The honest upstream path is small: tape

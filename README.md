@@ -1,15 +1,125 @@
 # tape: choice-tape shrinking for base_quickcheck
 
-An OCaml port of the Hypothesis/Conjecture shrinking model: record
-every random decision made during generation as a typed, bounded
-choice; shrink by editing the recorded tape and replaying generation.
-Existing base_quickcheck generators get integrated shrinking without
-any changes, by interposing at the Splittable_random interface.
+Hypothesis-style integrated shrinking for OCaml property tests, with
+**zero changes to your generators**. Record every random decision a
+generator makes as a typed, bounded choice; shrink a failing test by
+editing the recorded tape and replaying generation, accepting an edit
+only if the test still fails and the recording got shorter or simpler.
+A shrink proposal can never violate a generator invariant, because a
+proposal is not a value: it is an input to your own generator.
 
-Status: early. The tape core (record, replay, shortlex order) works;
-the Splittable_random shim and the shrink loop are next. See
-design/choice-tape-for-base-quickcheck.md for the architecture and
-milestones, and proptest-rs/proptest#658 for the sibling Rust port
-this follows.
+This is a port of the Conjecture model (Python Hypothesis) to OCaml,
+sibling of the same engine for Rust's proptest
+([proptest-rs/proptest#658](https://github.com/proptest-rs/proptest/pull/658)).
+As far as we know it is the first choice-sequence shrinker in the
+OCaml ecosystem (QCheck2 and Bam use Hedgehog-style rose trees;
+base_quickcheck's `Shrinker.t` for scalars is `atomic`, meaning
+failing ints, floats, chars, and bools are reported exactly as
+generated).
 
-Build: `opam switch 5.3.0 && dune test`.
+## Results
+
+Six properties, 100 seeds each, identical failing examples handed to
+both shrinkers ("stock" is base_quickcheck's own greedy loop, exactly
+as `Test.run` performs it). Full output:
+[design/shrink-table-results.txt](design/shrink-table-results.txt).
+
+| property | stock minimal | tape minimal | tape avg calls |
+|---|---|---|---|
+| int uniform, fail iff >= 123457 | 0/100 | 100/100 | 38 |
+| pair, fail iff a + b >= 100 | 0/100 | 100/100 | 22 |
+| list, fail iff length >= 3 | 0/100 | 100/100 | 466 |
+| list, fail iff sum >= 100 | 0/100 | 100/100 | 98 |
+| filtered evens, fail iff >= 100 | 0/100 | 100/100 | 91 |
+| bind: length-prefixed list, sum >= 100 | 0/100 | 100/100 | 49 |
+
+The bind row has no derivable stock shrinker at all; the tape engine
+returns `[100]`, the global minimum.
+
+## Usage
+
+`Tape_test` mirrors `Base_quickcheck.Test` (same `Config`, same
+`(module S)`, same `run`/`run_exn`/`result`); existing suites switch
+by replacing the module name. The `quickcheck_shrinker` your types
+already declare is accepted and ignored.
+
+```ocaml
+Tape_test.run_exn
+  ~f:(fun t -> ...your property...)
+  ~regressions:"my_test.regressions"   (* optional *)
+  (module My_type)
+```
+
+`?regressions` persists each shrunk failure as a serialized tape and
+replays persisted tapes before random generation on later runs: exact
+reproduction of the failing value, independent of RNG seeds, robust
+to distribution changes. Corrupt entries fail loudly rather than
+silently passing.
+
+`Tape_engine.run` is the lower-level entry point; `?domains:n`
+evaluates generation cases and shrink proposals in parallel (worker
+pool; results are deterministic and identical to the sequential
+engine). On a rare-failure workload with a ~100us test body this is a
+4.6x wall-clock win at 8-16 domains.
+
+## How the interception works
+
+Every base_quickcheck generator draws from one sequential
+`Splittable_random.t`, and every primitive carries its constraints
+(`int ~lo ~hi`, `float ~lo ~hi`, `bool`). This workspace provides a
+`splittable_random` library with the identical public interface that
+delegates to the real implementation but records draws as typed tape
+choices when a tape is attached to the state. The vendored
+base_quickcheck compiles against the shim unmodified; that is the
+entire integration. Details and design history:
+[design/choice-tape-for-base-quickcheck.md](design/choice-tape-for-base-quickcheck.md).
+
+Known limitation: `Generator.fn` splits the random state; split-off
+streams are untaped, so generated functions do not shrink (Hypothesis
+has the same limitation).
+
+## Building
+
+```
+opam switch create 5.3.0
+opam install dune base stdio splittable_random base_quickcheck ppx_jane
+dune test
+```
+
+The engine also builds and runs under OxCaml, bit-identically:
+
+```
+opam switch create 5.2.0+ox --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
+dune build --profile oxcaml
+```
+
+(The ppx-deriving pieces are gated off under the oxcaml profile; the
+OxCaml ppxlib fork has a divergent parsetree. `ox_demo/` contains the
+benchmarks and the mode-checker demonstration described in the blog
+posts under `blog/`.)
+
+## Vendoring and licenses
+
+This repo is MIT (LICENSE.md). `vendor/` contains Jane Street code,
+also MIT, vendored from the v0.17 opam release tarballs with a
+LICENSE.md in each directory:
+
+- `vendor/base_quickcheck`: unmodified except the dune file (dropped
+  `public_name`) and one portability fix in `generator.ml`
+  (deduplication via `Set.Using_comparator` instead of a `Comparator`
+  record field, for Base v0.17/v0.18 compatibility).
+- `vendor/sr_real`: `splittable_random`'s implementation, module
+  renamed, with a small Base v0.17/v0.18 compat block and upstream's
+  inline test/bench blocks stripped (they use APIs that drifted in
+  v0.18 previews; originals in the release tarball).
+- `vendor/splittable_random`: OUR shim, implementing the upstream
+  public interface over `sr_real` plus the tape hooks.
+- `vendor/ppx_quickcheck{,_expander,_runtime}`: unmodified except dune
+  files (names, workspace-local runtime deps, oxcaml profile gate).
+
+## Status
+
+Early but real: the engine, the drop-in wrapper, persistence, and the
+parallel pool all work and are tested; the shrink-quality table above
+is reproducible with `dune exec demo/shrink_table.exe`. Roadmap and
+findings live in `design/`.
