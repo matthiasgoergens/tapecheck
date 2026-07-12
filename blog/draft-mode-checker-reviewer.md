@@ -145,4 +145,4 @@ for itself the same afternoon with a 4.6x wall-clock win.
 
 The engine itself, and the shrinking results that motivated all of
 this, are the subject of the previous post [LINK: post 1 URL]. Code at
-https://github.com/matthiasgoergens/ocaml-tape.
+https://github.com/matthiasgoergens/tapecheck.

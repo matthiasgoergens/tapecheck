@@ -2,8 +2,7 @@
 
 DRAFT. Voice: Matthias, first person. Target: discuss.ocaml.org and
 blog, with Jane Street readers specifically in mind. Numbers below are
-real, from the repo at https://github.com/matthiasgoergens/ocaml-tape.
-(Repo URL is presumptive until pushed; verify before publishing.)
+real, from the repo at https://github.com/matthiasgoergens/tapecheck.
 
 ---
 
@@ -152,7 +151,7 @@ comments, is the next post.
 
 ## Where this could go
 
-The [repo](https://github.com/matthiasgoergens/ocaml-tape) has a drop-in `Tape_test` module mirroring
+The [repo](https://github.com/matthiasgoergens/tapecheck) has a drop-in `Tape_test` module mirroring
 `Base_quickcheck.Test.run/run_exn/result`; existing suites switch by
 renaming one module, and the `quickcheck_shrinker` they already
 declare is simply ignored. The honest upstream path is small: tape

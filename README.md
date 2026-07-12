@@ -1,4 +1,4 @@
-# tape: choice-tape shrinking for base_quickcheck
+# tapecheck: choice-tape shrinking for base_quickcheck
 
 Hypothesis-style integrated shrinking for OCaml property tests, with
 **zero changes to your generators**. Record every random decision a
