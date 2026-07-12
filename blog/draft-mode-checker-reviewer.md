@@ -143,6 +143,21 @@ The mode checker found the shortcut from outside, produced the
 refactor a good reviewer would have demanded, and the refactor paid
 for itself the same afternoon with a 4.6x wall-clock win.
 
+## Postscript: the checker reviewed the upstream PR too
+
+After this post was drafted, I turned the shim into a proposed
+upstream patch: an Intercept record carried inside splittable_random's
+state, so any engine can hook the draws. The mode checker had one more
+review comment: a state carrying hook closures is nonportable DATA, so
+my portable-attempt probe stopped typechecking the moment hooks moved
+into the state. It is right again: hooks capture arbitrary state, and
+whether the intercept field should demand portable hooks (data-race
+freedom composes, but recording observers inherently capture mutable
+state) or carry a nonportable modality is a real design decision. It
+is the first question in the upstream proposal, and I find it
+delightful that the compiler raised it before any human reviewer saw
+the patch.
+
 The engine itself, and the shrinking results that motivated all of
 this, are the subject of the previous post [LINK: post 1 URL]. Code at
 https://github.com/matthiasgoergens/tapecheck.

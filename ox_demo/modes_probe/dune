@@ -1,8 +1,13 @@
-; Compiles ONLY under the oxcaml profile: demonstrates the mode
-; checker rejecting the tape shim's global state when asked to treat
-; tape installation as portable (usable across domains).
+; HISTORICAL DEMO, disabled since the Intercept-seam migration. The
+; probe demonstrated that after the tape-in-state refactor a whole
+; shrink attempt could be a portable closure (blog/materials/
+; mode-error-before.txt is the rejection of the global-ref design it
+; replaced). With hooks carried inside the random state (the proposed
+; upstream Intercept seam), a HOOKED state is nonportable data, so the
+; probe no longer typechecks; whether the intercept field should carry
+; a portability modality is exactly the design question the upstream
+; PR asks Jane Street. See blog/draft-mode-checker-reviewer.md.
 (executable
  (name modes_probe)
- (enabled_if
-  (= %{profile} oxcaml))
+ (enabled_if false)
  (libraries base splittable_random tape))

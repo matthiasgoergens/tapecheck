@@ -21,11 +21,8 @@
 *)
 
 open! Base
-
-(* Compat shim (the only edit to this vendored file): Base v0.18
-   preview, as shipped in the OxCaml opam overlay, drops the bitwise
-   operators from Int64.O and changes popcount's return type, so
-   define version-agnostic versions here. Harmless under Base v0.17. *)
+(* Compat shim (see vendor/sr_real/dune comment): Base v0.18 preview
+   drops the bitwise operators from Int64.O and changes popcount. *)
 let int64_popcount (x : int64) : int =
   let n = ref 0 in
   let v = ref x in
@@ -40,6 +37,7 @@ open Int64.O
 let ( lxor ) = Int64.bit_xor
 let ( lor ) = Int64.bit_or
 let ( land ) = Int64.bit_and
+let _ = ( land ) (* used only on some Base versions *)
 let ( lsr ) x n = Int64.shift_right_logical x n
 
 let is_odd x = x lor 1L = x
@@ -48,14 +46,31 @@ let popcount = int64_popcount
 type t =
   { mutable seed : int64
   ; odd_gamma : int64
+  ; intercept : intercept option
+  }
+
+(* Interception hooks for property-testing engines (see the [Intercept]
+   module below). [None] is the default and costs one branch per draw. *)
+and intercept =
+  { int64 :
+      t -> lo:int64 -> hi:int64 -> default:(t -> lo:int64 -> hi:int64 -> int64) -> int64
+  ; float :
+      t -> lo:float -> hi:float -> default:(t -> lo:float -> hi:float -> float) -> float
+  ; unit_float : t -> default:(t -> float) -> float
+  ; bool : t -> default:(t -> bool) -> bool
+  ; on_split : unit -> unit
+  ; on_perturb : unit -> unit
   }
 
 (* Alias used below when [t] is shadowed. *)
 type state = t
 
 let golden_gamma = 0x9e37_79b9_7f4a_7c15L
-let of_int seed = { seed = Int64.of_int seed; odd_gamma = golden_gamma }
-let copy { seed; odd_gamma } = { seed; odd_gamma }
+let of_int seed =
+  { seed = Int64.of_int seed; odd_gamma = golden_gamma; intercept = None }
+;;
+
+let copy { seed; odd_gamma; intercept } = { seed; odd_gamma; intercept }
 let mix_bits z n = z lxor (z lsr n)
 
 let mix64 z =
@@ -92,7 +107,7 @@ let next_seed t =
 let of_seed_and_gamma ~seed ~gamma =
   let seed = mix64 seed in
   let odd_gamma = mix_odd_gamma gamma in
-  { seed; odd_gamma }
+  { seed; odd_gamma; intercept = None }
 ;;
 
 let random_int64 random_state =
@@ -106,6 +121,9 @@ let create random_state =
 ;;
 
 let split t =
+  (match t.intercept with
+   | None -> ()
+   | Some i -> i.on_split ());
   let seed = next_seed t in
   let gamma = next_seed t in
   of_seed_and_gamma ~seed ~gamma
@@ -116,11 +134,20 @@ let next_int64 t = mix64 (next_seed t)
 (* [perturb] is not from any external source, but provides a way to mix in external
    entropy with a pseudo-random state. *)
 let perturb t salt =
+  (match t.intercept with
+   | None -> ()
+   | Some i -> i.on_perturb ());
   let next = t.seed + mix64 (Int64.of_int salt) in
   t.seed <- next
 ;;
 
-let bool state = is_odd (next_int64 state)
+let bool_default state = is_odd (next_int64 state)
+
+let bool state =
+  match state.intercept with
+  | None -> bool_default state
+  | Some i -> i.bool state ~default:bool_default
+;;
 
 (* We abuse terminology and refer to individual values as biased or unbiased.  More
    properly, what is unbiased is the sampler that results if we keep only these "unbiased"
@@ -134,7 +161,7 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
 (* This implementation of bounded randomness is adapted from [Random.State.int*] in the
    OCaml standard library.  The purpose is to use the minimum number of calls to
    [next_int64] to produce a number uniformly chosen within the given range. *)
-let int64 =
+let int64_default =
   let open Int64.O in
   let rec between state ~lo ~hi =
     let draw = next_int64 state in
@@ -160,6 +187,12 @@ let int64 =
     else if diff >= 0L
     then non_negative_up_to state diff + lo
     else between state ~lo ~hi
+;;
+
+let int64 state ~lo ~hi =
+  match state.intercept with
+  | None -> int64_default state ~lo ~hi
+  | Some i -> i.int64 state ~lo ~hi ~default:int64_default
 ;;
 
 let int state ~lo ~hi =
@@ -196,7 +229,13 @@ let double_ulp = 2. **. -53.
 let unit_float_from_int64 int64 = Int64.to_float (int64 lsr 11) *. double_ulp
 
 
-let unit_float state = unit_float_from_int64 (next_int64 state)
+let unit_float_default state = unit_float_from_int64 (next_int64 state)
+
+let unit_float state =
+  match state.intercept with
+  | None -> unit_float_default state
+  | Some i -> i.unit_float state ~default:unit_float_default
+;;
 
 (* Note about roundoff error:
 
@@ -206,16 +245,20 @@ let unit_float state = unit_float_from_int64 (next_int64 state)
    with [x < 1.] such that [lo +. x *. (hi -. lo) = hi], so it would not be correct to
    document this as being exclusive of [hi].
 *)
-let float =
+let float_default =
+  (* Uses the [_default] internals: when a hook delegates to [default],
+     the fallback must not re-enter the hooks, or a single [float] draw
+     would be observed twice (once whole, once as its internal
+     [unit_float]/[bool] draws). *)
   let rec finite_float state ~lo ~hi =
     let range = hi -. lo in
     if Float.is_finite range
-    then lo +. (unit_float state *. range)
+    then lo +. (unit_float_default state *. range)
     else (
       (* If [hi - lo] is infinite, then [hi + lo] is finite because [hi] and [lo] have
          opposite signs. *)
       let mid = (hi +. lo) /. 2. in
-      if bool state
+      if bool_default state
          (* Depending on rounding, the recursion with [~hi:mid] might be inclusive of [mid],
          which would mean the two cases overlap on [mid]. The alternative is to increment
          or decrement [mid] using [one_ulp] in either of the calls, but then if the first
@@ -231,6 +274,12 @@ let float =
     if Float.( > ) lo hi
     then raise_s [%message "float: bounds are crossed" (lo : float) (hi : float)];
     finite_float state ~lo ~hi
+;;
+
+let float state ~lo ~hi =
+  match state.intercept with
+  | None -> float_default state ~lo ~hi
+  | Some i -> i.float state ~lo ~hi ~default:float_default
 ;;
 
 
@@ -311,6 +360,34 @@ module Log_uniform = struct
   let int64 = For_int64.log_uniform
   let nativeint = For_nativeint.log_uniform
 end
+
+module Intercept = struct
+  type state = t
+
+  type t = intercept =
+    { int64 :
+        state
+        -> lo:int64
+        -> hi:int64
+        -> default:(state -> lo:int64 -> hi:int64 -> int64)
+        -> int64
+    ; float :
+        state
+        -> lo:float
+        -> hi:float
+        -> default:(state -> lo:float -> hi:float -> float)
+        -> float
+    ; unit_float : state -> default:(state -> float) -> float
+    ; bool : state -> default:(state -> bool) -> bool
+    ; on_split : unit -> unit
+    ; on_perturb : unit -> unit
+    }
+end
+
+let with_intercept t intercept = { t with intercept = Some intercept }
+
+
+
 
 module State = struct
   type t = state
