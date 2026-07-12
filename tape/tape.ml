@@ -16,8 +16,6 @@ type choice =
       (* Alignment marker for split/perturb: the draws behind it are not
          tape-controlled (generated functions do not shrink). *)
 
-type span = { start : int; stop : int }
-
 type mode =
   | Off
   | Recording
@@ -29,96 +27,84 @@ type t = {
      and replaying append here; replay re-records what it actually
      used, so the output tape is always self-consistent. *)
   mutable recorded : choice list;
-  mutable n_recorded : int;
-  (* Input side, replay only. *)
+  (* Input side, replay only. [misaligned] records that at least one
+     input choice was skipped over a kind mismatch. *)
   mutable input : choice array;
   mutable pos : int;
   mutable overrun : bool;
-  (* Spans: one per generator call boundary, for deletion passes. *)
-  mutable spans : span list;
-  mutable open_spans : int list;
+  mutable misaligned : bool;
 }
 
 let create () =
   {
     mode = Off;
     recorded = [];
-    n_recorded = 0;
     input = [||];
     pos = 0;
     overrun = false;
-    spans = [];
-    open_spans = [];
+    misaligned = false;
   }
 
-let is_on t = t.mode <> Off
-
-let reset_output t =
-  t.recorded <- [];
-  t.n_recorded <- 0;
-  t.spans <- [];
-  t.open_spans <- []
+let reset_output t = t.recorded <- []
 
 let start_recording t =
   reset_output t;
   t.mode <- Recording;
   t.input <- [||];
   t.pos <- 0;
-  t.overrun <- false
+  t.overrun <- false;
+  t.misaligned <- false
 
 let start_replay t input =
   reset_output t;
   t.mode <- Replaying;
   t.input <- input;
   t.pos <- 0;
-  t.overrun <- false
+  t.overrun <- false;
+  t.misaligned <- false
 
-type output = { choices : choice array; out_spans : span array; overrun : bool }
+type output = { choices : choice array; overrun : bool }
 
 let finish t =
   let choices = Array.of_list (List.rev t.recorded) in
-  let out_spans = Array.of_list (List.rev t.spans) in
   let overrun = t.overrun in
   t.mode <- Off;
   reset_output t;
   t.input <- [||];
   t.pos <- 0;
   t.overrun <- false;
-  { choices; out_spans; overrun }
+  t.misaligned <- false;
+  { choices; overrun }
 
-let record t choice =
-  t.recorded <- choice :: t.recorded;
-  t.n_recorded <- t.n_recorded + 1
+let record t choice = t.recorded <- choice :: t.recorded
 
-let start_span t = t.open_spans <- t.n_recorded :: t.open_spans
-
-let end_span t =
-  match t.open_spans with
-  | [] -> ()
-  | start :: rest ->
-    t.open_spans <- rest;
-    t.spans <- { start; stop = t.n_recorded } :: t.spans
-
-(* Pop the next input choice if it matches [want]; misaligned or
-   exhausted input falls back to fresh sampling (the caller re-records
-   whatever it actually used). Exhausted input marks an overrun so the
-   engine can reject deletion proposals that merely truncated. *)
+(* Pop the next input choice of the requested kind. On a kind mismatch
+   the offending input choice is CONSUMED (skipped) and we retry at the
+   next position: freezing the position instead would compare every
+   later draw against the same stale entry and silently abandon the
+   whole remaining tape after one misalignment. Exhausted input marks
+   an overrun so the engine can reject deletion proposals that merely
+   truncated. *)
 let pop t ~matches =
   match t.mode with
   | Off | Recording -> None
   | Replaying ->
-    if t.pos >= Array.length t.input then begin
-      t.overrun <- true;
-      None
-    end
-    else begin
-      let c = t.input.(t.pos) in
-      if matches c then begin
-        t.pos <- t.pos + 1;
-        Some c
+    let rec go () =
+      if t.pos >= Array.length t.input then begin
+        t.overrun <- true;
+        None
       end
-      else None
-    end
+      else begin
+        let c = t.input.(t.pos) in
+        t.pos <- t.pos + 1;
+        if matches c then Some c
+        else begin
+          t.misaligned <- true;
+          go ()
+        end
+      end
+    in
+    go ()
 
 let clamp_int64 v ~lo ~hi = if v < lo then lo else if v > hi then hi else v
 
@@ -265,11 +251,16 @@ let deserialize (s : string) : choice array option =
    distance from the shrink target (the value in [lo, hi] closest to
    zero), so "simpler" means shorter, then closer to zero. *)
 
-let int_key ~value ~lo ~hi =
+(* Distance from the shrink target as an UNSIGNED int64 (the wrapped
+   subtraction is exact modulo 2^64, so this cannot overflow even for
+   full-range spans like [min_int, max_int]), plus which side of the
+   target the value sits on. Ordering: smaller distance first; on equal
+   distance, above-target before below (the zigzag preference), the
+   target itself first of all. *)
+let int_distance ~value ~lo ~hi =
   let target = clamp_int64 0L ~lo ~hi in
-  let d = Int64.sub value target in
-  (* zigzag: prefer the target, then small positive, then small negative *)
-  if d >= 0L then Int64.mul d 2L else Int64.sub (Int64.mul (Int64.neg d) 2L) 1L
+  if value >= target then (Int64.sub value target, 0) (* above or equal *)
+  else (Int64.sub target value, 1) (* below *)
 
 let float_key ~value ~lo ~hi =
   let target = clamp_float 0. ~lo ~hi in
@@ -278,8 +269,10 @@ let float_key ~value ~lo ~hi =
 let compare_choice a b =
   match (a, b) with
   | Integer a', Integer b' ->
-    compare (int_key ~value:a'.value ~lo:a'.lo ~hi:a'.hi)
-      (int_key ~value:b'.value ~lo:b'.lo ~hi:b'.hi)
+    let da, sa = int_distance ~value:a'.value ~lo:a'.lo ~hi:a'.hi in
+    let db, sb = int_distance ~value:b'.value ~lo:b'.lo ~hi:b'.hi in
+    let c = Int64.unsigned_compare da db in
+    if c <> 0 then c else compare sa sb
   | Float a', Float b' ->
     compare (float_key ~value:a'.value ~lo:a'.lo ~hi:a'.hi)
       (float_key ~value:b'.value ~lo:b'.lo ~hi:b'.hi)

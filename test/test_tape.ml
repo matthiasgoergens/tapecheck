@@ -87,6 +87,23 @@ let () =
   check "bad version rejected"
     (Option.is_none (Tape.deserialize ("\002" ^ String.sub bytes 1 (String.length bytes - 1))));
 
+  (* A kind mismatch consumes the offending input entry and realigns,
+     instead of freezing the position and abandoning the rest. *)
+  Tape.start_replay tape
+    [| Tape.Integer { value = 9L; lo = 0L; hi = 10L }; Tape.Bool true |];
+  let b = Tape.draw_bool tape ~sample:(fun () -> false) in
+  check "mismatch skips to the matching entry" (b = true);
+  let _ = Tape.finish tape in
+
+  (* Full-range distances do not overflow the ordering: 1 is closer to
+     the target than Int64.min_int is. *)
+  let full lo hi v = [| Tape.Integer { value = v; lo; hi } |] in
+  check "min_int is not spuriously minimal"
+    (Tape.compare_shortlex
+       (full Int64.min_int Int64.max_int 1L)
+       (full Int64.min_int Int64.max_int Int64.min_int)
+     < 0);
+
   (* Shortlex prefers values closer to zero at equal length. *)
   let small = [| Tape.Integer { value = 1L; lo = 0L; hi = 100L } |] in
   let big = [| Tape.Integer { value = 90L; lo = 0L; hi = 100L } |] in

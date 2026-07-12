@@ -107,6 +107,17 @@ let () =
     failwith
       (Printf.sprintf "regression replayed wrong value: (%d, %d)"
          (fst other) (snd other)));
+  (* An entry that replays to a PASSING value is loud too: a
+     regression that stops guarding must not silently pass. *)
+  (match
+     Or_error.try_with (fun () ->
+       Tape_test.result
+         ~f:(fun (_ : pair) -> Ok ())
+         ~config:no_random_config ~regressions:reg_file gen_module)
+   with
+  | Error _ -> ()
+  | Ok _ -> failwith "stale passing regression entry did not fail loudly");
+
   (* Corrupt the file: loud error, not a silent pass. *)
   Stdlib.Out_channel.with_open_gen [ Open_append; Open_text ] 0o644 reg_file
     (fun oc -> Stdlib.Printf.fprintf oc "zz-not-hex\n");

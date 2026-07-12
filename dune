@@ -1,2 +1,22 @@
 ; vendor-study holds throwaway upstream clones for reading only.
 (dirs :standard \ vendor-study)
+
+; Fail fast on profile/compiler mismatches: an OxCaml switch without
+; --profile oxcaml would miscompile the ppx pieces against a divergent
+; parsetree, and --profile oxcaml on a stock switch would silently drop
+; the test suites and demo from the build graph.
+(rule
+ (alias default)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (action
+  (run sh -c
+    "case \"$(ocamlc -version)\" in *+ox*) echo 'OxCaml switch detected: build with --profile oxcaml' >&2; exit 1;; esac")))
+
+(rule
+ (alias default)
+ (enabled_if
+  (= %{profile} oxcaml))
+ (action
+  (run sh -c
+    "case \"$(ocamlc -version)\" in *+ox*) : ;; *) echo 'Profile oxcaml on a stock switch would silently skip the tests and demo: drop --profile oxcaml' >&2; exit 1;; esac")))

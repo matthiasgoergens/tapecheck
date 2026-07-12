@@ -120,9 +120,16 @@ silently passing.
 
 `Tape_engine.run` is the lower-level entry point; `?domains:n`
 evaluates generation cases and shrink proposals in parallel (worker
-pool; results are deterministic and identical to the sequential
-engine). On a rare-failure workload with a ~100us test body this is a
-4.6x wall-clock win at 8-16 domains.
+pool). Accepted-edit sequences and results are identical to the
+sequential engine (lowest-index acceptance); with a pool the engine
+evaluates batches speculatively, so attempt COUNTS can exceed the
+sequential run's. Your generator and test function must be safe to
+call from multiple domains: in particular, recursive generators built
+on `Generator.fixed_point`/`recursive_union` memoize through OCaml's
+`Lazy`, which is not concurrency-safe, and a race surfaces as a raised
+exception (never a hang or corruption; the engine re-raises worker
+exceptions on the calling domain). On a rare-failure workload with a
+~100us test body the pool is a 4.6x wall-clock win at 8-16 domains.
 
 ## How the interception works
 
@@ -144,9 +151,12 @@ has the same limitation).
 
 ```
 opam switch create 5.3.0
-opam install dune base stdio splittable_random base_quickcheck ppx_jane
+opam install dune base stdio ppx_jane
 dune test
 ```
+
+(No opam install of splittable_random or base_quickcheck is needed or
+used: the workspace's vendored copies shadow them; see Vendoring.)
 
 The engine also builds and runs under OxCaml, bit-identically:
 

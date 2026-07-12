@@ -69,4 +69,53 @@ let () =
     check "chained binds shrink to (10,10,10)"
       (a = 10 && b = 10 && c = 10));
 
+  (* Below-target ranges shrink too: target clamps to hi = -1, every
+     draw sits BELOW it; the review found the passes skipped this side
+     entirely (minimal = original, no shrinking at all). *)
+  let negatives = G.int_uniform_inclusive (-1000) (-1) in
+  (match Tape_engine.run negatives ~test:(fun v -> v > -500) with
+  | Tape_engine.Passed _ -> failwith "no failure found: negatives"
+  | Tape_engine.Failed { minimal; attempts; _ } ->
+    Stdlib.Printf.printf "negatives:     minimal=%d (%d attempts)\n" minimal
+      attempts;
+    check "below-target range shrinks to the boundary" (minimal = -500));
+
+  (* Full-range int64 draws: the shortlex key must not overflow; the
+     trivial pass lands on the in-range target 0. *)
+  let full_range =
+    G.int64_uniform_inclusive Int64.min_value Int64.max_value
+  in
+  (match Tape_engine.run full_range ~test:(fun _ -> false) with
+  | Tape_engine.Passed _ -> failwith "no failure found: full range"
+  | Tape_engine.Failed { minimal; _ } ->
+    check "full-range int64 shrinks to zero" (Int64.equal minimal 0L));
+
+  (* A raising property must propagate, not hang, under a pool. *)
+  (match
+     Or_error.try_with (fun () ->
+       Tape_engine.run (G.int_uniform_inclusive 0 100) ~domains:2
+         ~test:(fun _ -> failwith "boom"))
+   with
+  | Error _ -> ()
+  | Ok _ -> failwith "raising test did not propagate under domains=2");
+
+  (* Shrink results are domains-invariant (lowest-index acceptance). *)
+  let seq =
+    match
+      Tape_engine.run length_prefixed ~test:(fun l ->
+        List.sum (module Int) l ~f:Fn.id < 100)
+    with
+    | Tape_engine.Failed { minimal; _ } -> minimal
+    | Tape_engine.Passed _ -> failwith "no failure: seq arm"
+  in
+  let par =
+    match
+      Tape_engine.run length_prefixed ~domains:4 ~test:(fun l ->
+        List.sum (module Int) l ~f:Fn.id < 100)
+    with
+    | Tape_engine.Failed { minimal; _ } -> minimal
+    | Tape_engine.Passed _ -> failwith "no failure: par arm"
+  in
+  check "domains-invariant minimal" (List.equal Int.equal seq par);
+
   Stdlib.print_endline "all shrink tests passed"

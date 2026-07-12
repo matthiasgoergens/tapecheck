@@ -34,6 +34,11 @@ module Regressions = struct
             Char.of_int_exn
               (Int.of_string ("0x" ^ String.sub h ~pos:(i * 2) ~len:2))))
 
+  (* Line format: "<hex tape> @<size> # comment". The size the failure
+     was recorded at matters: base_quickcheck combinators read ~size
+     for control flow (length bounds, recursion choices), so replaying
+     at a different size can regenerate a different value. Legacy lines
+     without @size replay at the historical default of 30. *)
   let load path =
     match Stdlib.Sys.file_exists path with
     | false -> Ok []
@@ -46,10 +51,19 @@ module Regressions = struct
           | None -> String.strip line
         in
         if String.is_empty payload then None
-        else
-          match Option.bind (string_of_hex payload) ~f:Tape.deserialize with
-          | Some choices -> Some (Ok (lineno + 1, choices))
-          | None -> Some (Error (lineno + 1)))
+        else begin
+          let hex, size =
+            match String.lsplit2 payload ~on:'@' with
+            | Some (hex, size_str) ->
+              (String.strip hex, Int.of_string_opt (String.strip size_str))
+            | None -> (payload, Some 30)
+          in
+          match
+            (Option.bind (string_of_hex hex) ~f:Tape.deserialize, size)
+          with
+          | Some choices, Some size -> Some (Ok (lineno + 1, size, choices))
+          | _ -> Some (Error (lineno + 1))
+        end)
       |> Result.combine_errors
       |> Result.map_error ~f:(fun bad_lines ->
            Error.create_s
@@ -58,12 +72,13 @@ module Regressions = struct
                  (path : string)
                  (bad_lines : int list)])
 
-  let append path ~choices ~comment =
+  let append path ~choices ~size ~comment =
     Stdlib.Out_channel.with_open_gen
       [ Open_append; Open_creat; Open_text ] 0o644 path
       (fun oc ->
-        Stdlib.Printf.fprintf oc "%s # %s
-" (hex_of_string (Tape.serialize choices)) comment)
+        Stdlib.Printf.fprintf oc "%s @%d # %s\n"
+          (hex_of_string (Tape.serialize choices))
+          size comment)
 end
 
 let result (type a e) ~(f : a -> (unit, e) Result.t)
@@ -80,11 +95,23 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
       (match Regressions.load path with
        | Error err -> Error.raise err
        | Ok entries ->
-         List.find_map entries ~f:(fun (_line, choices) ->
-           let value = Tape_engine.replay M.quickcheck_generator choices in
+         List.find_map entries ~f:(fun (line, size, choices) ->
+           let value =
+             Tape_engine.replay M.quickcheck_generator ~size choices
+           in
            match f value with
-           | Ok () -> None
-           | Error e -> Some (Error (value, e))))
+           | Error e -> Some (Error (value, e))
+           | Ok () ->
+             (* A regression entry that stops guarding must not
+                silently pass: either the bug is fixed (delete the
+                line) or the generator drifted (re-record). *)
+             Error.raise_s
+               [%message
+                 "regression tape replays to a passing value; delete \
+                  the stale line or re-record it"
+                   (path : string)
+                   (line : int)
+                   ~replayed:(M.sexp_of_t value : Sexp.t)]))
   in
   match regression_failure with
   | Some err -> err
@@ -102,6 +129,12 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     let sizes =
       Sequence.take config.sizes config.test_count |> Sequence.to_list
     in
+    if List.length sizes < config.test_count then
+      Error.raise_s
+        [%message
+          "insufficient size values for test count"
+            ~test_count:(config.test_count : int)
+            ~sizes_available:(List.length sizes : int)];
     let failure = ref None in
     let case = ref 0 in
     let sizes = Array.of_list sizes in
@@ -116,7 +149,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
         match f minimal with
         | Error e ->
           Option.iter regressions ~f:(fun path ->
-            Regressions.append path ~choices
+            Regressions.append path ~choices ~size:sizes.(!case)
               ~comment:(Sexp.to_string (M.sexp_of_t minimal)));
           failure := Some (Error (minimal, e))
         | Ok () ->

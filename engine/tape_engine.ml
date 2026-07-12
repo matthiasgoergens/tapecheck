@@ -21,7 +21,12 @@ type 'a result =
   | Passed of { cases : int }
   | Failed of 'a failure
 
-let clamp64 v ~lo ~hi = if Int64.(v < lo) then lo else if Int64.(v > hi) then hi else v
+let clamp64 = Tape.clamp_int64
+
+(* Fresh draws during replay (misaligned or overrun positions) sample
+   from this fixed seed so every attempt, sequential or pooled, sees
+   the same fallback stream. *)
+let replay_fresh_seed = 0x7ea9e
 
 let target_of = function
   | Tape.Integer { lo; hi; _ } -> Some (clamp64 0L ~lo ~hi)
@@ -72,7 +77,7 @@ module Pool = struct
     ; nonempty : Stdlib.Condition.t
     ; all_done : Stdlib.Condition.t
     ; mutable queue : (int * (unit -> 'r)) list
-    ; mutable results : 'r option array
+    ; mutable results : ('r, exn) Result.t option array
     ; mutable pending : int
     ; mutable stop : bool
     ; mutable workers : unit Stdlib.Domain.t list
@@ -95,7 +100,14 @@ module Pool = struct
     | None -> Stdlib.Mutex.unlock t.mutex
     | Some (i, task) ->
       Stdlib.Mutex.unlock t.mutex;
-      let r = task () in
+      (* A raising task (user generator or test) must still account for
+         itself, or run_batch waits forever; the exception is stored
+         and re-raised on the main domain. *)
+      let r =
+        match task () with
+        | r -> Ok r
+        | exception exn -> Error exn
+      in
       Stdlib.Mutex.lock t.mutex;
       t.results.(i) <- Some r;
       t.pending <- t.pending - 1;
@@ -119,7 +131,9 @@ module Pool = struct
       List.init n ~f:(fun _ -> Stdlib.Domain.spawn (fun () -> worker_loop t));
     t
 
-  (* Run tasks to completion; returns results in task order. *)
+  (* Run tasks to completion; returns results in task order. A task
+     that raised has its exception re-raised here, on the caller's
+     domain, after the whole batch has been accounted for. *)
   let run_batch t tasks =
     let tasks = Array.of_list tasks in
     let n = Array.length tasks in
@@ -133,7 +147,9 @@ module Pool = struct
     done;
     let results = t.results in
     Stdlib.Mutex.unlock t.mutex;
-    List.filter_opt (Array.to_list results)
+    List.map (List.filter_opt (Array.to_list results)) ~f:(function
+      | Ok r -> r
+      | Error exn -> raise exn)
 
   let shutdown t =
     Stdlib.Mutex.lock t.mutex;
@@ -151,7 +167,7 @@ let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
   let tape = Tape.create () in
   Tape.start_replay tape proposal;
   let random =
-    Splittable_random.For_tape.attach (Splittable_random.of_int 0x7ea9e) tape
+    Splittable_random.For_tape.attach (Splittable_random.of_int replay_fresh_seed) tape
   in
   let value = Base_quickcheck.Generator.generate gen ~size ~random in
   let out = Tape.finish tape in
@@ -173,7 +189,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     else begin
       Int.incr attempts;
       Tape.start_replay tape proposal;
-      let value, out = run_case ~tape ~gen ~size ~seed:0x7ea9e in
+      let value, out = run_case ~tape ~gen ~size ~seed:replay_fresh_seed in
       if out.Tape.overrun then false
       else if test value then false
       else if Tape.compare_shortlex out.Tape.choices !best_choices < 0 then begin
@@ -185,34 +201,46 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     end
   in
 
-  (* Evaluate several independent proposals, in parallel domains when
-     domains > 1, and accept the shortlex-best improvement if any. *)
+  (* Evaluate several independent proposals (in parallel domains when a
+     pool exists) and accept the LOWEST-INDEX improvement, exactly the
+     proposal the sequential first-accept scan would have taken, so
+     accepted-edit sequences are identical at every ?domains. Returns
+     the accepted proposal's index, if any. With a pool the whole batch
+     is evaluated speculatively, so attempt counts (not results) may
+     exceed the sequential engine's. *)
   let attempt_batch proposals =
     let proposals =
       List.take proposals (max 1 (min 64 (budget - !attempts)))
     in
     match (proposals, pool) with
-    | [], _ -> false
-    | [ p ], _ -> attempt p
-    | ps, None -> List.exists ps ~f:attempt
+    | [], _ -> None
+    | [ p ], _ -> if attempt p then Some 0 else None
+    | ps, None ->
+      List.foldi ps ~init:None ~f:(fun i acc p ->
+        match acc with
+        | Some _ -> acc
+        | None -> if attempt p then Some i else None)
     | ps, Some pool ->
       let results =
         Pool.run_batch pool
           (List.map ps ~f:(fun p () -> eval_proposal ~gen ~size ~test p))
       in
       attempts := !attempts + List.length ps;
-      let best_new =
-        List.filter_opt results
-        |> List.min_elt ~compare:(fun (a, _) (b, _) ->
-             Tape.compare_shortlex a b)
+      let accepted =
+        List.foldi results ~init:None ~f:(fun i acc r ->
+          match (acc, r) with
+          | Some _, _ | _, None -> acc
+          | None, Some (choices, value) ->
+            if Tape.compare_shortlex choices !best_choices < 0 then
+              Some (i, choices, value)
+            else None)
       in
-      (match best_new with
-       | Some (choices, value)
-         when Tape.compare_shortlex choices !best_choices < 0 ->
+      (match accepted with
+       | Some (i, choices, value) ->
          best_choices := choices;
          best_value := value;
-         true
-       | _ -> false)
+         Some i
+       | None -> None)
   in
 
   (* Pass 1: everything to target at once. *)
@@ -228,11 +256,15 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let i = ref 0 in
     while !i < Array.length !best_choices && !attempts < budget do
       (match !best_choices.(!i) with
-      | Tape.Integer { value; lo; hi } when Int64.(value > clamp64 0L ~lo ~hi)
-        ->
-        let lowered =
-          Tape.Integer { value = Int64.(value - 1L); lo; hi }
+      | Tape.Integer { value; lo; hi }
+        when Int64.(value <> clamp64 0L ~lo ~hi) ->
+        (* Step one toward the target from EITHER side: length-like
+           choices usually sit above it, but nothing guarantees that. *)
+        let step =
+          if Int64.(value > clamp64 0L ~lo ~hi) then Int64.( - ) value 1L
+          else Int64.( + ) value 1L
         in
+        let lowered = Tape.Integer { value = step; lo; hi } in
         (* Try deleting a contiguous block of k later choices with the
            lowered prefix; one list element can span several choices
            (e.g. base_quickcheck's list machinery draws a shuffle
@@ -261,29 +293,34 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                          ~pos:j ~len:!k)
                   else None)
             in
-            if attempt_batch batch then begin
+            (match attempt_batch batch with
+            | Some offset ->
               accepted := true;
               improved := true;
-              (* Greedily repeat the same edit shape in place while it
-                 keeps working. *)
+              (* Greedily repeat the same edit shape at the position
+                 that actually succeeded (the batch may have accepted a
+                 later candidate than !j). *)
+              let jj = !j + offset in
               let again = ref true in
               while !again && !attempts < budget do
                 match !best_choices.(!i) with
                 | Tape.Integer { value; lo; hi }
-                  when Int64.(value > clamp64 0L ~lo ~hi)
-                       && !j <= Array.length !best_choices - !k ->
-                  let lowered =
-                    Tape.Integer { value = Int64.(value - 1L); lo; hi }
+                  when Int64.(value <> clamp64 0L ~lo ~hi)
+                       && jj <= Array.length !best_choices - !k ->
+                  let step =
+                    if Int64.(value > clamp64 0L ~lo ~hi) then
+                      Int64.( - ) value 1L
+                    else Int64.( + ) value 1L
                   in
+                  let lowered = Tape.Integer { value = step; lo; hi } in
                   again :=
                     attempt
                       (with_deleted_block
                          (with_choice !best_choices !i lowered)
-                         ~pos:!j ~len:!k)
+                         ~pos:jj ~len:!k)
                 | _ -> again := false
               done
-            end
-            else j := !j + max 1 (domains * 4)
+            | None -> j := !j + max 1 (domains * 4))
           done;
           Int.incr k
         done;
@@ -303,7 +340,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     while !i < Array.length !best_choices && !attempts < budget do
       (match !best_choices.(!i) with
       | Tape.Integer { value = vi; lo = lo_i; hi = hi_i }
-        when Int64.(vi > clamp64 0L ~lo:lo_i ~hi:hi_i) -> (
+        when Int64.(vi <> clamp64 0L ~lo:lo_i ~hi:hi_i) -> (
         (* find the next integer choice after i *)
         let j = ref (!i + 1) in
         while
@@ -319,18 +356,31 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
           match !best_choices.(!j) with
           | Tape.Integer { value = vj; lo = lo_j; hi = hi_j } ->
             let target_i = clamp64 0L ~lo:lo_i ~hi:hi_i in
-            let d_max = Int64.min (Int64.( - ) vi target_i) (Int64.( - ) hi_j vj) in
+            (* Move choice i toward its target and choice j the other
+               way, preserving their sum, in whichever direction i
+               needs (Hypothesis's redistribute originally handled only
+               the above-target side; both sides matter). *)
+            let above = Int64.(vi > target_i) in
+            let d_max =
+              if above then
+                Int64.min (Int64.( - ) vi target_i) (Int64.( - ) hi_j vj)
+              else Int64.min (Int64.( - ) target_i vi) (Int64.( - ) vj lo_j)
+            in
             let d = ref d_max in
             let accepted = ref false in
             while (not !accepted) && Int64.(!d > 0L) && !attempts < budget do
+              let new_i =
+                if above then Int64.( - ) vi !d else Int64.( + ) vi !d
+              in
+              let new_j =
+                if above then Int64.( + ) vj !d else Int64.( - ) vj !d
+              in
               let proposal =
                 with_choice
                   (with_choice !best_choices !i
-                     (Tape.Integer
-                        { value = Int64.( - ) vi !d; lo = lo_i; hi = hi_i }))
+                     (Tape.Integer { value = new_i; lo = lo_i; hi = hi_i }))
                   !j
-                  (Tape.Integer
-                     { value = Int64.( + ) vj !d; lo = lo_j; hi = hi_j })
+                  (Tape.Integer { value = new_j; lo = lo_j; hi = hi_j })
               in
               if attempt proposal then begin
                 accepted := true;
@@ -345,53 +395,36 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     !improved
   in
 
-  (* Minimize one integer choice: exponential probes out from the
-     target (offsets 0, 1, 3, 7, ...), evaluated as one batch (parallel
-     when domains > 1; attempt_batch commits the smallest accepted
-     probe), then a sequential bisection inside the remaining bracket.
-     This is proptest's find_integer with a parallel probe phase. *)
+  (* Minimize one integer choice toward its target by bisection on
+     the DISTANCE from the target, from whichever side the value sits.
+     Distances are unsigned int64 (wrapped subtraction is exact modulo
+     2^64), so full-range spans like [min_int, max_int] cannot
+     overflow. The former exponential probe ladder is gone: it ran
+     only under a pool, which made shrink traces depend on ?domains. *)
   let minimize_integer i value lo hi =
     let target = clamp64 0L ~lo ~hi in
     let try_value v =
       attempt (with_choice !best_choices i (Tape.Integer { value = v; lo; hi }))
     in
-    if Int64.(value <> target) then begin
-      (* The probe phase only pays for itself when a pool evaluates the
-         probes concurrently; sequentially it just precedes the
-         bisection with redundant attempts. *)
-      (if Option.is_some pool then begin
-         let probes =
-           let rec go acc offset =
-             let v = Int64.( + ) target offset in
-             if Int64.(v >= value) || Int64.(v < target) then List.rev acc
-             else go (v :: acc) Int64.((offset * 2L) + 1L)
-           in
-           go [] 0L
-         in
-         let mk v =
-           with_choice !best_choices i (Tape.Integer { value = v; lo; hi })
-         in
-         ignore (attempt_batch (List.map probes ~f:mk) : bool)
-       end
-       else if Int64.(value <> target) then
-         ignore
-           (attempt
-              (with_choice !best_choices i
-                 (Tape.Integer { value = target; lo; hi }))
-             : bool));
-      (* Probe rejections must NOT raise the bisection floor: under a
-         filtered generator a rejection can mean "predicate refused
-         this exact value" (e.g. parity), not "too small". Probes only
-         fast-path acceptance; the bisection always starts at the
-         target. *)
-      match !best_choices.(i) with
-      | Tape.Integer { value = cur; _ } when Int64.(cur > target) ->
-        let low = ref target and high = ref cur in
-        while Int64.(!high - !low > 1L) && !attempts < budget do
-          let mid = Int64.(!low + ((!high - !low) / 2L)) in
-          if try_value mid then high := mid else low := mid
-        done
-      | _ -> ()
+    if Int64.(value <> target) && not (try_value target) then begin
+      let above = Int64.(value > target) in
+      let dist =
+        if above then Int64.( - ) value target else Int64.( - ) target value
+      in
+      let of_dist d =
+        if above then Int64.( + ) target d else Int64.( - ) target d
+      in
+      let low = ref 0L and high = ref dist in
+      while
+        Stdlib.Int64.unsigned_compare (Int64.( - ) !high !low) 1L > 0
+        && !attempts < budget
+      do
+        let mid =
+          Int64.( + ) !low
+            (Stdlib.Int64.shift_right_logical (Int64.( - ) !high !low) 1)
+        in
+        if try_value (of_dist mid) then high := mid else low := mid
+      done
     end
   in
 
@@ -453,7 +486,7 @@ let replay (type a) (gen : a Base_quickcheck.Generator.t) ?(size = 30)
   let tape = Tape.create () in
   Tape.start_replay tape choices;
   let random =
-    Splittable_random.For_tape.attach (Splittable_random.of_int 0x7ea9e) tape
+    Splittable_random.For_tape.attach (Splittable_random.of_int replay_fresh_seed) tape
   in
   let value = Base_quickcheck.Generator.generate gen ~size ~random in
   let (_ : Tape.output) = Tape.finish tape in
