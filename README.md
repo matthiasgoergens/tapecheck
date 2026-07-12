@@ -50,6 +50,14 @@ generated. A longer comparison of the three shrinking models, and why
 binds are where they differ, is in
 [blog/draft-choice-tapes.md](blog/draft-choice-tapes.md).
 
+**This repo is a proof of concept built to be upstreamed.** The
+honest end state is a dozen tape hooks in the real splittable_random,
+defaulting to no-ops, at which point every copy under `vendor/`
+disappears and base_quickcheck gains integrated shrinking as an
+opt-in engine. Everything here (the results table, the drop-in
+wrapper, the vendored-unmodified proof) exists to make that a small,
+well-evidenced proposal rather than a leap of faith.
+
 ## Results
 
 Six properties, 100 seeds each, identical failing examples handed to
@@ -191,4 +199,8 @@ LICENSE.md in each directory:
 Early but real: the engine, the drop-in wrapper, persistence, and the
 parallel pool all work and are tested; the shrink-quality table above
 is reproducible with `dune exec demo/shrink_table.exe`. Roadmap and
-findings live in `design/`.
+findings live in `design/`. The goal is upstreaming (see above); if
+you are a base_quickcheck or splittable_random maintainer reading
+this, the interesting files are `vendor/splittable_random/` (the
+hooks, a dozen functions) and `design/choice-tape-for-base-quickcheck.md`
+(the findings your generators surfaced).
