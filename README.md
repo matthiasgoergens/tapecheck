@@ -1,6 +1,8 @@
 # tapecheck: choice-tape shrinking for base_quickcheck
 
-In property-based testing (QuickCheck, Hypothesis, and in OCaml
+In property-based testing
+([QuickCheck](https://hackage.haskell.org/package/QuickCheck),
+[Hypothesis](https://hypothesis.readthedocs.io/), and in OCaml
 [base_quickcheck](https://github.com/janestreet/base_quickcheck)), you
 state a property ("decoding an encoded message returns the original")
 and the library checks it against hundreds of randomly generated
@@ -15,7 +17,8 @@ Shrinking is hard to do well, because a shrinker that edits values
 directly knows nothing about the *generator* that produced them (the
 recipe turning random draws into your test inputs): halve an even
 number and you may hand an odd one to a test that assumed evenness.
-tapecheck takes a different route, ported from Python Hypothesis:
+tapecheck takes a different route, ported from [Python
+Hypothesis](https://hypothesis.readthedocs.io/):
 record every random decision the generator makes as a typed, bounded
 choice on a tape; shrink by editing the tape and running the generator
 again on it, accepting an edit only if the test still fails and the
