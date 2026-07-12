@@ -113,16 +113,23 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
         let lowered =
           Tape.Integer { value = Int64.(value - 1L); lo; hi }
         in
-        (* Try deleting a contiguous block of k later choices, last to
-           first, with the lowered prefix; one list element can span
-           several choices (e.g. base_quickcheck's list machinery draws
-           a shuffle position and a value per element), so k ranges
-           over small block sizes. Restart position on success. *)
+        (* Try deleting a contiguous block of k later choices with the
+           lowered prefix; one list element can span several choices
+           (e.g. base_quickcheck's list machinery draws a shuffle
+           position and a value draw per element), so k ranges over
+           small block sizes. Deletable choices cluster early (the
+           redistribute pass piles zeros there), so walk j upward, and
+           after an accepted deletion stay at the same position: the
+           next deletable block usually sits exactly there. *)
         let accepted = ref false in
         let k = ref 1 in
         while (not !accepted) && !k <= 4 && !attempts < budget do
-          let j = ref (Array.length !best_choices - !k) in
-          while (not !accepted) && !j > !i && !attempts < budget do
+          let j = ref (!i + 1) in
+          while
+            (not !accepted)
+            && !j <= Array.length !best_choices - !k
+            && !attempts < budget
+          do
             let proposal =
               with_deleted_block
                 (with_choice !best_choices !i lowered)
@@ -130,9 +137,27 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
             in
             if attempt proposal then begin
               accepted := true;
-              improved := true
+              improved := true;
+              (* Greedily repeat the same edit shape in place while it
+                 keeps working. *)
+              let again = ref true in
+              while !again && !attempts < budget do
+                match !best_choices.(!i) with
+                | Tape.Integer { value; lo; hi }
+                  when Int64.(value > clamp64 0L ~lo ~hi)
+                       && !j <= Array.length !best_choices - !k ->
+                  let lowered =
+                    Tape.Integer { value = Int64.(value - 1L); lo; hi }
+                  in
+                  again :=
+                    attempt
+                      (with_deleted_block
+                         (with_choice !best_choices !i lowered)
+                         ~pos:!j ~len:!k)
+                | _ -> again := false
+              done
             end
-            else Int.decr j
+            else Int.incr j
           done;
           Int.incr k
         done;

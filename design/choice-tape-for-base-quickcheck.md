@@ -79,7 +79,18 @@ functions therefore do not shrink; Hypothesis has the same limitation.
    parallel shrink attempts via the Parallel API with modes proving
    data-race freedom; benchmark generation with unboxed floats.
 
-## Findings from milestone 3 (things Jane Street will care about)
+## Findings (things Jane Street will care about)
+
+- Stock scalar shrinkers are atomic. Base_quickcheck.Shrinker.int
+  (likewise int32/int63/int64/nativeint/float/char/bool) is literally
+  `atomic`: failing scalars are reported as generated, never shrunk.
+  Only structural shrinking exists (list element dropping, recursing
+  into elements with the same atomic leaves). This is a defensible
+  choice under the Shrinker.t model, where value shrinking cannot see
+  generator invariants, but it means the milestone-5 table is not
+  "tape shrinks better", it is "tape shrinks, stock does not": stock
+  was fully minimal on 0/600 trials across six properties, the tape on
+  600/600.
 
 - Generator-structural bias traps shortlex shrinking.
   Generator.int_inclusive is weighted_union [0.05 return lo; 0.05
