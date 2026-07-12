@@ -743,7 +743,13 @@ let sexp = sexp_of string
 
 let map_tree_using_comparator ~comparator key_gen data_gen =
   let%bind keys = list key_gen in
-  let keys = List.dedup_and_sort keys ~compare:comparator.Comparator.compare in
+  (* Portable across Base v0.17 (record field) and v0.18 (accessor
+     function): dedup and sort through a set instead of touching
+     Comparator internals. The only edit to this vendored file. *)
+  let keys =
+    Set.Using_comparator.Tree.to_list
+      (Set.Using_comparator.Tree.of_list ~comparator keys)
+  in
   let%bind data = list_with_length data_gen ~length:(List.length keys) in
   return (Map.Using_comparator.Tree.of_alist_exn ~comparator (List.zip_exn keys data))
 ;;

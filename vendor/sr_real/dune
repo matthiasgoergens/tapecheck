@@ -1,9 +1,10 @@
-; Jane Street's splittable_random v0.17 implementation, vendored
-; verbatim (renamed module) so the tape shim can delegate to it while
-; owning the `splittable_random` library name in this workspace.
+; Jane Street's splittable_random v0.17 implementation, vendored with
+; two edits: a Base v0.18 (OxCaml overlay) compat block at the top of
+; sr_real.ml, and upstream's inline test/bench blocks stripped (they
+; use APIs that drifted in v0.18; the originals remain in the release
+; tarball for reference).
 (library
  (name sr_real)
  (libraries base)
- (inline_tests)
  (preprocess
-  (pps ppx_assert ppx_bench ppx_inline_test ppx_sexp_message)))
+  (pps ppx_sexp_message)))

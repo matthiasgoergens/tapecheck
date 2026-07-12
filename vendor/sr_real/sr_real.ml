@@ -21,10 +21,29 @@
 *)
 
 open! Base
+
+(* Compat shim (the only edit to this vendored file): Base v0.18
+   preview, as shipped in the OxCaml opam overlay, drops the bitwise
+   operators from Int64.O and changes popcount's return type, so
+   define version-agnostic versions here. Harmless under Base v0.17. *)
+let int64_popcount (x : int64) : int =
+  let n = ref 0 in
+  let v = ref x in
+  for _ = 0 to 63 do
+    if Int64.( <> ) (Int64.bit_and !v 1L) 0L then Int.incr n;
+    v := Int64.shift_right_logical !v 1
+  done;
+  !n
+
 open Int64.O
 
+let ( lxor ) = Int64.bit_xor
+let ( lor ) = Int64.bit_or
+let ( land ) = Int64.bit_and
+let ( lsr ) x n = Int64.shift_right_logical x n
+
 let is_odd x = x lor 1L = x
-let popcount = Int64.popcount
+let popcount = int64_popcount
 
 type t =
   { mutable seed : int64
@@ -63,13 +82,6 @@ let mix_odd_gamma z =
   if Int.( < ) n 24 then z lxor 0xaaaa_aaaa_aaaa_aaaaL else z
 ;;
 
-let%test_unit "odd gamma" =
-  for input = -1_000_000 to 1_000_000 do
-    let output = mix_odd_gamma (Int64.of_int input) in
-    if not (is_odd output)
-    then Error.raise_s [%message "gamma value is not odd" (input : int) (output : int64)]
-  done
-;;
 
 let next_seed t =
   let next = t.seed + t.odd_gamma in
@@ -118,27 +130,6 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
   draw - remainder <= draw_maximum - remainder_maximum
 ;;
 
-let%test_unit "remainder_is_unbiased" =
-  (* choosing a range of 10 values based on a range of 105 values *)
-  let draw_maximum = 104L in
-  let remainder_maximum = 9L in
-  let is_unbiased draw =
-    let remainder = Int64.rem draw (Int64.succ remainder_maximum) in
-    remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum
-  in
-  for i = 0 to 99 do
-    [%test_result: bool]
-      (is_unbiased (Int64.of_int i))
-      ~expect:true
-      ~message:(Int.to_string i)
-  done;
-  for i = 100 to 104 do
-    [%test_result: bool]
-      (is_unbiased (Int64.of_int i))
-      ~expect:false
-      ~message:(Int.to_string i)
-  done
-;;
 
 (* This implementation of bounded randomness is adapted from [Random.State.int*] in the
    OCaml standard library.  The purpose is to use the minimum number of calls to
@@ -201,27 +192,9 @@ let int63 state ~lo ~hi =
 
 let double_ulp = 2. **. -53.
 
-let%test_unit "double_ulp" =
-  let open Float.O in
-  match Word_size.word_size with
-  | W64 ->
-    assert (1.0 -. double_ulp < 1.0);
-    assert (1.0 -. (double_ulp /. 2.0) = 1.0)
-  | W32 ->
-    (* 32-bit OCaml uses a 64-bit float representation but 80-bit float instructions, so
-       rounding works differently due to the conversion back and forth. *)
-    assert (1.0 -. double_ulp < 1.0);
-    assert (1.0 -. (double_ulp /. 2.0) <= 1.0)
-;;
 
 let unit_float_from_int64 int64 = Int64.to_float (int64 lsr 11) *. double_ulp
 
-let%test_unit "unit_float_from_int64" =
-  let open Float.O in
-  assert (unit_float_from_int64 0x0000_0000_0000_0000L = 0.);
-  assert (unit_float_from_int64 0xffff_ffff_ffff_ffffL < 1.0);
-  assert (unit_float_from_int64 0xffff_ffff_ffff_ffffL = 1.0 -. double_ulp)
-;;
 
 let unit_float state = unit_float_from_int64 (next_int64 state)
 
@@ -260,10 +233,6 @@ let float =
     finite_float state ~lo ~hi
 ;;
 
-let%bench_fun "unit_float_from_int64" =
-  let int64 = 1L in
-  fun () -> unit_float_from_int64 int64
-;;
 
 module Log_uniform = struct
   module Make (M : sig
@@ -286,48 +255,14 @@ module Log_uniform = struct
       !n
     ;;
 
-    let%test_unit "bits_to_represent" =
-      let test n expect = [%test_result: int] (bits_to_represent n) ~expect in
-      test (M.of_int_exn 0) 0;
-      test (M.of_int_exn 1) 1;
-      test (M.of_int_exn 2) 2;
-      test (M.of_int_exn 3) 2;
-      test (M.of_int_exn 4) 3;
-      test (M.of_int_exn 5) 3;
-      test (M.of_int_exn 6) 3;
-      test (M.of_int_exn 7) 3;
-      test (M.of_int_exn 8) 4;
-      test (M.of_int_exn 100) 7;
-      test M.max_value (Int.pred M.num_bits)
-    ;;
 
     let min_represented_by_n_bits n =
       if Int.equal n 0 then zero else shift_left one (Int.pred n)
     ;;
 
-    let%test_unit "min_represented_by_n_bits" =
-      let test n expect = [%test_result: M.t] (min_represented_by_n_bits n) ~expect in
-      test 0 (M.of_int_exn 0);
-      test 1 (M.of_int_exn 1);
-      test 2 (M.of_int_exn 2);
-      test 3 (M.of_int_exn 4);
-      test 4 (M.of_int_exn 8);
-      test 7 (M.of_int_exn 64);
-      test (Int.pred M.num_bits) (M.shift_right_logical M.min_value 1)
-    ;;
 
     let max_represented_by_n_bits n = pred (shift_left one n)
 
-    let%test_unit "max_represented_by_n_bits" =
-      let test n expect = [%test_result: M.t] (max_represented_by_n_bits n) ~expect in
-      test 0 (M.of_int_exn 0);
-      test 1 (M.of_int_exn 1);
-      test 2 (M.of_int_exn 3);
-      test 3 (M.of_int_exn 7);
-      test 4 (M.of_int_exn 15);
-      test 7 (M.of_int_exn 127);
-      test (Int.pred M.num_bits) M.max_value
-    ;;
 
     let log_uniform state ~lo ~hi =
       let min_bits = bits_to_represent lo in

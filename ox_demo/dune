@@ -1,0 +1,6 @@
+; The OxCaml showcase entry point: no ppx derivers (the OxCaml ppxlib
+; fork has a divergent parsetree), hand-written generators only. Builds
+; under both switches so the same binary can be timed on each.
+(executable
+ (name bench)
+ (libraries base stdio base_quickcheck splittable_random tape tape_engine))
