@@ -1,0 +1,6 @@
+_build/
+vendor-study/
+*.cmi
+*.cmo
+*.cmx
+*.o
