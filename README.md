@@ -15,10 +15,19 @@ Hypothesis](https://github.com/HypothesisWorks/hypothesis)) to OCaml,
 sibling of the same engine for Rust's proptest
 ([proptest-rs/proptest#658](https://github.com/proptest-rs/proptest/pull/658)).
 As far as we know it is the first choice-sequence shrinker in the
-OCaml ecosystem (QCheck2 and Bam use Hedgehog-style rose trees;
-base_quickcheck's `Shrinker.t` for scalars is `atomic`, meaning
-failing ints, floats, chars, and bools are reported exactly as
-generated).
+OCaml ecosystem.
+[QCheck2](https://www.tweag.io/blog/2021-07-21-qcheck2-integrated-shrinking/)
+and [Bam](https://discuss.ocaml.org/t/ann-bam-a-property-based-testing-with-internal-shrinking/14661)
+use Hedgehog-style [integrated shrinking over lazy rose
+trees](https://www.well-typed.com/blog/2019/05/integrated-shrinking/)
+(Bam's design notes on shrinking are
+[here](https://francoisthire.github.io/bam/bam/shrinking.html));
+base_quickcheck's `Shrinker.t` for scalars is
+[literally `atomic`](https://github.com/janestreet/base_quickcheck/blob/v0.17.0/src/shrinker.ml#L44),
+meaning failing ints, floats, chars, and bools are reported exactly as
+generated. A longer comparison of the three shrinking models, and why
+binds are where they differ, is in
+[blog/draft-choice-tapes.md](blog/draft-choice-tapes.md).
 
 ## Results
 
