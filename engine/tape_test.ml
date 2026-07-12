@@ -14,11 +14,81 @@ let seed_int (seed : Config.Seed.t) =
   | Deterministic s -> Hashtbl.hash s
   | Nondeterministic -> Random.bits ()
 
+(* Regression files: one lowercase-hex serialized tape per line,
+   optional trailing "# comment". Replaying a tape regenerates the
+   exact persisted failure through the generator, independent of seeds
+   and robust to distribution changes. A line that no longer parses or
+   generates is a loud error: a regression entry that stops guarding
+   must not silently pass. *)
+module Regressions = struct
+  let hex_of_string s =
+    String.concat_map s ~f:(fun c -> Printf.sprintf "%02x" (Char.to_int c))
+
+  let string_of_hex h =
+    if String.length h % 2 <> 0 then None
+    else
+      Option.try_with (fun () ->
+        String.init
+          (String.length h / 2)
+          ~f:(fun i ->
+            Char.of_int_exn
+              (Int.of_string ("0x" ^ String.sub h ~pos:(i * 2) ~len:2))))
+
+  let load path =
+    match Stdlib.Sys.file_exists path with
+    | false -> Ok []
+    | true ->
+      let lines = Stdlib.In_channel.with_open_text path Stdlib.In_channel.input_lines in
+      List.filter_mapi lines ~f:(fun lineno line ->
+        let payload =
+          match String.lsplit2 line ~on:'#' with
+          | Some (before, _) -> String.strip before
+          | None -> String.strip line
+        in
+        if String.is_empty payload then None
+        else
+          match Option.bind (string_of_hex payload) ~f:Tape.deserialize with
+          | Some choices -> Some (Ok (lineno + 1, choices))
+          | None -> Some (Error (lineno + 1)))
+      |> Result.combine_errors
+      |> Result.map_error ~f:(fun bad_lines ->
+           Error.create_s
+             [%message
+               "corrupt regression tape; delete the stale line to continue"
+                 (path : string)
+                 (bad_lines : int list)])
+
+  let append path ~choices ~comment =
+    Stdlib.Out_channel.with_open_gen
+      [ Open_append; Open_creat; Open_text ] 0o644 path
+      (fun oc ->
+        Stdlib.Printf.fprintf oc "%s # %s
+" (hex_of_string (Tape.serialize choices)) comment)
+end
+
 let result (type a e) ~(f : a -> (unit, e) Result.t)
-    ?(config = default_config) ?(examples = [])
+    ?(config = default_config) ?(examples = []) ?regressions
     (module M : Base_quickcheck.Test.S with type t = a) :
     (unit, a * e) Result.t =
   let test v = Result.is_ok (f v) in
+  (* Persisted failures replay first: they are the cheapest and the
+     most likely to fail again. *)
+  let regression_failure =
+    match regressions with
+    | None -> None
+    | Some path ->
+      (match Regressions.load path with
+       | Error err -> Error.raise err
+       | Ok entries ->
+         List.find_map entries ~f:(fun (_line, choices) ->
+           let value = Tape_engine.replay M.quickcheck_generator choices in
+           match f value with
+           | Ok () -> None
+           | Error e -> Some (Error (value, e))))
+  in
+  match regression_failure with
+  | Some err -> err
+  | None ->
   let example_failure =
     List.find_map examples ~f:(fun v ->
       match f v with
@@ -42,9 +112,13 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
            ~budget:config.shrink_count
        with
       | Tape_engine.Passed _ -> ()
-      | Tape_engine.Failed { minimal; _ } -> (
+      | Tape_engine.Failed { minimal; choices; _ } -> (
         match f minimal with
-        | Error e -> failure := Some (Error (minimal, e))
+        | Error e ->
+          Option.iter regressions ~f:(fun path ->
+            Regressions.append path ~choices
+              ~comment:(Sexp.to_string (M.sexp_of_t minimal)));
+          failure := Some (Error (minimal, e))
         | Ok () ->
           (* The shrunken value no longer fails deterministically;
              report it with no error payload path available, so rerun
@@ -58,10 +132,10 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
      | Some err -> err
      | None -> Ok ())
 
-let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples
+let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
     (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
   let f v = Or_error.try_with_join (fun () -> f v) in
-  match result ~f ?config ?examples (module M) with
+  match result ~f ?config ?examples ?regressions (module M) with
   | Ok () -> Ok ()
   | Error (input, error) ->
     Or_error.error_s
@@ -70,7 +144,7 @@ let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples
           (input : M.t)
           (error : Error.t)]
 
-let run_exn (type a) ~(f : a -> unit) ?config ?examples
+let run_exn (type a) ~(f : a -> unit) ?config ?examples ?regressions
     (module M : Base_quickcheck.Test.S with type t = a) : unit =
   let f v = Or_error.try_with (fun () -> f v) in
-  run ~f ?config ?examples (module M) |> Or_error.ok_exn
+  run ~f ?config ?examples ?regressions (module M) |> Or_error.ok_exn

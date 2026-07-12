@@ -169,6 +169,98 @@ let record_marker t =
     ignore (pop t ~matches:(function Marker -> true | _ -> false));
     record t Marker
 
+(* Serialization ("ct1", after the proptest tape engine's format):
+   version byte, then one record per choice. Deserialization is total
+   over well-formed records via clamping at replay time; a truncated
+   or unknown-tag input returns None. *)
+
+let buf_add_int64 buf v =
+  for shift = 0 to 7 do
+    Buffer.add_char buf
+      (Char.chr (Int64.to_int (Int64.logand (Int64.shift_right_logical v (shift * 8)) 0xffL)))
+  done
+
+let serialize (choices : choice array) : string =
+  let buf = Buffer.create (Array.length choices * 20) in
+  Buffer.add_char buf '\001';
+  Array.iter
+    (fun c ->
+      match c with
+      | Integer { value; lo; hi } ->
+        Buffer.add_char buf 'i';
+        buf_add_int64 buf value;
+        buf_add_int64 buf lo;
+        buf_add_int64 buf hi
+      | Float { value; lo; hi } ->
+        Buffer.add_char buf 'f';
+        buf_add_int64 buf (Int64.bits_of_float value);
+        buf_add_int64 buf (Int64.bits_of_float lo);
+        buf_add_int64 buf (Int64.bits_of_float hi)
+      | Bool b ->
+        Buffer.add_char buf 'b';
+        Buffer.add_char buf (if b then '\001' else '\000')
+      | Marker -> Buffer.add_char buf 'm')
+    choices;
+  Buffer.contents buf
+
+let deserialize (s : string) : choice array option =
+  let pos = ref 0 in
+  let len = String.length s in
+  let take_char () =
+    if !pos >= len then None
+    else begin
+      let c = s.[!pos] in
+      incr pos;
+      Some c
+    end
+  in
+  let take_int64 () =
+    if !pos + 8 > len then None
+    else begin
+      let v = ref 0L in
+      for shift = 7 downto 0 do
+        v :=
+          Int64.logor
+            (Int64.shift_left !v 8)
+            (Int64.of_int (Char.code s.[!pos + shift]))
+      done;
+      pos := !pos + 8;
+      Some !v
+    end
+  in
+  match take_char () with
+  | Some '\001' ->
+    let acc = ref [] in
+    let ok = ref true in
+    while !ok && !pos < len do
+      (match take_char () with
+       | Some 'i' ->
+         (match (take_int64 (), take_int64 (), take_int64 ()) with
+          | Some value, Some lo, Some hi ->
+            acc := Integer { value; lo; hi } :: !acc
+          | _ -> ok := false)
+       | Some 'f' ->
+         (match (take_int64 (), take_int64 (), take_int64 ()) with
+          | Some value, Some lo, Some hi ->
+            acc :=
+              Float
+                { value = Int64.float_of_bits value
+                ; lo = Int64.float_of_bits lo
+                ; hi = Int64.float_of_bits hi
+                }
+              :: !acc
+          | _ -> ok := false)
+       | Some 'b' ->
+         (match take_char () with
+          | Some '\000' -> acc := Bool false :: !acc
+          | Some '\001' -> acc := Bool true :: !acc
+          | _ -> ok := false)
+       | Some 'm' -> acc := Marker :: !acc
+       | _ -> ok := false)
+    done;
+    if !ok then Some (Array.of_list (List.rev !acc)) else None
+  | _ -> None
+
 (* Shortlex order: fewer choices first; ties broken choice-by-choice by
    distance from the shrink target (the value in [lo, hi] closest to
    zero), so "simpler" means shorter, then closer to zero. *)

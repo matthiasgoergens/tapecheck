@@ -189,7 +189,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      domains > 1, and accept the shortlex-best improvement if any. *)
   let attempt_batch proposals =
     let proposals =
-      List.take proposals (max 1 (min (domains * 4) (budget - !attempts)))
+      List.take proposals (max 1 (min 64 (budget - !attempts)))
     in
     match (proposals, pool) with
     | [], _ -> false
@@ -345,19 +345,53 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     !improved
   in
 
-  (* Bisect one integer choice toward its target. *)
+  (* Minimize one integer choice: exponential probes out from the
+     target (offsets 0, 1, 3, 7, ...), evaluated as one batch (parallel
+     when domains > 1; attempt_batch commits the smallest accepted
+     probe), then a sequential bisection inside the remaining bracket.
+     This is proptest's find_integer with a parallel probe phase. *)
   let minimize_integer i value lo hi =
     let target = clamp64 0L ~lo ~hi in
     let try_value v =
       attempt (with_choice !best_choices i (Tape.Integer { value = v; lo; hi }))
     in
-    if Int64.(value <> target) && not (try_value target) then begin
-      (* Invariant: target side fails to reproduce, current side does. *)
-      let low = ref target and high = ref value in
-      while Int64.(!high - !low > 1L) && !attempts < budget do
-        let mid = Int64.(!low + ((!high - !low) / 2L)) in
-        if try_value mid then high := mid else low := mid
-      done
+    if Int64.(value <> target) then begin
+      (* The probe phase only pays for itself when a pool evaluates the
+         probes concurrently; sequentially it just precedes the
+         bisection with redundant attempts. *)
+      (if Option.is_some pool then begin
+         let probes =
+           let rec go acc offset =
+             let v = Int64.( + ) target offset in
+             if Int64.(v >= value) || Int64.(v < target) then List.rev acc
+             else go (v :: acc) Int64.((offset * 2L) + 1L)
+           in
+           go [] 0L
+         in
+         let mk v =
+           with_choice !best_choices i (Tape.Integer { value = v; lo; hi })
+         in
+         ignore (attempt_batch (List.map probes ~f:mk) : bool)
+       end
+       else if Int64.(value <> target) then
+         ignore
+           (attempt
+              (with_choice !best_choices i
+                 (Tape.Integer { value = target; lo; hi }))
+             : bool));
+      (* Probe rejections must NOT raise the bisection floor: under a
+         filtered generator a rejection can mean "predicate refused
+         this exact value" (e.g. parity), not "too small". Probes only
+         fast-path acceptance; the bisection always starts at the
+         target. *)
+      match !best_choices.(i) with
+      | Tape.Integer { value = cur; _ } when Int64.(cur > target) ->
+        let low = ref target and high = ref cur in
+        while Int64.(!high - !low > 1L) && !attempts < budget do
+          let mid = Int64.(!low + ((!high - !low) / 2L)) in
+          if try_value mid then high := mid else low := mid
+        done
+      | _ -> ()
     end
   in
 
@@ -410,6 +444,20 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     continue_ := improved
   done;
   (!best_value, !attempts, !best_choices)
+
+(* Replay a persisted tape: regenerate the value it encodes. Replayed
+   values come from the tape itself, so [size] only guides draws past
+   the end of a stale tape. *)
+let replay (type a) (gen : a Base_quickcheck.Generator.t) ?(size = 30)
+    (choices : Tape.choice array) : a =
+  let tape = Tape.create () in
+  Tape.start_replay tape choices;
+  let random =
+    Splittable_random.For_tape.attach (Splittable_random.of_int 0x7ea9e) tape
+  in
+  let value = Base_quickcheck.Generator.generate gen ~size ~random in
+  let (_ : Tape.output) = Tape.finish tape in
+  value
 
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     ?(domains = 1) (gen : a Base_quickcheck.Generator.t)

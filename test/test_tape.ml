@@ -64,6 +64,29 @@ let () =
   let out5 = Tape.finish tape in
   check "truncation flagged as overrun" out5.Tape.overrun;
 
+  (* Serialization round-trips, including negative ints, floats with
+     odd payloads, bools, and markers. *)
+  let sample =
+    [| Tape.Integer { value = -42L; lo = Int64.min_int; hi = Int64.max_int }
+     ; Tape.Float { value = 2.5; lo = 0.; hi = 10. }
+     ; Tape.Bool true
+     ; Tape.Marker
+     ; Tape.Bool false
+    |]
+  in
+  let bytes = Tape.serialize sample in
+  (match Tape.deserialize bytes with
+  | Some back ->
+    check "serialize round-trips" (Tape.compare_shortlex sample back = 0);
+    check "same length" (Array.length back = Array.length sample)
+  | None -> failwith "FAILED: deserialize returned None");
+  (* Cutting mid-record is rejected; cutting at a record boundary
+     yields a valid shorter tape by design (prefix tolerance). *)
+  check "truncated input rejected"
+    (Option.is_none (Tape.deserialize (String.sub bytes 0 (String.length bytes - 1))));
+  check "bad version rejected"
+    (Option.is_none (Tape.deserialize ("\002" ^ String.sub bytes 1 (String.length bytes - 1))));
+
   (* Shortlex prefers values closer to zero at equal length. *)
   let small = [| Tape.Integer { value = 1L; lo = 0L; hi = 100L } |] in
   let big = [| Tape.Integer { value = 90L; lo = 0L; hi = 100L } |] in
