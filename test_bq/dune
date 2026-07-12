@@ -1,5 +1,5 @@
 (tests
- (names test_roundtrip test_shrink)
+ (names test_roundtrip test_shrink test_wrapper)
  (libraries base base_quickcheck splittable_random tape tape_engine)
  (preprocess
   (pps ppx_quickcheck ppx_sexp_conv ppx_compare ppx_let)))
