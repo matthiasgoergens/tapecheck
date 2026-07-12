@@ -66,8 +66,29 @@ as `Test.run` performs it). Full output:
 | filtered evens, fail iff >= 100 | 0/100 | 100/100 | 91 |
 | bind: length-prefixed list, sum >= 100 | 0/100 | 100/100 | 49 |
 
-The bind row has no derivable stock shrinker at all; the tape engine
-returns `[100]`, the global minimum.
+The bind row deserves elaboration, because it is where the models
+genuinely differ. The generator draws a length first and then a list
+that depends on it, a monadic bind:
+
+```ocaml
+let gen =
+  let%bind len = Generator.int_uniform_inclusive 1 64 in
+  Generator.list_with_length (Generator.int_uniform_inclusive 0 1000) ~length:len
+```
+
+The property fails whenever the list sums to at least 100, so the
+ideal counterexample is the one-element list `[100]`. For a
+`Shrinker.t` this generator is a dead end: shrinkers are derived from
+type structure, and an ad-hoc bind like this has no derivable
+shrinker at all, so `Test.run` reports whatever 64-element monster was
+generated. Even a hand-written list shrinker could not safely help,
+since it cannot know that the list's length was itself a generated
+value with its own constraints. The tape engine does not have the
+problem: the length is just the first recorded choice, so the engine
+lowers it while deleting one element's choices, replays the generator
+(which rebuilds a consistent, shorter list by construction), and
+repeats until nothing can be removed without the sum dropping below
+100, arriving at exactly `[100]`.
 
 ## Usage
 
