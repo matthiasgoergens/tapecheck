@@ -1,29 +1,29 @@
 (* Tape shim over Jane Street's splittable_random (vendored as
-   Sr_real). Implements the v0.17 public interface; when a tape is
-   installed via [For_tape.set_tape] and the state is one the engine
-   [For_tape.attach]ed, every draw is recorded as (or replayed from) a
-   typed tape choice. States produced by [split] are not taped:
-   generated functions draw from a fresh stream and do not shrink,
-   matching Hypothesis's limitation. *)
+   Sr_real). Implements the v0.17 public interface; when the engine
+   built the state with [For_tape.attach], every draw is recorded as
+   (or replayed from) a typed tape choice. States produced by [split]
+   are not taped: generated functions draw from a fresh stream and do
+   not shrink, matching Hypothesis's limitation. *)
 
 open! Base
 
 type t =
   { real : Sr_real.t
-  ; taped : bool
+  ; tape : Tape.t option
   }
 
 module For_tape = struct
-  let current : Tape.t option ref = ref None
-  let set_tape o = current := o
-  let attach t = { t with taped = true }
+  (* The tape rides inside the state: no global, so states built for
+     different shrink attempts are independent and evaluating attempts
+     in parallel domains is data-race-free by construction (each
+     attempt has its own Tape.t and its own Sr_real.t). *)
+  let attach t tape = { t with tape = Some tape }
 end
 
-let active t = if t.taped then !For_tape.current else None
-
-let create random = { real = Sr_real.create random; taped = false }
-let of_int n = { real = Sr_real.of_int n; taped = false }
-let copy t = { real = Sr_real.copy t.real; taped = t.taped }
+let active t = t.tape
+let create random = { real = Sr_real.create random; tape = None }
+let of_int n = { real = Sr_real.of_int n; tape = None }
+let copy t = { real = Sr_real.copy t.real; tape = t.tape }
 
 let marker t =
   match active t with
@@ -36,7 +36,7 @@ let perturb t salt =
 
 let split t =
   marker t;
-  { real = Sr_real.split t.real; taped = false }
+  { real = Sr_real.split t.real; tape = None }
 
 let bool t =
   match active t with

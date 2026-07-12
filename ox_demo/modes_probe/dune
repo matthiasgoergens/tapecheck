@@ -1,0 +1,8 @@
+; Compiles ONLY under the oxcaml profile: demonstrates the mode
+; checker rejecting the tape shim's global state when asked to treat
+; tape installation as portable (usable across domains).
+(executable
+ (name modes_probe)
+ (enabled_if
+  (= %{profile} oxcaml))
+ (libraries base splittable_random tape))

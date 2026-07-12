@@ -1,0 +1,8 @@
+File "ox_demo/modes_probe/modes_probe.ml", line 7, characters 26-61:
+7 |   { portable = (fun () -> Splittable_random.For_tape.set_tape None) }
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The value "Splittable_random.For_tape.set_tape" is "nonportable"
+       but is expected to be "portable"
+         because it is used inside the function at file "ox_demo/modes_probe/modes_probe.ml", line 7, characters 15-67
+         which is expected to be "portable"
+         because it is the field "portable" (with some modality) of the record at file "ox_demo/modes_probe/modes_probe.ml", line 7, characters 2-69.

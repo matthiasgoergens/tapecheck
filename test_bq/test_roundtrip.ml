@@ -16,15 +16,10 @@ let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
 let generate_with ~tape ~seed =
   let random =
-    Splittable_random.For_tape.attach (Splittable_random.of_int seed)
+    Splittable_random.For_tape.attach (Splittable_random.of_int seed) tape
   in
-  Splittable_random.For_tape.set_tape (Some tape);
-  let value =
-    Base_quickcheck.Generator.generate quickcheck_generator_point ~size:10
-      ~random
-  in
-  Splittable_random.For_tape.set_tape None;
-  value
+  Base_quickcheck.Generator.generate quickcheck_generator_point ~size:10
+    ~random
 
 let () =
   let tape = Tape.create () in
@@ -55,11 +50,9 @@ let () =
   check "different seeds differ untaped"
     (not (equal_point (fresh 42) (fresh 12345)));
 
-  (* An untaped state ignores the tape entirely. *)
+  (* An untaped state records nothing. *)
   Tape.start_recording tape;
-  Splittable_random.For_tape.set_tape (Some tape);
   let _ = fresh 42 in
-  Splittable_random.For_tape.set_tape None;
   let out3 = Tape.finish tape in
   check "untaped states record nothing" (Array.length out3.Tape.choices = 0);
 

@@ -1,0 +1,5 @@
+compiler: 5.3.0
+domains= 1  found 19/20  attempts  57000  wall   9.16s  cpu   9.14s
+domains= 4  found 19/20  attempts  57000  wall   2.98s  cpu  11.12s
+domains= 8  found 19/20  attempts  57000  wall   2.01s  cpu  12.92s
+domains=16  found 19/20  attempts  57000  wall   1.92s  cpu  21.63s

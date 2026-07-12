@@ -1,0 +1,27 @@
+File "engine/tape_engine.ml", line 119, characters 31-50:
+119 |       List.init n ~f:(fun _ -> Stdlib.Domain.spawn (fun () -> worker_loop t));
+                                     ^^^^^^^^^^^^^^^^^^^
+Alert do_not_spawn_domains: Stdlib.Domain.spawn
+User programs should never spawn domains. To execute a function on a domain, use [Multicore] from the threading library. This is because spawning more than [recommended_domain_count] domains (the CPU core count) will significantly degrade GC performance.
+
+File "engine/tape_engine.ml", line 119, characters 31-50:
+119 |       List.init n ~f:(fun _ -> Stdlib.Domain.spawn (fun () -> worker_loop t));
+                                     ^^^^^^^^^^^^^^^^^^^
+Alert unsafe_multidomain: Stdlib.Domain.spawn
+Use [Domain.Safe.spawn].
+File "engine/tape_engine.ml", line 119, characters 31-50:
+119 |       List.init n ~f:(fun _ -> Stdlib.Domain.spawn (fun () -> worker_loop t));
+                                     ^^^^^^^^^^^^^^^^^^^
+Alert do_not_spawn_domains: Stdlib.Domain.spawn
+User programs should never spawn domains. To execute a function on a domain, use [Multicore] from the threading library. This is because spawning more than [recommended_domain_count] domains (the CPU core count) will significantly degrade GC performance.
+
+File "engine/tape_engine.ml", line 119, characters 31-50:
+119 |       List.init n ~f:(fun _ -> Stdlib.Domain.spawn (fun () -> worker_loop t));
+                                     ^^^^^^^^^^^^^^^^^^^
+Alert unsafe_multidomain: Stdlib.Domain.spawn
+Use [Domain.Safe.spawn].
+compiler: 5.2.0+ox
+domains= 1  found 19/20  attempts  57000  wall   8.03s  cpu   8.02s
+domains= 4  found 19/20  attempts  57000  wall   2.71s  cpu   9.55s
+domains= 8  found 19/20  attempts  57000  wall   2.00s  cpu  11.91s
+domains=16  found 19/20  attempts  57000  wall   2.32s  cpu  24.74s

@@ -58,21 +58,111 @@ let with_deleted_block tape_choices ~pos ~len =
 let run_case (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size ~seed
     : a * Tape.output =
   let random =
-    Splittable_random.For_tape.attach (Splittable_random.of_int seed)
+    Splittable_random.For_tape.attach (Splittable_random.of_int seed) tape
   in
-  Splittable_random.For_tape.set_tape (Some tape);
-  let value =
-    try Base_quickcheck.Generator.generate gen ~size ~random with
-    | e ->
-      Splittable_random.For_tape.set_tape None;
-      raise e
-  in
-  Splittable_random.For_tape.set_tape None;
+  let value = Base_quickcheck.Generator.generate gen ~size ~random in
   (value, Tape.finish tape)
 
+(* A persistent worker pool: domains are expensive to spawn (each
+   registers a GC domain), so spawn once per shrink and feed batches
+   through a mutex-protected queue. *)
+module Pool = struct
+  type 'r t =
+    { mutex : Stdlib.Mutex.t
+    ; nonempty : Stdlib.Condition.t
+    ; all_done : Stdlib.Condition.t
+    ; mutable queue : (int * (unit -> 'r)) list
+    ; mutable results : 'r option array
+    ; mutable pending : int
+    ; mutable stop : bool
+    ; mutable workers : unit Stdlib.Domain.t list
+    }
+
+  let rec worker_loop t =
+    Stdlib.Mutex.lock t.mutex;
+    let rec take () =
+      if t.stop then None
+      else
+        match t.queue with
+        | [] ->
+          Stdlib.Condition.wait t.nonempty t.mutex;
+          take ()
+        | (i, task) :: rest ->
+          t.queue <- rest;
+          Some (i, task)
+    in
+    match take () with
+    | None -> Stdlib.Mutex.unlock t.mutex
+    | Some (i, task) ->
+      Stdlib.Mutex.unlock t.mutex;
+      let r = task () in
+      Stdlib.Mutex.lock t.mutex;
+      t.results.(i) <- Some r;
+      t.pending <- t.pending - 1;
+      if t.pending = 0 then Stdlib.Condition.signal t.all_done;
+      Stdlib.Mutex.unlock t.mutex;
+      worker_loop t
+
+  let create n =
+    let t =
+      { mutex = Stdlib.Mutex.create ()
+      ; nonempty = Stdlib.Condition.create ()
+      ; all_done = Stdlib.Condition.create ()
+      ; queue = []
+      ; results = [||]
+      ; pending = 0
+      ; stop = false
+      ; workers = []
+      }
+    in
+    t.workers <-
+      List.init n ~f:(fun _ -> Stdlib.Domain.spawn (fun () -> worker_loop t));
+    t
+
+  (* Run tasks to completion; returns results in task order. *)
+  let run_batch t tasks =
+    let tasks = Array.of_list tasks in
+    let n = Array.length tasks in
+    Stdlib.Mutex.lock t.mutex;
+    t.results <- Array.create ~len:n None;
+    t.pending <- n;
+    t.queue <- Array.to_list (Array.mapi tasks ~f:(fun i task -> (i, task)));
+    Stdlib.Condition.broadcast t.nonempty;
+    while t.pending > 0 do
+      Stdlib.Condition.wait t.all_done t.mutex
+    done;
+    let results = t.results in
+    Stdlib.Mutex.unlock t.mutex;
+    List.filter_opt (Array.to_list results)
+
+  let shutdown t =
+    Stdlib.Mutex.lock t.mutex;
+    t.stop <- true;
+    Stdlib.Condition.broadcast t.nonempty;
+    Stdlib.Mutex.unlock t.mutex;
+    List.iter t.workers ~f:Stdlib.Domain.join
+end
+
+(* Evaluate one proposal in isolation: own tape, own RNG, no shared
+   state. Safe to run in a separate domain when the generator and test
+   are thread-safe. *)
+let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
+    ~(test : a -> bool) proposal =
+  let tape = Tape.create () in
+  Tape.start_replay tape proposal;
+  let random =
+    Splittable_random.For_tape.attach (Splittable_random.of_int 0x7ea9e) tape
+  in
+  let value = Base_quickcheck.Generator.generate gen ~size ~random in
+  let out = Tape.finish tape in
+  if out.Tape.overrun then None
+  else if test value then None
+  else Some (out.Tape.choices, value)
+
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
-    ~(test : a -> bool) ~budget ~(initial_tape : Tape.choice array)
-    ~(initial_value : a) : a * int * Tape.choice array =
+    ~(test : a -> bool) ~budget ~domains ~pool
+    ~(initial_tape : Tape.choice array) ~(initial_value : a) :
+    a * int * Tape.choice array =
   let best_choices = ref initial_tape in
   let best_value = ref initial_value in
   let attempts = ref 0 in
@@ -93,6 +183,36 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       end
       else false
     end
+  in
+
+  (* Evaluate several independent proposals, in parallel domains when
+     domains > 1, and accept the shortlex-best improvement if any. *)
+  let attempt_batch proposals =
+    let proposals =
+      List.take proposals (max 1 (min (domains * 4) (budget - !attempts)))
+    in
+    match (proposals, pool) with
+    | [], _ -> false
+    | [ p ], _ -> attempt p
+    | ps, None -> List.exists ps ~f:attempt
+    | ps, Some pool ->
+      let results =
+        Pool.run_batch pool
+          (List.map ps ~f:(fun p () -> eval_proposal ~gen ~size ~test p))
+      in
+      attempts := !attempts + List.length ps;
+      let best_new =
+        List.filter_opt results
+        |> List.min_elt ~compare:(fun (a, _) (b, _) ->
+             Tape.compare_shortlex a b)
+      in
+      (match best_new with
+       | Some (choices, value)
+         when Tape.compare_shortlex choices !best_choices < 0 ->
+         best_choices := choices;
+         best_value := value;
+         true
+       | _ -> false)
   in
 
   (* Pass 1: everything to target at once. *)
@@ -130,12 +250,18 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
             && !j <= Array.length !best_choices - !k
             && !attempts < budget
           do
-            let proposal =
-              with_deleted_block
-                (with_choice !best_choices !i lowered)
-                ~pos:!j ~len:!k
+            let batch =
+              List.filter_map
+                (List.init (max 1 (domains * 4)) ~f:(fun d -> !j + d))
+                ~f:(fun j ->
+                  if j <= Array.length !best_choices - !k then
+                    Some
+                      (with_deleted_block
+                         (with_choice !best_choices !i lowered)
+                         ~pos:j ~len:!k)
+                  else None)
             in
-            if attempt proposal then begin
+            if attempt_batch batch then begin
               accepted := true;
               improved := true;
               (* Greedily repeat the same edit shape in place while it
@@ -157,7 +283,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                 | _ -> again := false
               done
             end
-            else Int.incr j
+            else j := !j + max 1 (domains * 4)
           done;
           Int.incr k
         done;
@@ -286,34 +412,63 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   (!best_value, !attempts, !best_choices)
 
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
-    (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool) : a result =
+    ?(domains = 1) (gen : a Base_quickcheck.Generator.t)
+    ~(test : a -> bool) : a result =
   let tape = Tape.create () in
-  let outcome = ref None in
-  let case = ref 0 in
-  while Option.is_none !outcome && !case < count do
-    Tape.start_recording tape;
-    let value, out = run_case ~tape ~gen ~size ~seed:(seed + !case) in
-    if not (test value) then begin
-      let all_trivial = Array.for_all out.Tape.choices ~f:choice_at_target in
+  let pool = if domains > 1 then Some (Pool.create domains) else None in
+  (* Find the first failing case. With a pool, generate and test cases
+     in parallel batches; taking the lowest failing index in the batch
+     preserves the sequential engine's choice of failure exactly. *)
+  let first_failure =
+    match pool with
+    | None ->
+      let found = ref None in
+      let case = ref 0 in
+      while Option.is_none !found && !case < count do
+        Tape.start_recording tape;
+        let value, out = run_case ~tape ~gen ~size ~seed:(seed + !case) in
+        if not (test value) then found := Some (out.Tape.choices, value);
+        Int.incr case
+      done;
+      !found
+    | Some pool ->
+      let found = ref None in
+      let batch_start = ref 0 in
+      let width = domains * 2 in
+      while Option.is_none !found && !batch_start < count do
+        let n = min width (count - !batch_start) in
+        let results =
+          Pool.run_batch pool
+            (List.init n ~f:(fun d () ->
+               let tape = Tape.create () in
+               Tape.start_recording tape;
+               let value, out =
+                 run_case ~tape ~gen ~size ~seed:(seed + !batch_start + d)
+               in
+               if test value then None else Some (out.Tape.choices, value)))
+        in
+        (* run_batch preserves task order, so the first Some is the
+           lowest failing case index. *)
+        found := List.find_map results ~f:Fn.id;
+        batch_start := !batch_start + n
+      done;
+      !found
+  in
+  let outcome =
+    match first_failure with
+    | None -> Passed { cases = count }
+    | Some (choices0, value) ->
+      let all_trivial = Array.for_all choices0 ~f:choice_at_target in
       if all_trivial then
-        outcome :=
-          Some
-            (Failed
-               { minimal = value
-               ; original = value
-               ; attempts = 0
-               ; choices = out.Tape.choices
-               })
+        Failed
+          { minimal = value; original = value; attempts = 0; choices = choices0 }
       else begin
         let minimal, attempts, choices =
-          shrink ~tape ~gen ~size ~test ~budget
-            ~initial_tape:out.Tape.choices ~initial_value:value
+          shrink ~tape ~gen ~size ~test ~budget ~domains ~pool
+            ~initial_tape:choices0 ~initial_value:value
         in
-        outcome := Some (Failed { minimal; original = value; attempts; choices })
+        Failed { minimal; original = value; attempts; choices }
       end
-    end;
-    Int.incr case
-  done;
-  match !outcome with
-  | Some r -> r
-  | None -> Passed { cases = count }
+  in
+  Option.iter pool ~f:Pool.shutdown;
+  outcome
