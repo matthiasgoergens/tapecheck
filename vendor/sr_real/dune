@@ -1,0 +1,9 @@
+; Jane Street's splittable_random v0.17 implementation, vendored
+; verbatim (renamed module) so the tape shim can delegate to it while
+; owning the `splittable_random` library name in this workspace.
+(library
+ (name sr_real)
+ (libraries base)
+ (inline_tests)
+ (preprocess
+  (pps ppx_assert ppx_bench ppx_inline_test ppx_sexp_message)))

@@ -1,0 +1,2 @@
+; vendor-study holds throwaway upstream clones for reading only.
+(dirs :standard \ vendor-study)
