@@ -57,14 +57,14 @@ both shrinkers ("stock" is base_quickcheck's own greedy loop, exactly
 as `Test.run` performs it). Full output:
 [design/shrink-table-results.txt](design/shrink-table-results.txt).
 
-| property | stock minimal | tape minimal | tape avg calls |
+| property (each links to its definition) | stock minimal | tape minimal | tape avg calls |
 |---|---|---|---|
-| int uniform, fail iff >= 123457 | 0/100 | 100/100 | 38 |
-| pair, fail iff a + b >= 100 | 0/100 | 100/100 | 22 |
-| list, fail iff length >= 3 | 0/100 | 100/100 | 466 |
-| list, fail iff sum >= 100 | 0/100 | 100/100 | 98 |
-| filtered evens, fail iff >= 100 | 0/100 | 100/100 | 91 |
-| bind: length-prefixed list, sum >= 100 | 0/100 | 100/100 | 49 |
+| [int uniform, fail iff >= 123457](demo/shrink_table.ml#L114) | 0/100 | 100/100 | 38 |
+| [pair, fail iff a + b >= 100](demo/shrink_table.ml#L121) | 0/100 | 100/100 | 22 |
+| [list, fail iff length >= 3](demo/shrink_table.ml#L128) | 0/100 | 100/100 | 466 |
+| [list, fail iff sum >= 100](demo/shrink_table.ml#L135) | 0/100 | 100/100 | 98 |
+| [filtered evens, fail iff >= 100](demo/shrink_table.ml#L142) | 0/100 | 100/100 | 91 |
+| [bind: length-prefixed list, sum >= 100](demo/shrink_table.ml#L149) | 0/100 | 100/100 | 49 |
 
 The bind row deserves elaboration, because it is where the models
 genuinely differ. The generator draws a length first and then a list
