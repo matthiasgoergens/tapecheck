@@ -1,12 +1,30 @@
 # tapecheck: choice-tape shrinking for base_quickcheck
 
-Hypothesis-style integrated shrinking for OCaml property tests, with
-**zero changes to your generators**. Record every random decision a
-generator makes as a typed, bounded choice; shrink a failing test by
-editing the recorded tape and replaying generation, accepting an edit
-only if the test still fails and the recording got shorter or simpler.
-A shrink proposal can never violate a generator invariant, because a
-proposal is not a value: it is an input to your own generator.
+In property-based testing (QuickCheck, Hypothesis, and in OCaml
+[base_quickcheck](https://github.com/janestreet/base_quickcheck)), you
+state a property ("decoding an encoded message returns the original")
+and the library checks it against hundreds of randomly generated
+inputs. When an input fails, the raw random value is usually big and
+noisy: a 40-element list of nine-digit numbers, where the actual bug
+only needs `[100]`. *Shrinking* is the automated search for a smaller,
+simpler input that still fails, and it makes the difference between a
+counterexample you debug in a minute and one you stare at for an
+afternoon.
+
+Shrinking is hard to do well, because a shrinker that edits values
+directly knows nothing about the *generator* that produced them (the
+recipe turning random draws into your test inputs): halve an even
+number and you may hand an odd one to a test that assumed evenness.
+tapecheck takes a different route, ported from Python Hypothesis:
+record every random decision the generator makes as a typed, bounded
+choice on a tape; shrink by editing the tape and running the generator
+again on it, accepting an edit only if the test still fails and the
+recording got shorter or simpler. A shrink proposal can never violate
+a generator invariant, because a proposal is not a value: it is an
+input to your own generator. And because the tape is recorded
+underneath the generator, your existing generators, including
+everything `[@@deriving quickcheck]` produces, participate with
+**zero changes**.
 
 This is a port of the [Conjecture
 model](https://hypothesis.works/articles/how-hypothesis-works/) (the
