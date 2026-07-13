@@ -162,18 +162,44 @@ end
 (* Evaluate one proposal in isolation: own tape, own RNG, no shared
    state. Safe to run in a separate domain when the generator and test
    are thread-safe. *)
-let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
-    ~(test : a -> bool) proposal =
+(* One replay under [policy] on a private tape (own domain safety);
+   returns (misaligned, still-failing-candidate). *)
+let eval_once (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
+    ~(test : a -> bool) ~policy proposal =
   let tape = Tape.create () in
-  Tape.start_replay tape proposal;
+  Tape.start_replay ~policy tape proposal;
   let random =
-    Splittable_random.For_tape.attach (Splittable_random.of_int replay_fresh_seed) tape
+    Splittable_random.For_tape.attach
+      (Splittable_random.of_int replay_fresh_seed)
+      tape
   in
   let value = Base_quickcheck.Generator.generate gen ~size ~random in
   let out = Tape.finish tape in
-  if out.Tape.overrun then None
-  else if test value then None
-  else Some (out.Tape.choices, value)
+  if out.Tape.overrun then (out.Tape.misaligned, None)
+  else if test value then (out.Tape.misaligned, None)
+  else (out.Tape.misaligned, Some (out.Tape.choices, value))
+
+(* Pool-side proposal evaluation honouring the realign policy, so a
+   pooled run reaches the SAME result as the sequential engine at any
+   ?domains (only [`Both] on a misaligned proposal does the second
+   replay). *)
+let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
+    ~(test : a -> bool) ~(realign : [ `Consume | `Freeze | `Both ]) proposal =
+  let primary, secondary =
+    match realign with
+    | `Freeze -> (Tape.Freeze, Tape.Consume)
+    | `Consume | `Both -> (Tape.Consume, Tape.Freeze)
+  in
+  let mis1, c1 = eval_once ~gen ~size ~test ~policy:primary proposal in
+  let cands =
+    match realign with
+    | `Both when mis1 ->
+      let _mis2, c2 = eval_once ~gen ~size ~test ~policy:secondary proposal in
+      [ c1; c2 ]
+    | _ -> [ c1 ]
+  in
+  List.filter_opt cands
+  |> List.min_elt ~compare:(fun (a, _) (b, _) -> Tape.compare_shortlex a b)
 
 (* Realignment strategy for kind mismatches during shrink replay.
    [`Consume] and [`Freeze] use one fixed policy; [`Both] replays a
@@ -281,7 +307,8 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     | ps, Some pool ->
       let results =
         Pool.run_batch pool
-          (List.map ps ~f:(fun p () -> eval_proposal ~gen ~size ~test p))
+          (List.map ps ~f:(fun p () ->
+               eval_proposal ~gen ~size ~test ~realign p))
       in
       attempts := !attempts + List.length ps;
       let accepted =
