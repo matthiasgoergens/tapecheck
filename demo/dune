@@ -1,5 +1,5 @@
-(executable
- (name shrink_table)
+(executables
+ (names shrink_table bench_realign)
  (enabled_if
   (<> %{profile} oxcaml))
  (libraries base stdio base_quickcheck splittable_random tape tape_engine)

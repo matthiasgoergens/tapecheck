@@ -175,29 +175,87 @@ let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
   else if test value then None
   else Some (out.Tape.choices, value)
 
+(* Realignment strategy for kind mismatches during shrink replay.
+   [`Consume] and [`Freeze] use one fixed policy; [`Both] replays a
+   MISALIGNED proposal under both and keeps the shortlex-better still
+   -failing result (neither policy dominates, and accepted shrinks
+   re-verify through the test, so trying both is sound and >= either
+   alone). Aligned proposals never pay the second replay. *)
+type realign =
+  [ `Consume
+  | `Freeze
+  | `Both
+  ]
+
+(* True cost of a shrink, separate from the proposal-count budget:
+   [replays] generation runs, [tests] test executions, [misaligns]
+   proposals whose replay hit a kind mismatch (the only ones on which
+   [`Both] does extra work). *)
+type stats =
+  { mutable replays : int
+  ; mutable tests : int
+  ; mutable misaligns : int
+  }
+
+let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
+
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
-    ~(test : a -> bool) ~budget ~domains ~pool
-    ~(initial_tape : Tape.choice array) ~(initial_value : a) :
-    a * int * Tape.choice array =
+    ~(test : a -> bool) ~budget ~domains ~pool ~(realign : realign)
+    ~(stats : stats) ~(initial_tape : Tape.choice array)
+    ~(initial_value : a) : a * int * Tape.choice array =
   let best_choices = ref initial_tape in
   let best_value = ref initial_value in
   let attempts = ref 0 in
 
-  (* Replay [proposal]; accept iff still failing and shortlex-smaller. *)
+  (* One replay under [policy]; count it, and return a candidate
+     (choices, value) iff it is still-failing (could be accepted),
+     together with whether the replay misaligned. *)
+  let candidate ~policy proposal =
+    Tape.start_replay ~policy tape proposal;
+    let value, out = run_case ~tape ~gen ~size ~seed:replay_fresh_seed in
+    stats.replays <- stats.replays + 1;
+    if out.Tape.misaligned then stats.misaligns <- stats.misaligns + 1;
+    if out.Tape.overrun then (out.Tape.misaligned, None)
+    else begin
+      stats.tests <- stats.tests + 1;
+      if test value then (out.Tape.misaligned, None)
+      else (out.Tape.misaligned, Some (out.Tape.choices, value))
+    end
+  in
+
+  (* Replay [proposal]; accept iff still failing and shortlex-smaller.
+     One logical proposal = one budget tick, regardless of how many
+     replays [`Both] spends on it (shrinking is off the CI happy path;
+     spend to hand a human a smaller example). *)
   let attempt proposal =
     if !attempts >= budget then false
     else begin
       Int.incr attempts;
-      Tape.start_replay tape proposal;
-      let value, out = run_case ~tape ~gen ~size ~seed:replay_fresh_seed in
-      if out.Tape.overrun then false
-      else if test value then false
-      else if Tape.compare_shortlex out.Tape.choices !best_choices < 0 then begin
-        best_choices := out.Tape.choices;
+      let primary, secondary =
+        match realign with
+        | `Freeze -> (Tape.Freeze, Tape.Consume)
+        | `Consume | `Both -> (Tape.Consume, Tape.Freeze)
+      in
+      let mis1, c1 = candidate ~policy:primary proposal in
+      let cands =
+        match realign with
+        | `Both when mis1 ->
+          let _mis2, c2 = candidate ~policy:secondary proposal in
+          [ c1; c2 ]
+        | _ -> [ c1 ]
+      in
+      let best_cand =
+        List.filter_opt cands
+        |> List.min_elt ~compare:(fun (a, _) (b, _) ->
+             Tape.compare_shortlex a b)
+      in
+      match best_cand with
+      | Some (choices, value)
+        when Tape.compare_shortlex choices !best_choices < 0 ->
+        best_choices := choices;
         best_value := value;
         true
-      end
-      else false
+      | _ -> false
     end
   in
 
@@ -493,8 +551,9 @@ let replay (type a) (gen : a Base_quickcheck.Generator.t) ?(size = 30)
   value
 
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
-    ?(domains = 1) (gen : a Base_quickcheck.Generator.t)
-    ~(test : a -> bool) : a result =
+    ?(domains = 1) ?(realign : realign = `Consume) ?stats
+    (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool) : a result =
+  let stats = match stats with Some s -> s | None -> no_stats () in
   let tape = Tape.create () in
   let pool = if domains > 1 then Some (Pool.create domains) else None in
   (* Find the first failing case. With a pool, generate and test cases
@@ -545,8 +604,8 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
           { minimal = value; original = value; attempts = 0; choices = choices0 }
       else begin
         let minimal, attempts, choices =
-          shrink ~tape ~gen ~size ~test ~budget ~domains ~pool
-            ~initial_tape:choices0 ~initial_value:value
+          shrink ~tape ~gen ~size ~test ~budget ~domains ~pool ~realign
+            ~stats ~initial_tape:choices0 ~initial_value:value
         in
         Failed { minimal; original = value; attempts; choices }
       end
