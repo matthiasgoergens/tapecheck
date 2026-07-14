@@ -118,6 +118,18 @@ reproduction of the failing value, independent of RNG seeds, robust
 to distribution changes. Corrupt entries fail loudly rather than
 silently passing.
 
+`?realign` (default `` `Both ``) controls how shrink replay handles a
+kind mismatch, which arises when an edit changes the shape of a
+generator (flipping a tag that selects a differently shaped branch).
+Two policies exist and neither dominates: `` `Consume `` skips the
+stale entry and resyncs, `` `Freeze `` holds it for a later same-kind
+draw. `` `Both `` replays a misaligned proposal under both and keeps
+the shortlex-better result: never worse than either, free on
+proposals that stay aligned (the common case), and a modest extra cost
+only on the misaligned minority. It reaches the canonical simplest
+example more often on shape-changing (`bind`/union) generators. See
+[design/realign-bench-results.txt](design/realign-bench-results.txt).
+
 `Tape_engine.run` is the lower-level entry point; `?domains:n`
 evaluates generation cases and shrink proposals in parallel (worker
 pool). Accepted-edit sequences and results are identical to the

@@ -1,0 +1,60 @@
+aligned baseline: list, fail iff sum >= 100 (200 seeds)
+  policy    found  minimal   avg-size   replays   tests   misaligned
+  consume   200/200  200/200      101.0      41.8    39.0       0
+  freeze    200/200  200/200      101.0      41.8    39.0       0
+  both      200/200  200/200      101.0      41.8    39.0       0
+
+freeze-favouring: tag selects (int,int) vs (bool,int) (200 seeds)
+  policy    found  minimal   avg-size   replays   tests   misaligned
+  consume   200/200   92/200      100.0      22.0    19.8     324
+  freeze    200/200  136/200      100.0      21.2    20.6     280
+  both      200/200  136/200      100.0      22.6    20.6     560
+
+consume-favouring: tag selects (bool^2,int,int) vs (int,int) (200 seeds)
+  policy    found  minimal   avg-size   replays   tests   misaligned
+  consume   200/200  200/200      100.0      22.7    21.7     202
+  freeze    200/200  200/200      100.0      22.0    21.0     101
+  both      200/200  200/200      100.0      22.5    21.5     202
+
+
+## Interpretation (2026-07-13)
+
+Setup: 200 seeds, budget 4000, three shrink-replay realignment
+policies. "minimal" = reached the exact stated ideal (the canonical
+shortlex-smallest example). "avg-size" = mean failing magnitude
+(a+b, or c). replays/tests = mean generation runs and test executions
+per found case (the true cost). misaligned = total proposals whose
+replay hit a kind mismatch.
+
+Findings:
+
+1. FREE WHEN ALIGNED. Baseline never misaligns; `both costs exactly
+   the same as consume/freeze (41.8 replays, 39.0 tests, identical to
+   the digit). The misalignment gate means aligned shrinking pays
+   nothing.
+
+2. NEVER WORSE, SOMETIMES BETTER. `both matches the better fixed
+   policy on every generator. On freeze-favouring it reached the
+   canonical shortlex-minimal example 136/200 vs consume's 92/200
+   (+48%): a real quality win, because that ideal lives in the
+   shape whose tag choice is smaller, and consume loses shrink
+   progress crossing to it while freeze/both carry it across.
+
+3. TINY COST. Extra replays only on the misaligned minority: +0% on
+   baseline, +0.6 replays (+3%) on freeze-favouring, ~noise on
+   consume-favouring. Tests essentially unchanged.
+
+4. THE PASS SUITE REPAIRS MAGNITUDE. All policies reach avg-size 100
+   everywhere, and the consume-favouring generator ties at 200/200:
+   redistribute + per-choice minimization drive the values to the
+   boundary regardless of what a bad realignment scrambled, given a
+   generous budget. So `both's win is specifically about reaching the
+   canonical minimal FORM more often on shape-changing generators, NOT
+   about failing magnitude (which the other passes already handle).
+
+Bottom line: try-both is sound, free when aligned, cheap (~0-3%) when
+not, and never underperforms either fixed policy. Its concrete payoff
+is more canonical-form minimal examples on generators that change
+shape under shrinking (bind/union/tag), which are exactly the hard
+cases the tape engine exists for. It is a low-cost, low-risk,
+occasionally-meaningful addition rather than a dramatic win.

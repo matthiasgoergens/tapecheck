@@ -21,6 +21,16 @@ type mode =
   | Recording
   | Replaying
 
+(* Realignment policy for kind mismatches during replay. [Consume]
+   skips the mismatched input entry and retries at the next position
+   (resyncs clean insertions/deletions); [Freeze] leaves the position
+   put and fresh-samples just this draw (holds the entry for a later
+   same-kind draw). Neither dominates; the engine can try both and keep
+   the shortlex-better result. *)
+type policy =
+  | Consume
+  | Freeze
+
 type t = {
   mutable mode : mode;
   (* Output side: choices recorded so far, in reverse. Both recording
@@ -33,6 +43,7 @@ type t = {
   mutable pos : int;
   mutable overrun : bool;
   mutable misaligned : bool;
+  mutable policy : policy;
 }
 
 let create () =
@@ -43,6 +54,7 @@ let create () =
     pos = 0;
     overrun = false;
     misaligned = false;
+    policy = Consume;
   }
 
 let reset_output t = t.recorded <- []
@@ -55,26 +67,28 @@ let start_recording t =
   t.overrun <- false;
   t.misaligned <- false
 
-let start_replay t input =
+let start_replay ?(policy = Consume) t input =
   reset_output t;
   t.mode <- Replaying;
   t.input <- input;
   t.pos <- 0;
   t.overrun <- false;
-  t.misaligned <- false
+  t.misaligned <- false;
+  t.policy <- policy
 
-type output = { choices : choice array; overrun : bool }
+type output = { choices : choice array; overrun : bool; misaligned : bool }
 
 let finish t =
   let choices = Array.of_list (List.rev t.recorded) in
   let overrun = t.overrun in
+  let misaligned = t.misaligned in
   t.mode <- Off;
   reset_output t;
   t.input <- [||];
   t.pos <- 0;
   t.overrun <- false;
   t.misaligned <- false;
-  { choices; overrun }
+  { choices; overrun; misaligned }
 
 let record t choice = t.recorded <- choice :: t.recorded
 
@@ -89,22 +103,33 @@ let pop t ~matches =
   match t.mode with
   | Off | Recording -> None
   | Replaying ->
-    let rec go () =
-      if t.pos >= Array.length t.input then begin
-        t.overrun <- true;
-        None
-      end
-      else begin
-        let c = t.input.(t.pos) in
-        t.pos <- t.pos + 1;
-        if matches c then Some c
-        else begin
-          t.misaligned <- true;
-          go ()
-        end
-      end
+    let take_here () =
+      let c = t.input.(t.pos) in
+      t.pos <- t.pos + 1;
+      c
     in
-    go ()
+    let rec consume () =
+      if t.pos >= Array.length t.input then (
+        t.overrun <- true;
+        None)
+      else if matches t.input.(t.pos) then Some (take_here ())
+      else (
+        t.misaligned <- true;
+        ignore (take_here ());
+        consume ())
+    in
+    if t.pos >= Array.length t.input then (
+      t.overrun <- true;
+      None)
+    else if matches t.input.(t.pos) then Some (take_here ())
+    else (
+      t.misaligned <- true;
+      match t.policy with
+      | Freeze -> None (* leave the position; fresh-sample this draw *)
+      | Consume ->
+        (* skip the mismatched entry, retry at the next position *)
+        ignore (take_here ());
+        consume ())
 
 let clamp_int64 v ~lo ~hi = if v < lo then lo else if v > hi then hi else v
 

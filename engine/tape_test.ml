@@ -83,6 +83,7 @@ end
 
 let result (type a e) ~(f : a -> (unit, e) Result.t)
     ?(config = default_config) ?(examples = []) ?regressions
+    ?(realign = `Both)
     (module M : Base_quickcheck.Test.S with type t = a) :
     (unit, a * e) Result.t =
   let test v = Result.is_ok (f v) in
@@ -155,7 +156,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     let sizes = Array.of_list sizes in
     while Option.is_none !failure && !case < Array.length sizes do
       (match
-         Tape_engine.run M.quickcheck_generator ~test
+         Tape_engine.run M.quickcheck_generator ~test ~realign
            ~seed:(base_seed + !case) ~count:1 ~size:sizes.(!case)
            ~budget:config.shrink_count
        with
@@ -181,9 +182,10 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
      | None -> Ok ())
 
 let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
-    (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
+    ?realign (module M : Base_quickcheck.Test.S with type t = a) :
+    unit Or_error.t =
   let f v = Or_error.try_with_join (fun () -> f v) in
-  match result ~f ?config ?examples ?regressions (module M) with
+  match result ~f ?config ?examples ?regressions ?realign (module M) with
   | Ok () -> Ok ()
   | Error (input, error) ->
     Or_error.error_s
@@ -193,6 +195,6 @@ let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
           (error : Error.t)]
 
 let run_exn (type a) ~(f : a -> unit) ?config ?examples ?regressions
-    (module M : Base_quickcheck.Test.S with type t = a) : unit =
+    ?realign (module M : Base_quickcheck.Test.S with type t = a) : unit =
   let f v = Or_error.try_with (fun () -> f v) in
-  run ~f ?config ?examples ?regressions (module M) |> Or_error.ok_exn
+  run ~f ?config ?examples ?regressions ?realign (module M) |> Or_error.ok_exn

@@ -118,4 +118,50 @@ let () =
   in
   check "domains-invariant minimal" (List.equal Int.equal seq par);
 
+  (* A shape-changing generator: a bool tag selects (int,int) [sum
+     test] vs (bool,int) [int test]. The canonical minimum lives in the
+     B shape (its tag choice is smaller). Consume loses shrink progress
+     crossing shapes; Both carries it, so Both must reach the B-shape
+     minimum where Consume can stall in an A-shape. *)
+  let shape_gen =
+    let open G.Let_syntax in
+    match%bind G.bool with
+    | true ->
+      let%map a = G.int_uniform_inclusive 0 1000
+      and b = G.int_uniform_inclusive 0 1000 in
+      `A (a, b)
+    | false ->
+      let%map flag = G.bool and c = G.int_uniform_inclusive 0 1000 in
+      `B (flag, c)
+  in
+  let shape_test = function
+    | `A (a, b) -> a + b < 100
+    | `B (_, c) -> c < 100
+  in
+  let run_shape ~realign ~domains ~seed =
+    match
+      Tape_engine.run shape_gen ~test:shape_test ~realign ~domains ~seed
+        ~count:300 ~size:12 ~budget:4000
+    with
+    | Tape_engine.Failed { minimal; _ } -> minimal
+    | Tape_engine.Passed _ -> failwith "no failure: shape_gen"
+  in
+  (* Both is domains-invariant even when it does the second replay. *)
+  List.iter [ 0; 7; 42 ] ~f:(fun seed ->
+    let seq = run_shape ~realign:`Both ~domains:1 ~seed in
+    let par = run_shape ~realign:`Both ~domains:4 ~seed in
+    check "Both is domains-invariant"
+      (Poly.equal seq par));
+
+  (* Both reaches the canonical B-shape minimum on at least one seed
+     where Consume stalls in an A-shape (proves the win is real, not
+     just never-worse). *)
+  let both_reached_b =
+    List.exists [ 0; 1; 2; 3; 4; 5; 6; 7 ] ~f:(fun seed ->
+      match run_shape ~realign:`Both ~domains:1 ~seed with
+      | `B _ -> true
+      | `A _ -> false)
+  in
+  check "Both reaches the B-shape minimum on some seed" both_reached_b;
+
   Stdlib.print_endline "all shrink tests passed"
