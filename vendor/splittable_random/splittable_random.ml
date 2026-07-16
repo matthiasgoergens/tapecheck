@@ -5,7 +5,9 @@
    Log_uniform) reaches the [int64] hook with its bounds, because
    upstream funnels them through [int64]. States produced by [split]
    are hook-free after an [on_split] marker: generated functions draw
-   fresh and do not shrink, matching Hypothesis's limitation. *)
+   fresh and do not shrink. (Hypothesis does better here: functions()
+   draws lazily from the live choice sequence, memoised per argument.
+   design/stream-keyed-tapes.md is our plan to catch up.) *)
 
 open! Base
 include Sr_real
