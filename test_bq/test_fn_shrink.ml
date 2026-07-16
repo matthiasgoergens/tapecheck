@@ -101,6 +101,40 @@ let () =
       (String.concat ~sep:";" (List.map xs ~f:Int.to_string))
       attempts
 
+(* Orphan adoption (ported back from the Rust engine, where a 60-seed
+   sweep stuck 19 times without it): shrinking an int that FEEDS the
+   function changes the argument's hash and so the stream key, so the
+   call would sample fresh and acceptance flips a coin. The replay must
+   adopt the orphaned sibling stream (the one whose argument just
+   changed) so the function keeps its observed behaviour across the
+   edit. Minimal here is x = 0 with p 0 = true, reachable only if
+   p's stream survives the re-keying of x's hash. *)
+let () =
+  let gen =
+    G.both (G.int_uniform_inclusive 0 1000)
+      (G.fn Base_quickcheck.Observer.int (G.int_uniform_inclusive 0 1000))
+  in
+  let stuck = ref 0 in
+  let found = ref 0 in
+  for seed = 0 to 39 do
+    match
+      Tape_engine.run gen ~seed:(seed * 7919) ~count:400 ~size:10
+        ~budget:4000
+        ~test:(fun (x, f) -> f x < 990)
+    with
+    | Tape_engine.Passed _ -> ()
+    | Tape_engine.Failed { minimal = x, f; _ } ->
+      Int.incr found;
+      (* Minimal: x at 0 and f 0 shrunk to the boundary. Reaching x = 0
+         needs p's observed stream to survive the re-keying; a fresh
+         draw cooperates only 1% of the time. *)
+      if not (x = 0 && f 0 = 990) then Int.incr stuck
+  done;
+  Stdlib.Printf.printf "fn/orphan:     stuck %d of %d failing seeds\n"
+    !stuck !found;
+  check "fn/orphan: found failures" (!found > 15);
+  check "fn/orphan: no stuck shrinks (orphan adoption)" (!stuck = 0)
+
 (* Serialization round-trip for stream-carrying images, plus v1 compat:
    a main-only image still serializes to the v1 format that pre-stream
    readers parse. *)

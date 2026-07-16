@@ -84,10 +84,14 @@ type stream = {
   mutable input : choice array;
   mutable rpos : int;
   mutable known : bool;
+  (* Set once the stream has been entered (or donated) during a replay,
+     so orphan adoption never reuses a donor. *)
+  mutable claimed : bool;
 }
 
 let new_stream ~known ~input =
-  { written = [||]; wlen = 0; wpos = 0; input; rpos = 0; known }
+  { written = [||]; wlen = 0; wpos = 0; input; rpos = 0; known
+  ; claimed = false }
 
 (* A complete tape: the main stream plus keyed sub-streams, sorted by
    key. This is the unit of replay, comparison, and persistence. *)
@@ -315,6 +319,40 @@ let on_split t ~stream:k =
    the split state with the argument hash): extend the key with the
    salt and rewind that stream's cursors so same-argument calls replay
    identically. *)
+(* Orphan adoption (ported from the Rust engine, where it took a
+   data+function co-shrink from 19/60 stuck seeds to 0): a replay that
+   enters an UNKNOWN salted stream (the argument's hash, and so the
+   key, changed under a shrink edit) adopts the input of an unclaimed
+   sibling: same parent, salt leaf, deterministic key order. That
+   sibling is exactly the orphan whose argument just changed, so the
+   function keeps its observed behaviour across the edit instead of
+   flipping a fresh coin; the accepted output re-records under the new
+   salt, realigning the tape for the next round. *)
+let adopt_orphan t key s =
+  let n = List.length key in
+  let parent = List.filteri (fun i _ -> i < n - 1) key in
+  let donors =
+    Hashtbl.fold
+      (fun k' s' acc ->
+        if
+          s'.known && not s'.claimed
+          && List.length k' = n
+          && List.filteri (fun i _ -> i < n - 1) k' = parent
+          &&
+          match List.nth_opt k' (n - 1) with
+          | Some (Salt _) -> true
+          | _ -> false
+        then (k', s') :: acc
+        else acc)
+      t.streams []
+  in
+  match List.sort (fun (a, _) (b, _) -> compare_key a b) donors with
+  | (_, donor) :: _ ->
+    s.input <- donor.input;
+    s.known <- true;
+    donor.claimed <- true
+  | [] -> ()
+
 let on_perturb t ~stream:k ~salt =
   match k with
   | [] ->
@@ -326,6 +364,10 @@ let on_perturb t ~stream:k ~salt =
      | Off -> ()
      | Recording | Replaying ->
        let s = get_stream t salted in
+       (match t.mode with
+        | Replaying when not s.known -> adopt_orphan t salted s
+        | _ -> ());
+       s.claimed <- true;
        s.rpos <- 0;
        s.wpos <- 0);
     Some salted
