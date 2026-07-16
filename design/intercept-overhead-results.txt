@@ -1,0 +1,40 @@
+Intercept seam overhead when unused (intercept = None)
+=======================================================
+
+Question (raised by ceastlund on janestreet/splittable_random#2):
+does the seam cost anything for users who never install hooks?
+
+Method: bench_intercept/ builds two libraries from the same source.
+sr_real is splittable_random v0.17.0 plus the proposed Intercept seam
+(the PR under review). sr_nohook is generated from sr_real by
+mechanically stripping the seam: the [intercept] record field, the six
+[match state.intercept] dispatch sites, and the [Intercept] module.
+Everything else is byte-identical, built with the same flags, so the
+seam is the only difference measured.
+
+Setup: OCaml 5.2.0+ox (flambda2), amd64, dune -O3 on the executable.
+20,000,000 draws per measurement, minimum of 5 alternating reps
+(alternation spreads thermal drift across both sides). Accumulators
+are printed so the loops stay live; identical accumulator values
+confirm both libraries produce the same PRNG stream.
+
+Results (ns per draw):
+
+  draw          no-hook         seam     delta
+  bool            11.13        11.23     +0.11  ( +1.0%)
+  int 0..1000     15.77        15.65     -0.13  ( -0.8%)
+  float 0..1      11.34        11.39     +0.06  ( +0.5%)
+
+Reading: all deltas are within run-to-run noise; the int case comes
+out nominally faster WITH the seam, which is the usual signature of
+measuring below the noise floor.
+
+Why it stays free:
+- The check is one load of an immutable field plus a compare against
+  None (an immediate). The field is None for every state not created
+  by with_intercept, so in normal use the branch is perfectly
+  predicted.
+- The seam intercepts user-level draws only. The internal rejection
+  loops (next_int64, between, non_negative_up_to, the unbiased
+  remainder loop) are not intercepted, so a draw that internally
+  consumes several PRNG steps still pays the branch once.

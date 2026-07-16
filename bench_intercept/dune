@@ -1,0 +1,20 @@
+; Measures the cost of the Intercept seam when it is not in use.
+; [sr_nohook] is generated from vendor/sr_real by stripping the seam, so
+; the two libraries differ only in the seam itself.
+(library
+ (name sr_nohook)
+ (modules sr_nohook)
+ (libraries base)
+ (preprocess
+  (pps ppx_sexp_message)))
+
+(executable
+ (name bench_intercept)
+ (modules bench_intercept)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio sr_real sr_nohook)
+ (ocamlopt_flags
+  (:standard -O3))
+ (preprocess
+  (pps ppx_sexp_message)))
