@@ -59,9 +59,9 @@ module Regressions = struct
             | None -> (payload, Some 30)
           in
           match
-            (Option.bind (string_of_hex hex) ~f:Tape.deserialize, size)
+            (Option.bind (string_of_hex hex) ~f:Tape.deserialize_image, size)
           with
-          | Some choices, Some size -> Some (Ok (lineno + 1, size, choices))
+          | Some image, Some size -> Some (Ok (lineno + 1, size, image))
           | _ -> Some (Error (lineno + 1))
         end)
       |> Result.combine_errors
@@ -72,12 +72,12 @@ module Regressions = struct
                  (path : string)
                  (bad_lines : int list)])
 
-  let append path ~choices ~size ~comment =
+  let append path ~image ~size ~comment =
     Stdlib.Out_channel.with_open_gen
       [ Open_append; Open_creat; Open_text ] 0o644 path
       (fun oc ->
         Stdlib.Printf.fprintf oc "%s @%d # %s\n"
-          (hex_of_string (Tape.serialize choices))
+          (hex_of_string (Tape.serialize_image image))
           size comment)
 end
 
@@ -103,11 +103,16 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
       (match Regressions.load path with
        | Error err -> Error.raise err
        | Ok entries ->
-         List.find_map entries ~f:(fun (line, size, choices) ->
-           let value =
-             Tape_engine.replay M.quickcheck_generator ~size choices
+         List.find_map entries ~f:(fun (line, size, image) ->
+           (* Apply the property while the tape is live: a persisted
+              failure that involves a generated function only
+              reproduces if the function's streams stay
+              tape-controlled during [f]. *)
+           let value, verdict =
+             Tape_engine.replay_image_and_apply M.quickcheck_generator
+               ~size image ~f
            in
-           match f value with
+           match verdict with
            | Error e -> Some (Error (value, e))
            | Ok () ->
              stale_entries := line :: !stale_entries;
@@ -161,11 +166,11 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
            ~budget:config.shrink_count
        with
       | Tape_engine.Passed _ -> ()
-      | Tape_engine.Failed { minimal; choices; _ } -> (
+      | Tape_engine.Failed { minimal; image; _ } -> (
         match f minimal with
         | Error e ->
           Option.iter regressions ~f:(fun path ->
-            Regressions.append path ~choices ~size:sizes.(!case)
+            Regressions.append path ~image ~size:sizes.(!case)
               ~comment:(Sexp.to_string (M.sexp_of_t minimal)));
           failure := Some (Error (minimal, e))
         | Ok () ->

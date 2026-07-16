@@ -6,15 +6,53 @@
    accepted iff the test still fails and the re-recorded output tape is
    shortlex-smaller. This module is engine-core only: it knows nothing
    about base_quickcheck. The splittable_random shim calls [draw_*]; the
-   engine drives [start_recording] / [start_replay] / [finish]. *)
+   engine drives [start_recording] / [start_replay] / [finish].
+
+   Streams (design/stream-keyed-tapes.md): draws carry a stream key so
+   that split-off PRNG states (Generator.fn) are tape-controlled too.
+   The main generation stream has key [root]; [on_split] allocates a
+   child key per split, and [on_perturb] extends a child key with the
+   perturb salt, which is exactly the per-argument identity
+   Generator.fn uses. Each stream is an independently shrinkable
+   sub-sequence with its own replay cursor. A perturb on a child key is
+   a call boundary: it resets that stream's cursors so same-argument
+   calls replay identically (function purity under edited tapes). *)
 
 type choice =
   | Integer of { value : int64; lo : int64; hi : int64 }
   | Float of { value : float; lo : float; hi : float }
   | Bool of bool
   | Marker
-      (* Alignment marker for split/perturb: the draws behind it are not
-         tape-controlled (generated functions do not shrink). *)
+      (* Alignment marker for split/perturb events on the stream they
+         happened on. *)
+
+(* Stream keys. [Split n] is the n-th split recorded on the parent
+   stream this run; [Salt s] is a perturb salt. Keys are deterministic
+   given the taped draws, because the generator's split/perturb pattern
+   is a function of the values drawn. *)
+type key_elt =
+  | Split of int
+  | Salt of int
+
+type key = key_elt list
+
+let root : key = []
+
+let compare_key_elt a b =
+  match (a, b) with
+  | Split a, Split b -> compare a b
+  | Salt a, Salt b -> compare a b
+  | Split _, Salt _ -> -1
+  | Salt _, Split _ -> 1
+
+let rec compare_key (a : key) (b : key) =
+  match (a, b) with
+  | [], [] -> 0
+  | [], _ :: _ -> -1
+  | _ :: _, [] -> 1
+  | x :: xs, y :: ys ->
+    let c = compare_key_elt x y in
+    if c <> 0 then c else compare_key xs ys
 
 type mode =
   | Off
@@ -26,164 +64,278 @@ type mode =
    (resyncs clean insertions/deletions); [Freeze] leaves the position
    put and fresh-samples just this draw (holds the entry for a later
    same-kind draw). Neither dominates; the engine can try both and keep
-   the shortlex-better result. *)
+   the shortlex-better result. Applied per stream. *)
 type policy =
   | Consume
   | Freeze
 
+(* Per-stream state. [written]/[wlen] is the output side (what this run
+   actually used); [wpos] can rewind to 0 at a call boundary so that a
+   second same-argument call re-records over the same entries instead
+   of appending duplicates. [input]/[rpos] is the replay side; [known]
+   distinguishes a stream present in the replay image (exhausting it is
+   an overrun) from a brand-new stream (all draws fresh, no flags: new
+   salts appear whenever an edit changes an argument's hash, and
+   whole-stream deletion relies on absent streams sampling fresh). *)
+type stream = {
+  mutable written : choice array;
+  mutable wlen : int;
+  mutable wpos : int;
+  mutable input : choice array;
+  mutable rpos : int;
+  mutable known : bool;
+}
+
+let new_stream ~known ~input =
+  { written = [||]; wlen = 0; wpos = 0; input; rpos = 0; known }
+
+(* A complete tape: the main stream plus keyed sub-streams, sorted by
+   key. This is the unit of replay, comparison, and persistence. *)
+type image = {
+  main : choice array;
+  streams : (key * choice array) array;
+}
+
+let image_of_main main = { main; streams = [||] }
+
 type t = {
   mutable mode : mode;
-  (* Output side: choices recorded so far, in reverse. Both recording
-     and replaying append here; replay re-records what it actually
-     used, so the output tape is always self-consistent. *)
-  mutable recorded : choice list;
-  (* Input side, replay only. [misaligned] records that at least one
-     input choice was skipped over a kind mismatch. *)
-  mutable input : choice array;
-  mutable pos : int;
+  mutable policy : policy;
   mutable overrun : bool;
   mutable misaligned : bool;
-  mutable policy : policy;
+  streams : (key, stream) Hashtbl.t;
+  (* Split ordinal counters, per parent key, reset each run. *)
+  splits : (key, int) Hashtbl.t;
 }
 
 let create () =
   {
     mode = Off;
-    recorded = [];
-    input = [||];
-    pos = 0;
+    policy = Consume;
     overrun = false;
     misaligned = false;
-    policy = Consume;
+    streams = Hashtbl.create 8;
+    splits = Hashtbl.create 8;
   }
 
-let reset_output t = t.recorded <- []
-
-let start_recording t =
-  reset_output t;
-  t.mode <- Recording;
-  t.input <- [||];
-  t.pos <- 0;
+let reset t =
+  Hashtbl.reset t.streams;
+  Hashtbl.reset t.splits;
   t.overrun <- false;
   t.misaligned <- false
 
-let start_replay ?(policy = Consume) t input =
-  reset_output t;
-  t.mode <- Replaying;
-  t.input <- input;
-  t.pos <- 0;
-  t.overrun <- false;
-  t.misaligned <- false;
-  t.policy <- policy
+let get_stream t k =
+  match Hashtbl.find_opt t.streams k with
+  | Some s -> s
+  | None ->
+    let s = new_stream ~known:false ~input:[||] in
+    Hashtbl.replace t.streams k s;
+    s
 
-type output = { choices : choice array; overrun : bool; misaligned : bool }
+let start_recording t =
+  reset t;
+  t.mode <- Recording;
+  ignore (get_stream t root : stream)
+
+let start_replay_image ?(policy = Consume) t (img : image) =
+  reset t;
+  t.mode <- Replaying;
+  t.policy <- policy;
+  Hashtbl.replace t.streams root (new_stream ~known:true ~input:img.main);
+  Array.iter
+    (fun (k, input) ->
+      Hashtbl.replace t.streams k (new_stream ~known:true ~input))
+    img.streams
+
+let start_replay ?policy t input =
+  start_replay_image ?policy t (image_of_main input)
+
+type output = {
+  image : image;
+  choices : choice array;
+      (* [image.main], repeated as a field: the main-stream view most
+         callers want, and what all pre-stream code compiled against. *)
+  overrun : bool;
+  misaligned : bool;
+}
+
+let stream_written (s : stream) = Array.sub s.written 0 s.wlen
 
 let finish t =
-  let choices = Array.of_list (List.rev t.recorded) in
+  let main =
+    match Hashtbl.find_opt t.streams root with
+    | Some s -> stream_written s
+    | None -> [||]
+  in
+  let subs =
+    Hashtbl.fold
+      (fun k s acc ->
+        if k == root || compare_key k root = 0 then acc
+        else if s.wlen = 0 then acc (* never written: orphan, drop *)
+        else (k, stream_written s) :: acc)
+      t.streams []
+  in
+  let subs = List.sort (fun (a, _) (b, _) -> compare_key a b) subs in
+  let image = { main; streams = Array.of_list subs } in
   let overrun = t.overrun in
   let misaligned = t.misaligned in
   t.mode <- Off;
-  reset_output t;
-  t.input <- [||];
-  t.pos <- 0;
-  t.overrun <- false;
-  t.misaligned <- false;
-  { choices; overrun; misaligned }
+  reset t;
+  { image; choices = image.main; overrun; misaligned }
 
-let record t choice = t.recorded <- choice :: t.recorded
+(* Overrun so far: lets the engine skip running the test on a proposal
+   that already truncated during generation. Monotone within a run. *)
+let overrun_now (t : t) = t.overrun
 
-(* Pop the next input choice of the requested kind. On a kind mismatch
-   the offending input choice is CONSUMED (skipped) and we retry at the
-   next position: freezing the position instead would compare every
-   later draw against the same stale entry and silently abandon the
-   whole remaining tape after one misalignment. Exhausted input marks
-   an overrun so the engine can reject deletion proposals that merely
-   truncated. *)
-let pop t ~matches =
+(* Record into a stream with rewrite-over semantics: at a call boundary
+   [wpos] rewinds, and re-recording an identical prefix advances through
+   it without growing the stream. A divergent value overwrites and
+   truncates (the calls genuinely differ, keep the latest). *)
+let record_in s c =
+  if s.wpos < s.wlen && s.written.(s.wpos) = c then s.wpos <- s.wpos + 1
+  else begin
+    if s.wpos >= Array.length s.written then begin
+      let cap = max 8 (2 * Array.length s.written) in
+      let grown = Array.make cap Marker in
+      Array.blit s.written 0 grown 0 s.wlen;
+      s.written <- grown
+    end;
+    s.written.(s.wpos) <- c;
+    s.wpos <- s.wpos + 1;
+    s.wlen <- s.wpos
+  end
+
+(* Pop the next input choice of the requested kind from one stream.
+   Kind-mismatch handling follows [t.policy]; exhausted KNOWN input
+   marks an overrun so the engine can reject deletion proposals that
+   merely truncated. Unknown streams always sample fresh, silently. *)
+let pop t s ~matches =
   match t.mode with
   | Off | Recording -> None
   | Replaying ->
-    let take_here () =
-      let c = t.input.(t.pos) in
-      t.pos <- t.pos + 1;
-      c
-    in
-    let rec consume () =
-      if t.pos >= Array.length t.input then (
+    if not s.known then None
+    else begin
+      let take_here () =
+        let c = s.input.(s.rpos) in
+        s.rpos <- s.rpos + 1;
+        c
+      in
+      let rec consume () =
+        if s.rpos >= Array.length s.input then (
+          t.overrun <- true;
+          None)
+        else if matches s.input.(s.rpos) then Some (take_here ())
+        else (
+          t.misaligned <- true;
+          ignore (take_here ());
+          consume ())
+      in
+      if s.rpos >= Array.length s.input then (
         t.overrun <- true;
         None)
-      else if matches t.input.(t.pos) then Some (take_here ())
+      else if matches s.input.(s.rpos) then Some (take_here ())
       else (
         t.misaligned <- true;
-        ignore (take_here ());
-        consume ())
-    in
-    if t.pos >= Array.length t.input then (
-      t.overrun <- true;
-      None)
-    else if matches t.input.(t.pos) then Some (take_here ())
-    else (
-      t.misaligned <- true;
-      match t.policy with
-      | Freeze -> None (* leave the position; fresh-sample this draw *)
-      | Consume ->
-        (* skip the mismatched entry, retry at the next position *)
-        ignore (take_here ());
-        consume ())
+        match t.policy with
+        | Freeze -> None (* leave the position; fresh-sample this draw *)
+        | Consume ->
+          (* skip the mismatched entry, retry at the next position *)
+          ignore (take_here ());
+          consume ())
+    end
 
 let clamp_int64 v ~lo ~hi = if v < lo then lo else if v > hi then hi else v
 
-let draw_int t ~lo ~hi ~(sample : unit -> int64) : int64 =
+let draw_int ?(stream = root) t ~lo ~hi ~(sample : unit -> int64) : int64 =
   match t.mode with
   | Off -> sample ()
   | Recording | Replaying ->
+    let s = get_stream t stream in
     let value =
-      match pop t ~matches:(function Integer _ -> true | _ -> false) with
+      match pop t s ~matches:(function Integer _ -> true | _ -> false) with
       | Some (Integer { value; _ }) -> clamp_int64 value ~lo ~hi
       | _ -> sample ()
     in
-    record t (Integer { value; lo; hi });
+    record_in s (Integer { value; lo; hi });
     value
 
 let clamp_float v ~lo ~hi = if v < lo then lo else if v > hi then hi else v
 
-let draw_float t ~lo ~hi ~(sample : unit -> float) : float =
+let draw_float ?(stream = root) t ~lo ~hi ~(sample : unit -> float) : float =
   match t.mode with
   | Off -> sample ()
   | Recording | Replaying ->
+    let s = get_stream t stream in
     let value =
-      match pop t ~matches:(function Float _ -> true | _ -> false) with
+      match pop t s ~matches:(function Float _ -> true | _ -> false) with
       | Some (Float { value; _ }) ->
         if Float.is_nan value then sample () else clamp_float value ~lo ~hi
       | _ -> sample ()
     in
-    record t (Float { value; lo; hi });
+    record_in s (Float { value; lo; hi });
     value
 
-let draw_bool t ~(sample : unit -> bool) : bool =
+let draw_bool ?(stream = root) t ~(sample : unit -> bool) : bool =
   match t.mode with
   | Off -> sample ()
   | Recording | Replaying ->
+    let s = get_stream t stream in
     let value =
-      match pop t ~matches:(function Bool _ -> true | _ -> false) with
+      match pop t s ~matches:(function Bool _ -> true | _ -> false) with
       | Some (Bool b) -> b
       | _ -> sample ()
     in
-    record t (Bool value);
+    record_in s (Bool value);
     value
 
-let record_marker t =
+let record_marker_in t k =
   match t.mode with
   | Off -> ()
   | Recording | Replaying ->
+    let s = get_stream t k in
     (* Consume a matching marker on replay to stay aligned. *)
-    ignore (pop t ~matches:(function Marker -> true | _ -> false));
-    record t Marker
+    ignore (pop t s ~matches:(function Marker -> true | _ -> false));
+    record_in s Marker
 
-(* Serialization ("ct1", after the proptest tape engine's format):
-   version byte, then one record per choice. Deserialization is total
-   over well-formed records via clamping at replay time; a truncated
-   or unknown-tag input returns None. *)
+let record_marker t = record_marker_in t root
+
+(* A split on [stream]: record an alignment marker there and allocate
+   the child stream's key by per-parent ordinal. Deterministic across
+   record and replay because splits happen at generator-driven points. *)
+let on_split t ~stream:k =
+  record_marker_in t k;
+  let n = match Hashtbl.find_opt t.splits k with Some n -> n | None -> 0 in
+  Hashtbl.replace t.splits k (n + 1);
+  k @ [ Split n ]
+
+(* A perturb on the ROOT stream is Generator.perturb mid-generation:
+   record a marker for alignment and keep the key (splitting the main
+   stream at every such point would scatter the shrink passes). On a
+   child stream it is a call boundary (Generator.fn perturbs a copy of
+   the split state with the argument hash): extend the key with the
+   salt and rewind that stream's cursors so same-argument calls replay
+   identically. *)
+let on_perturb t ~stream:k ~salt =
+  match k with
+  | [] ->
+    record_marker_in t k;
+    None
+  | _ :: _ ->
+    let salted = k @ [ Salt salt ] in
+    (match t.mode with
+     | Off -> ()
+     | Recording | Replaying ->
+       let s = get_stream t salted in
+       s.rpos <- 0;
+       s.wpos <- 0);
+    Some salted
+
+(* Serialization. Version 1 ("ct1", after the proptest tape engine's
+   format): version byte then one record per choice; still emitted for
+   main-only tapes so pre-stream regression files and readers keep
+   working. Version 2 adds keyed stream sections. Deserialization is
+   total over well-formed records via clamping at replay time; a
+   truncated or unknown-tag input returns None. *)
 
 let buf_add_int64 buf v =
   for shift = 0 to 7 do
@@ -191,86 +343,173 @@ let buf_add_int64 buf v =
       (Char.chr (Int64.to_int (Int64.logand (Int64.shift_right_logical v (shift * 8)) 0xffL)))
   done
 
-let serialize (choices : choice array) : string =
-  let buf = Buffer.create (Array.length choices * 20) in
-  Buffer.add_char buf '\001';
-  Array.iter
-    (fun c ->
-      match c with
-      | Integer { value; lo; hi } ->
-        Buffer.add_char buf 'i';
-        buf_add_int64 buf value;
-        buf_add_int64 buf lo;
-        buf_add_int64 buf hi
-      | Float { value; lo; hi } ->
-        Buffer.add_char buf 'f';
-        buf_add_int64 buf (Int64.bits_of_float value);
-        buf_add_int64 buf (Int64.bits_of_float lo);
-        buf_add_int64 buf (Int64.bits_of_float hi)
-      | Bool b ->
-        Buffer.add_char buf 'b';
-        Buffer.add_char buf (if b then '\001' else '\000')
-      | Marker -> Buffer.add_char buf 'm')
-    choices;
-  Buffer.contents buf
+let buf_add_choice buf c =
+  match c with
+  | Integer { value; lo; hi } ->
+    Buffer.add_char buf 'i';
+    buf_add_int64 buf value;
+    buf_add_int64 buf lo;
+    buf_add_int64 buf hi
+  | Float { value; lo; hi } ->
+    Buffer.add_char buf 'f';
+    buf_add_int64 buf (Int64.bits_of_float value);
+    buf_add_int64 buf (Int64.bits_of_float lo);
+    buf_add_int64 buf (Int64.bits_of_float hi)
+  | Bool b ->
+    Buffer.add_char buf 'b';
+    Buffer.add_char buf (if b then '\001' else '\000')
+  | Marker -> Buffer.add_char buf 'm'
 
-let deserialize (s : string) : choice array option =
-  let pos = ref 0 in
-  let len = String.length s in
-  let take_char () =
-    if !pos >= len then None
-    else begin
-      let c = s.[!pos] in
-      incr pos;
-      Some c
-    end
-  in
-  let take_int64 () =
-    if !pos + 8 > len then None
-    else begin
-      let v = ref 0L in
-      for shift = 7 downto 0 do
-        v :=
-          Int64.logor
-            (Int64.shift_left !v 8)
-            (Int64.of_int (Char.code s.[!pos + shift]))
-      done;
-      pos := !pos + 8;
-      Some !v
-    end
-  in
-  match take_char () with
+let serialize_image (img : image) : string =
+  if Array.length img.streams = 0 then begin
+    let buf = Buffer.create (Array.length img.main * 20) in
+    Buffer.add_char buf '\001';
+    Array.iter (buf_add_choice buf) img.main;
+    Buffer.contents buf
+  end
+  else begin
+    let buf = Buffer.create 256 in
+    Buffer.add_char buf '\002';
+    buf_add_int64 buf (Int64.of_int (Array.length img.main));
+    Array.iter (buf_add_choice buf) img.main;
+    buf_add_int64 buf (Int64.of_int (Array.length img.streams));
+    Array.iter
+      (fun (k, arr) ->
+        buf_add_int64 buf (Int64.of_int (List.length k));
+        List.iter
+          (fun elt ->
+            match elt with
+            | Split n ->
+              Buffer.add_char buf 'S';
+              buf_add_int64 buf (Int64.of_int n)
+            | Salt s ->
+              Buffer.add_char buf 'P';
+              buf_add_int64 buf (Int64.of_int s))
+          k;
+        buf_add_int64 buf (Int64.of_int (Array.length arr));
+        Array.iter (buf_add_choice buf) arr)
+      img.streams;
+    Buffer.contents buf
+  end
+
+let serialize (choices : choice array) : string =
+  serialize_image (image_of_main choices)
+
+(* Shared cursor-based reader over [s]. *)
+type reader = { src : string; mutable pos : int }
+
+let take_char r =
+  if r.pos >= String.length r.src then None
+  else begin
+    let c = r.src.[r.pos] in
+    r.pos <- r.pos + 1;
+    Some c
+  end
+
+let take_int64 r =
+  if r.pos + 8 > String.length r.src then None
+  else begin
+    let v = ref 0L in
+    for shift = 7 downto 0 do
+      v :=
+        Int64.logor
+          (Int64.shift_left !v 8)
+          (Int64.of_int (Char.code r.src.[r.pos + shift]))
+    done;
+    r.pos <- r.pos + 8;
+    Some !v
+  end
+
+let take_choice r =
+  match take_char r with
+  | Some 'i' ->
+    (match (take_int64 r, take_int64 r, take_int64 r) with
+     | Some value, Some lo, Some hi -> Some (Integer { value; lo; hi })
+     | _ -> None)
+  | Some 'f' ->
+    (match (take_int64 r, take_int64 r, take_int64 r) with
+     | Some value, Some lo, Some hi ->
+       Some
+         (Float
+            { value = Int64.float_of_bits value
+            ; lo = Int64.float_of_bits lo
+            ; hi = Int64.float_of_bits hi
+            })
+     | _ -> None)
+  | Some 'b' ->
+    (match take_char r with
+     | Some '\000' -> Some (Bool false)
+     | Some '\001' -> Some (Bool true)
+     | _ -> None)
+  | Some 'm' -> Some Marker
+  | _ -> None
+
+let take_count r =
+  match take_int64 r with
+  | Some n when n >= 0L && n <= 0x0fff_ffffL -> Some (Int64.to_int n)
+  | _ -> None
+
+let take_choices r n =
+  let acc = ref [] in
+  let ok = ref true in
+  for _ = 1 to n do
+    if !ok then
+      match take_choice r with
+      | Some c -> acc := c :: !acc
+      | None -> ok := false
+  done;
+  if !ok then Some (Array.of_list (List.rev !acc)) else None
+
+let deserialize_image (s : string) : image option =
+  let r = { src = s; pos = 0 } in
+  match take_char r with
   | Some '\001' ->
+    (* v1: main-only, records to end of input. *)
     let acc = ref [] in
     let ok = ref true in
-    while !ok && !pos < len do
-      (match take_char () with
-       | Some 'i' ->
-         (match (take_int64 (), take_int64 (), take_int64 ()) with
-          | Some value, Some lo, Some hi ->
-            acc := Integer { value; lo; hi } :: !acc
-          | _ -> ok := false)
-       | Some 'f' ->
-         (match (take_int64 (), take_int64 (), take_int64 ()) with
-          | Some value, Some lo, Some hi ->
-            acc :=
-              Float
-                { value = Int64.float_of_bits value
-                ; lo = Int64.float_of_bits lo
-                ; hi = Int64.float_of_bits hi
-                }
-              :: !acc
-          | _ -> ok := false)
-       | Some 'b' ->
-         (match take_char () with
-          | Some '\000' -> acc := Bool false :: !acc
-          | Some '\001' -> acc := Bool true :: !acc
-          | _ -> ok := false)
-       | Some 'm' -> acc := Marker :: !acc
-       | _ -> ok := false)
+    while !ok && r.pos < String.length s do
+      match take_choice r with
+      | Some c -> acc := c :: !acc
+      | None -> ok := false
     done;
-    if !ok then Some (Array.of_list (List.rev !acc)) else None
+    if !ok then Some (image_of_main (Array.of_list (List.rev !acc)))
+    else None
+  | Some '\002' ->
+    let ( let* ) = Option.bind in
+    let* n_main = take_count r in
+    let* main = take_choices r n_main in
+    let* n_streams = take_count r in
+    let rec streams acc i =
+      if i >= n_streams then
+        if r.pos = String.length s then Some (List.rev acc) else None
+      else
+        let* n_key = take_count r in
+        let rec key acc j =
+          if j >= n_key then Some (List.rev acc)
+          else
+            match take_char r with
+            | Some 'S' ->
+              let* n = take_int64 r in
+              key (Split (Int64.to_int n) :: acc) (j + 1)
+            | Some 'P' ->
+              let* n = take_int64 r in
+              key (Salt (Int64.to_int n) :: acc) (j + 1)
+            | _ -> None
+        in
+        let* k = key [] 0 in
+        let* n_choices = take_count r in
+        let* arr = take_choices r n_choices in
+        streams ((k, arr) :: acc) (i + 1)
+    in
+    let* subs = streams [] 0 in
+    Some { main; streams = Array.of_list subs }
   | _ -> None
+
+let deserialize (s : string) : choice array option =
+  match deserialize_image s with
+  | Some { main; streams = [||] } -> Some main
+  | Some _ -> None (* stream-carrying tape: use deserialize_image *)
+  | None -> None
 
 (* Shortlex order: fewer choices first; ties broken choice-by-choice by
    distance from the shrink target (the value in [lo, hi] closest to
@@ -323,4 +562,40 @@ let compare_shortlex (a : choice array) (b : choice array) =
         if c <> 0 then c else go (i + 1)
     in
     go 0
+  end
+
+(* Image order: total choice count first (a deleted stream is a smaller
+   tape), then the main stream shortlex, then fewer streams, then the
+   sorted stream lists pairwise (key order, then per-stream shortlex).
+   A total order, so shrink acceptance stays a strict descent. *)
+let image_size (img : image) =
+  Array.fold_left
+    (fun acc (_, arr) -> acc + Array.length arr)
+    (Array.length img.main) img.streams
+
+let compare_image (a : image) (b : image) =
+  let c = compare (image_size a) (image_size b) in
+  if c <> 0 then c
+  else begin
+    let c = compare_shortlex a.main b.main in
+    if c <> 0 then c
+    else begin
+      let la = Array.length a.streams and lb = Array.length b.streams in
+      let c = compare la lb in
+      if c <> 0 then c
+      else begin
+        let rec go i =
+          if i >= la then 0
+          else begin
+            let ka, arr_a = a.streams.(i) and kb, arr_b = b.streams.(i) in
+            let c = compare_key ka kb in
+            if c <> 0 then c
+            else
+              let c = compare_shortlex arr_a arr_b in
+              if c <> 0 then c else go (i + 1)
+          end
+        in
+        go 0
+      end
+    end
   end

@@ -1,7 +1,23 @@
 # Stream-keyed tapes: shrinking generated functions
 
-Status: design note, not implemented. Follows the 2026-07-16 discussion
-of whether `Generator.fn`'s split-off streams can be brought under tape
+Status: IMPLEMENTED 2026-07-16 (tape/tape.ml, seam v2 in vendor/sr_real,
+keyed hooks in the shim, segment-aware engine passes, test_bq/
+test_fn_shrink.ml). Two decisions made during implementation, beyond
+the plan below:
+
+- The test runs BEFORE `Tape.finish`: function draws happen when the
+  property calls the function, so the engine's lifecycle had to move
+  the test inside the tape's live window (`run_and_test`).
+- The reported minimal is regenerated on a tape LEFT IN REPLAY MODE
+  (`replay_image_and_apply` does the same): a function backed by a
+  finished tape silently falls back to fresh randomness on exactly the
+  calls the report is about (observed: the winning tape said 100, the
+  reported function said 298). A live tape keeps the counterexample's
+  observed behaviour for as long as the value lives, and per-call
+  cursor rewinds keep it pure.
+
+Original note follows. It grew out of the 2026-07-16 discussion of
+whether `Generator.fn`'s split-off streams can be brought under tape
 control.
 
 ## The problem

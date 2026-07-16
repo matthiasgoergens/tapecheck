@@ -46,11 +46,19 @@ let popcount = int64_popcount
 type t =
   { mutable seed : int64
   ; odd_gamma : int64
-  ; intercept : intercept option
+  ; mutable intercept : intercept option
   }
 
 (* Interception hooks for property-testing engines (see the [Intercept]
-   module below). [None] is the default and costs one branch per draw. *)
+   module below). [None] is the default and costs one branch per draw.
+
+   Seam v2 (design/stream-keyed-tapes.md): [on_split] returns the
+   hooks for the freshly split state ([None] keeps it hook-free), and
+   [on_perturb] receives the salt and may return replacement hooks for
+   this state ([None] keeps the current hooks). This is what lets an
+   engine give split-off streams their own identity, so generated
+   functions shrink; the submitted upstream PR carries the v1
+   unit-returning signatures. *)
 and intercept =
   { int64 :
       t -> lo:int64 -> hi:int64 -> default:(t -> lo:int64 -> hi:int64 -> int64) -> int64
@@ -58,8 +66,8 @@ and intercept =
       t -> lo:float -> hi:float -> default:(t -> lo:float -> hi:float -> float) -> float
   ; unit_float : t -> default:(t -> float) -> float
   ; bool : t -> default:(t -> bool) -> bool
-  ; on_split : unit -> unit
-  ; on_perturb : unit -> unit
+  ; on_split : unit -> intercept option
+  ; on_perturb : int -> intercept option
   }
 
 (* Alias used below when [t] is shadowed. *)
@@ -121,12 +129,16 @@ let create random_state =
 ;;
 
 let split t =
-  (match t.intercept with
-   | None -> ()
-   | Some i -> i.on_split ());
+  let child_hooks =
+    match t.intercept with
+    | None -> None
+    | Some i -> i.on_split ()
+  in
   let seed = next_seed t in
   let gamma = next_seed t in
-  of_seed_and_gamma ~seed ~gamma
+  let child = of_seed_and_gamma ~seed ~gamma in
+  child.intercept <- child_hooks;
+  child
 ;;
 
 let next_int64 t = mix64 (next_seed t)
@@ -136,7 +148,10 @@ let next_int64 t = mix64 (next_seed t)
 let perturb t salt =
   (match t.intercept with
    | None -> ()
-   | Some i -> i.on_perturb ());
+   | Some i ->
+     (match i.on_perturb salt with
+      | None -> ()
+      | Some hooks -> t.intercept <- Some hooks));
   let next = t.seed + mix64 (Int64.of_int salt) in
   t.seed <- next
 ;;
@@ -379,8 +394,8 @@ module Intercept = struct
         -> float
     ; unit_float : state -> default:(state -> float) -> float
     ; bool : state -> default:(state -> bool) -> bool
-    ; on_split : unit -> unit
-    ; on_perturb : unit -> unit
+    ; on_split : unit -> t option
+    ; on_perturb : int -> t option
     }
 end
 

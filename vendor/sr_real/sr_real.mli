@@ -55,7 +55,14 @@ val split : t -> t
     exactly as before, at the cost of one branch per draw. All bounded
     integer draws ([int], [int32], [int63], [nativeint], and [Log_uniform])
     delegate to [int64], so the [int64] hook observes every one of them with
-    its bounds. *)
+    its bounds.
+
+    Seam v2: [on_split] returns the hooks to install on the freshly split
+    state ([None] leaves it hook-free), and [on_perturb] receives the salt
+    and may return replacement hooks for this state ([None] keeps the
+    current hooks). Engines use these to key split-off streams, so that
+    randomly generated functions become observable and shrinkable; see
+    design/stream-keyed-tapes.md. *)
 module Intercept : sig
   type state := t
 
@@ -74,8 +81,8 @@ module Intercept : sig
         -> float
     ; unit_float : state -> default:(state -> float) -> float
     ; bool : state -> default:(state -> bool) -> bool
-    ; on_split : unit -> unit
-    ; on_perturb : unit -> unit
+    ; on_split : unit -> t option
+    ; on_perturb : int -> t option
     }
 end
 
