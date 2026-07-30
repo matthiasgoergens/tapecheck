@@ -83,7 +83,8 @@ end
 
 let result (type a e) ~(f : a -> (unit, e) Result.t)
     ?(config = default_config) ?(examples = []) ?regressions
-    ?(realign = `Both)
+    ?(realign = `Both) ?(explain = false)
+    ?(explain_budget = Tape_explain.default_budget)
     (module M : Base_quickcheck.Test.S with type t = a) :
     (unit, a * e) Result.t =
   let test v = Result.is_ok (f v) in
@@ -172,6 +173,19 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
           Option.iter regressions ~f:(fun path ->
             Regressions.append path ~image ~size:sizes.(!case)
               ~comment:(Sexp.to_string (M.sexp_of_t minimal)));
+          (* Phase.explain, switched off by default (?explain:false):
+             free-variation analysis over the just-shrunk minimal
+             example, printed for a human the way Hypothesis prints its
+             own explanation alongside the falsifying example. Off by
+             default because it is pure overhead on top of a failing
+             run that is about to be reported anyway; on, it costs a
+             bounded number of extra replays (Tape_explain.default_budget,
+             configurable via ?explain_budget). *)
+          if explain then
+            Stdlib.print_string
+              (Tape_explain.to_string_hum ~sexp_of:M.sexp_of_t
+                 (Tape_explain.analyze ~gen:M.quickcheck_generator
+                    ~size:sizes.(!case) ~test ~budget:explain_budget image));
           failure := Some (Error (minimal, e))
         | Ok () ->
           (* The shrunken value no longer fails deterministically;
@@ -187,10 +201,13 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
      | None -> Ok ())
 
 let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
-    ?realign (module M : Base_quickcheck.Test.S with type t = a) :
-    unit Or_error.t =
+    ?realign ?explain ?explain_budget
+    (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
   let f v = Or_error.try_with_join (fun () -> f v) in
-  match result ~f ?config ?examples ?regressions ?realign (module M) with
+  match
+    result ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
+      (module M)
+  with
   | Ok () -> Ok ()
   | Error (input, error) ->
     Or_error.error_s
@@ -199,7 +216,10 @@ let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
           (input : M.t)
           (error : Error.t)]
 
-let run_exn (type a) ~(f : a -> unit) ?config ?examples ?regressions
-    ?realign (module M : Base_quickcheck.Test.S with type t = a) : unit =
+let run_exn (type a) ~(f : a -> unit) ?config ?examples ?regressions ?realign
+    ?explain ?explain_budget
+    (module M : Base_quickcheck.Test.S with type t = a) : unit =
   let f v = Or_error.try_with (fun () -> f v) in
-  run ~f ?config ?examples ?regressions ?realign (module M) |> Or_error.ok_exn
+  run ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
+    (module M)
+  |> Or_error.ok_exn
