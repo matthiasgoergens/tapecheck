@@ -250,31 +250,170 @@ let pop t s ~matches =
 
 let clamp_int64 v ~lo ~hi = if v < lo then lo else if v > hi then hi else v
 
-let draw_int ?(stream = root) t ~lo ~hi ~(sample : unit -> int64) : int64 =
+(* Edge-case-biased numeric generation, ported from Python Hypothesis's
+   Conjecture provider (the design's origin: see
+   outreach/hypothesis-sources/providers_hypothesis.py,
+   HypothesisProvider.draw_integer/_draw_integer_from_distribution and
+   draw_float around lines 831-1014). Uniform sampling over a wide
+   range essentially never lands on the values that break tests --
+   exact bounds, zero, values with [x mod y = 0] (proptest upstream
+   issue #500) -- because they are a vanishingly small fraction of the
+   range. The ICSE 2024 paper's RO4 names this streamlining directly.
+
+   The shape below (roll a die; on a hit return a boundary candidate;
+   otherwise pick a random bit-size and step that magnitude from the
+   shrink target) is adapted from the sibling Rust port
+   (proptest-rs/proptest, itself a port of the same Hypothesis design):
+   TestRunner::sample_integer_biased and maybe_weird_float in
+   proptest/src/test_runner/runner.rs. That version is the model for
+   HOW to express Hypothesis's idea in a statically typed, fixed-width
+   language -- OCaml's int64/float choices need exactly that, whereas
+   Hypothesis's own provider operates over Python's arbitrary-precision
+   integers and a source-scanning constant pool that has no OCaml
+   analogue (and is a separate, heavier feature from RO4's core ask;
+   deliberately not ported here).
+
+   Only used for a FRESH draw: nothing recorded on the tape to replay
+   from at this position (initial generation, or a shrink proposal that
+   needs a value the recorded tape does not cover). A replayed choice
+   always keeps the tape's own value untouched -- see [draw_int] below
+   -- so biasing generation cannot perturb an already-recorded, already
+   -shrunk tape. *)
+
+(* [v + 1] / [v - 1], saturating at [hi] / [lo] instead of wrapping.
+   Callers only ever apply these to values already known to sit at [lo]
+   or [hi] or at the (in-range) shrink target, so the "+1"/"-1" case
+   never overflows: if [v < hi] then [v <= hi - 1 <= max_int - 1]. *)
+let bump_up v ~hi = if v >= hi then hi else Int64.add v 1L
+let bump_down v ~lo = if v <= lo then lo else Int64.sub v 1L
+
+let unsigned_min (a : int64) (b : int64) =
+  if Int64.unsigned_compare a b <= 0 then a else b
+
+(* [sample_range ~lo ~hi] draws a fresh uniform int64 in [lo, hi] from
+   the real underlying RNG; it is used both for the eventual value AND
+   for the auxiliary "which strategy" / "which bit-size" / "which
+   direction" rolls, none of which are themselves recorded to the tape
+   (only the chosen [choice] is, via [record_in] in the caller) so they
+   cost RNG draws but not tape entries. *)
+let biased_int ~lo ~hi ~(sample_range : lo:int64 -> hi:int64 -> int64) :
+    int64 =
+  let target = clamp_int64 0L ~lo ~hi in
+  let roll = sample_range ~lo:0L ~hi:15L in
+  if Int64.equal roll 0L then begin
+    (* Boundary-ish values, at ANY range width -- this is what finds
+       bugs guarded by [x mod y = 0], [x = 0], or an exact bound. *)
+    let candidates =
+      [| lo; bump_up lo ~hi; hi; bump_down hi ~lo; target; bump_up target ~hi |]
+    in
+    let idx = sample_range ~lo:0L ~hi:5L in
+    candidates.(Int64.to_int idx)
+  end
+  else begin
+    (* Unsigned: exact modulo 2^64 even for full-range spans like
+       [min_int, max_int], same reasoning as [int_distance] below. *)
+    let width = Int64.sub hi lo in
+    if Int64.unsigned_compare width 0x100_0000L < 0 || Int64.compare roll 2L <= 0
+    then sample_range ~lo ~hi
+    else begin
+      (* Magnitude within a weighted random bit-size of the shrink
+         target: small sizes heavily preferred, a wide tail retained.
+         Hypothesis's INT_SIZES table (via the Rust port) spans
+         8/16/32/64/128 bits with weights 4/8/1/1/1 out of 15; int64
+         has no 128-bit lane, so its weight is folded into 64-bit
+         (giving 8/16/32/64 weights 4/8/1/2 out of 15) -- the OCaml
+         deviation from both sources, noted in the write-up. *)
+      let bits =
+        match sample_range ~lo:0L ~hi:14L with
+        | r when Int64.compare r 3L <= 0 -> 8
+        | r when Int64.compare r 11L <= 0 -> 16
+        | 12L -> 32
+        | _ -> 64
+      in
+      let mask =
+        if bits >= 64 then -1L else Int64.sub (Int64.shift_left 1L bits) 1L
+      in
+      let raw = sample_range ~lo:Int64.min_int ~hi:Int64.max_int in
+      let magnitude = Int64.logand raw mask in
+      let up_room = Int64.sub hi target and down_room = Int64.sub target lo in
+      let go_up =
+        if Int64.equal down_room 0L then true
+        else if Int64.equal up_room 0L then false
+        else Int64.equal (sample_range ~lo:0L ~hi:1L) 1L
+      in
+      if go_up then Int64.add target (unsigned_min magnitude up_room)
+      else Int64.sub target (unsigned_min magnitude down_room)
+    end
+  end
+
+let draw_int ?(stream = root) t ~lo ~hi
+    ~(sample : lo:int64 -> hi:int64 -> int64) : int64 =
   match t.mode with
-  | Off -> sample ()
+  | Off -> sample ~lo ~hi
   | Recording | Replaying ->
     let s = get_stream t stream in
     let value =
       match pop t s ~matches:(function Integer _ -> true | _ -> false) with
       | Some (Integer { value; _ }) -> clamp_int64 value ~lo ~hi
-      | _ -> sample ()
+      | _ -> biased_int ~lo ~hi ~sample_range:sample
     in
     record_in s (Integer { value; lo; hi });
     value
 
 let clamp_float v ~lo ~hi = if v < lo then lo else if v > hi then hi else v
 
-let draw_float ?(stream = root) t ~lo ~hi ~(sample : unit -> float) : float =
+(* Float boundary/special-value injection, same origin and adaptation
+   path as [biased_int] above (Hypothesis's [draw_float] "weird_floats"
+   upweight, providers_hypothesis.py:972-996, via the Rust port's
+   [maybe_weird_float] in runner.rs). Every draw reaching this codebase
+   already carries FINITE, non-crossed [lo]/[hi] (sr_real.float_default
+   raises otherwise: vendor/sr_real/sr_real.ml lines 285-291), so unlike
+   both sources there is no infinite-bound or [allow_nan] case to carry
+   through -- "NaN only where the range allows" becomes "never", since
+   the range here never allows it. That is an OCaml/base_quickcheck
+   deviation, not an omission: injecting NaN would violate this
+   generator's own finite-range invariant. *)
+let biased_float ~lo ~hi ~(sample_range : lo:float -> hi:float -> float) :
+    float =
+  (* 1-in-20, matching the Rust port's [maybe_weird_float] roll (itself
+     modelled on Hypothesis's independent 0.05 "weird floats" upweight,
+     kept separate there from a 0.15 source-constants pool this port
+     does not have). *)
+  let roll = sample_range ~lo:0. ~hi:1. in
+  if Float.compare roll (1. /. 20.) >= 0 then sample_range ~lo ~hi
+  else begin
+    let in_range v = v >= lo && v <= hi in
+    let candidates =
+      List.filter in_range
+        [ 0.; -0.; 1.; -1.; 0.5; 1.5; lo; hi; lo +. 1.; hi -. 1.
+        ; Float.succ lo; Float.pred hi
+        ]
+    in
+    match candidates with
+    | [] -> sample_range ~lo ~hi (* unreachable: [lo] always qualifies *)
+    | candidates ->
+      let candidates = Array.of_list candidates in
+      let pick = sample_range ~lo:0. ~hi:1. in
+      let idx =
+        let n = Array.length candidates in
+        let i = int_of_float (pick *. float_of_int n) in
+        if i >= n then n - 1 else i
+      in
+      candidates.(idx)
+  end
+
+let draw_float ?(stream = root) t ~lo ~hi
+    ~(sample : lo:float -> hi:float -> float) : float =
   match t.mode with
-  | Off -> sample ()
+  | Off -> sample ~lo ~hi
   | Recording | Replaying ->
     let s = get_stream t stream in
     let value =
       match pop t s ~matches:(function Float _ -> true | _ -> false) with
       | Some (Float { value; _ }) ->
-        if Float.is_nan value then sample () else clamp_float value ~lo ~hi
-      | _ -> sample ()
+        if Float.is_nan value then biased_float ~lo ~hi ~sample_range:sample
+        else clamp_float value ~lo ~hi
+      | _ -> biased_float ~lo ~hi ~sample_range:sample
     in
     record_in s (Float { value; lo; hi });
     value

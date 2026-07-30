@@ -4,15 +4,25 @@ let check name cond = if not cond then failwith ("FAILED: " ^ name)
    and if the bool is true another int in [0,10]. *)
 let generate tape ~ints ~bools =
   let next_int = ref 0 and next_bool = ref 0 in
-  let sample_int arr r =
-    let v = arr.(!r mod Array.length arr) in
-    incr r;
-    Int64.of_int v
+  (* [draw_int]'s edge-case bias (tape/tape.ml) rolls an auxiliary
+     [0,15] die before drawing the "real" value, to decide between a
+     boundary candidate and a plain sample; both draws in this file are
+     far narrower than the bit-size threshold (2^24), so forcing that
+     roll away from 0 always selects the plain-uniform branch, which
+     then calls back with the ACTUAL [lo, hi] this test cares about. *)
+  let sample_int arr r ~lo ~hi =
+    if Int64.equal lo 0L && Int64.equal hi 15L then 5L (* force non-boundary roll *)
+    else begin
+      ignore hi;
+      let v = arr.(!r mod Array.length arr) in
+      incr r;
+      Int64.of_int v
+    end
   in
-  let a = Tape.draw_int tape ~lo:0L ~hi:100L ~sample:(fun () -> sample_int ints next_int) in
+  let a = Tape.draw_int tape ~lo:0L ~hi:100L ~sample:(sample_int ints next_int) in
   let b = Tape.draw_bool tape ~sample:(fun () -> let v = bools.(!next_bool mod Array.length bools) in incr next_bool; v) in
   let c =
-    if b then Tape.draw_int tape ~lo:0L ~hi:10L ~sample:(fun () -> sample_int ints next_int)
+    if b then Tape.draw_int tape ~lo:0L ~hi:10L ~sample:(sample_int ints next_int)
     else 0L
   in
   (a, b, c)

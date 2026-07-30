@@ -21,16 +21,24 @@ module For_tape = struct
   let rec hooks tape key : Sr_real.Intercept.t =
     { int64 =
         (fun st ~lo ~hi ~default ->
+          (* [default] is generic over its own [lo]/[hi] (it is just
+             the real uniform sampler), so we hand the tape a fully
+             general ranged sampler: it can call this with ANY bounds,
+             not only the ones this draw declared, to source the extra
+             randomness edge-case biasing needs (which boundary
+             candidate, which bit-size, ...). Only the FINAL chosen
+             value is recorded to the tape (in [Tape.draw_int]); these
+             auxiliary rolls just consume RNG state. *)
           Tape.draw_int tape ~stream:key ~lo ~hi
-            ~sample:(fun () -> default st ~lo ~hi))
+            ~sample:(fun ~lo ~hi -> default st ~lo ~hi))
     ; float =
         (fun st ~lo ~hi ~default ->
           Tape.draw_float tape ~stream:key ~lo ~hi
-            ~sample:(fun () -> default st ~lo ~hi))
+            ~sample:(fun ~lo ~hi -> default st ~lo ~hi))
     ; unit_float =
         (fun st ~default ->
           Tape.draw_float tape ~stream:key ~lo:0. ~hi:1.
-            ~sample:(fun () -> default st))
+            ~sample:(fun ~lo:_ ~hi:_ -> default st))
     ; bool =
         (fun st ~default ->
           Tape.draw_bool tape ~stream:key ~sample:(fun () -> default st))
