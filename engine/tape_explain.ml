@@ -177,10 +177,12 @@ let try_candidate (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
   in
   match tested with
   | None -> `Untestable
-  | Some passed ->
+  | Some verdict ->
     if out.Tape.overrun || out.Tape.misaligned then `Untestable
-    else if passed then `Passed
-    else `Still_failing value
+    else (
+      match verdict with
+      | Tape_stats.Case_passed | Tape_stats.Case_invalid -> `Passed
+      | Tape_stats.Case_failed -> `Still_failing value)
 
 type 'a item =
   { seg : int

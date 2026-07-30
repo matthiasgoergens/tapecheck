@@ -9,6 +9,32 @@ module Config = Base_quickcheck.Test.Config
 
 let default_config = Base_quickcheck.Test.default_config
 
+(* RO6 (outreach/ro-roadmap.md): re-exported here, alongside [run]/
+   [run_exn]/[result], because this is the module a suite actually
+   opens/qualifies against -- the natural place for the property
+   function to reach [assume]/[event], mirroring how Hypothesis exports
+   both from the top-level [hypothesis] package rather than a separate
+   "runner" module. See [Tape_stats] for the implementation. *)
+let assume = Tape_stats.assume
+let event = Tape_stats.event
+
+(* How much of the statistics report to print, on every run
+   (pass or fail) unless [`Silent]:
+   - [`Silent]: nothing (the pre-RO6 behavior).
+   - [`Summary] (default): one line -- cases tried, valid, DISCARDED,
+     failing, and which health checks fired, if any. This is the direct
+     answer to the paper's "OCaml's QuickCheck hides output when tests
+     succeed" (outreach/paper-full.txt, quoted in ro-roadmap.md): it
+     requires no change to how a suite invokes its tests to appear.
+   - [`Full]: the summary plus every event() tag and its count, the
+     generate/run/shrink time split, and shrink call counts -- the
+     analogue of --hypothesis-show-statistics. *)
+type report_level =
+  [ `Silent
+  | `Summary
+  | `Full
+  ]
+
 let seed_int (seed : Config.Seed.t) =
   match seed with
   | Deterministic s -> Hashtbl.hash s
@@ -85,8 +111,22 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     ?(config = default_config) ?(examples = []) ?regressions
     ?(realign = `Both) ?(explain = false)
     ?(explain_budget = Tape_explain.default_budget)
-    (module M : Base_quickcheck.Test.S with type t = a) :
+    ?(report : report_level = `Summary) ?(suppress_health_check = [])
+    ?stats (module M : Base_quickcheck.Test.S with type t = a) :
     (unit, a * e) Result.t =
+  (* RO6: [stats]/[health] are shared across every [Tape_engine.run]
+     call in the fresh-generation loop below (one call per size value,
+     config.test_count of them -- 10,000 by default), so the discard
+     count and the health-check window both see "the whole test run",
+     not just its first generated case. *)
+  let stats = match stats with Some s -> s | None -> Tape_engine.no_stats () in
+  let health = Tape_health.create () in
+  let print_report () =
+    match report with
+    | `Silent -> ()
+    | `Summary -> Stdlib.print_endline (Tape_engine.stats_summary_line stats)
+    | `Full -> Stdlib.print_string (Tape_engine.stats_to_string_hum stats)
+  in
   let test v = Result.is_ok (f v) in
   (* Persisted failures replay first: they are the cheapest and the
      most likely to fail again. *)
@@ -164,7 +204,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
       (match
          Tape_engine.run M.quickcheck_generator ~test ~realign
            ~seed:(base_seed + !case) ~count:1 ~size:sizes.(!case)
-           ~budget:config.shrink_count
+           ~budget:config.shrink_count ~stats ~health ~suppress_health_check
        with
       | Tape_engine.Passed _ -> ()
       | Tape_engine.Failed { minimal; image; _ } -> (
@@ -196,17 +236,38 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
           ()));
       Int.incr case
     done;
+    print_report ();
     (match !failure with
      | Some err -> err
      | None -> Ok ())
 
+(* [Or_error.try_with]/[try_with_join] catch EVERY exception, including
+   [Tape_stats.Invalid_example] -- but that one must propagate all the
+   way down into [Tape_engine.run_and_test]'s own handler, or
+   [Tape_test.assume] would silently stop working the moment a property
+   is run through [run]/[run_exn] rather than [result] (whose ~f is the
+   caller's own, never pre-wrapped). These behave exactly like their
+   Or_error counterparts for every other exception, but re-raise
+   [Invalid_example] instead of converting it to an [Error]. *)
+let try_with_join_preserving_assume f =
+  match f () with
+  | result -> result
+  | exception Tape_stats.Invalid_example -> raise Tape_stats.Invalid_example
+  | exception exn -> Or_error.of_exn exn
+
+let try_with_preserving_assume f =
+  match f () with
+  | result -> Ok result
+  | exception Tape_stats.Invalid_example -> raise Tape_stats.Invalid_example
+  | exception exn -> Or_error.of_exn exn
+
 let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
-    ?realign ?explain ?explain_budget
+    ?realign ?explain ?explain_budget ?report ?suppress_health_check ?stats
     (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
-  let f v = Or_error.try_with_join (fun () -> f v) in
+  let f v = try_with_join_preserving_assume (fun () -> f v) in
   match
     result ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
-      (module M)
+      ?report ?suppress_health_check ?stats (module M)
   with
   | Ok () -> Ok ()
   | Error (input, error) ->
@@ -217,9 +278,9 @@ let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
           (error : Error.t)]
 
 let run_exn (type a) ~(f : a -> unit) ?config ?examples ?regressions ?realign
-    ?explain ?explain_budget
+    ?explain ?explain_budget ?report ?suppress_health_check ?stats
     (module M : Base_quickcheck.Test.S with type t = a) : unit =
-  let f v = Or_error.try_with (fun () -> f v) in
+  let f v = try_with_preserving_assume (fun () -> f v) in
   run ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
-    (module M)
+    ?report ?suppress_health_check ?stats (module M)
   |> Or_error.ok_exn

@@ -111,18 +111,91 @@ let image_trivialized (img : Tape.image) : Tape.image =
    BEFORE finishing the tape: generated functions draw during the test
    call, and those draws belong on the tape. [tested] is [None] when
    the tape had already overrun during generation (the proposal
-   truncated; the test is not worth running). *)
+   truncated; the test is not worth running). A [tested] verdict of
+   [Tape_stats.Case_invalid] means the test called [Tape_stats.assume]
+   with a false condition -- RO6 (outreach/ro-roadmap.md): every call
+   site that invokes the user's test function must go through here (or
+   [run_and_test_timed] below) so that a discarded case is caught and
+   accounted for, never left to crash the run as an uncaught
+   exception. *)
 let run_and_test (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
-    ~seed ~(test : a -> bool) : a * bool option * Tape.output =
+    ~seed ~(test : a -> bool) : a * Tape_stats.verdict option * Tape.output =
   let random =
     Splittable_random.For_tape.attach (Splittable_random.of_int seed) tape
   in
   let value = Base_quickcheck.Generator.generate gen ~size ~random in
   let tested =
-    if Tape.overrun_now tape then None else Some (test value)
+    if Tape.overrun_now tape then None
+    else begin
+      Tape_stats.begin_case ();
+      Some
+        (match test value with
+         | true -> Tape_stats.Case_passed
+         | false -> Tape_stats.Case_failed
+         | exception Tape_stats.Invalid_example -> Tape_stats.Case_invalid)
+    end
   in
   let out = Tape.finish tape in
   (value, tested, out)
+
+(* Like [run_and_test], but for the top-level generate-phase search in
+   [run] only: split wall-clock between the generator call and the test
+   call (RO6's "time spent generating vs running" statistic), and skip
+   the overrun check ([Tape.overrun_now] can only become true on a
+   SHRINK REPLAY that ran out of recorded input -- see tape.ml's [pop]
+   -- and this path always starts a fresh recording, never a replay, so
+   it is always false here). *)
+let run_and_test_timed (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
+    ~size ~seed ~(test : a -> bool) :
+    a * Tape_stats.verdict * Tape.output * float * float =
+  let random =
+    Splittable_random.For_tape.attach (Splittable_random.of_int seed) tape
+  in
+  let t0 = Stdlib.Sys.time () in
+  let value = Base_quickcheck.Generator.generate gen ~size ~random in
+  let t1 = Stdlib.Sys.time () in
+  Tape_stats.begin_case ();
+  let verdict =
+    match test value with
+    | true -> Tape_stats.Case_passed
+    | false -> Tape_stats.Case_failed
+    | exception Tape_stats.Invalid_example -> Tape_stats.Case_invalid
+  in
+  let t2 = Stdlib.Sys.time () in
+  let out = Tape.finish tape in
+  (value, verdict, out, t1 -. t0, t2 -. t1)
+
+(* Dispatches to [run_and_test] or [run_and_test_timed] depending on
+   [timed], behind one uniform return shape, so [run]'s generate-phase
+   loop below can call ONE function regardless of whether timing is
+   worth paying for on this particular case.
+
+   Why this matters (measured in
+   demo/stats_overhead_bench.ml): [Stdlib.Sys.time()] is a real
+   syscall, and THREE calls per case (around generate, around the test)
+   turned out to dominate the entire per-case cost -- +327% versus a
+   hand-rolled loop with none of RO6's bookkeeping, on a cheap
+   single-int-draw property. Health checks only need per-case timing
+   during Hypothesis's own bounded early window (closed by
+   Tape_health.max_valid_draws/max_invalid_draws/max_large_draws, at
+   most on the order of tens of cases); a run of thousands of cases
+   pays the timing cost on none of the rest once the window closes.
+   [gen_dt]/[run_dt] are simply 0. on an untimed case, so
+   [stats.generate_time]/[stats.run_time] undercount a long run
+   slightly (they reflect the health-check sampling window, not every
+   case) -- an accepted, documented trade-off for keeping the actually
+   -expensive part of the passing path cheap; see the write-up. *)
+let run_and_test_maybe_timed (type a) ~timed ~tape
+    ~(gen : a Base_quickcheck.Generator.t) ~size ~seed ~(test : a -> bool) :
+    a * Tape_stats.verdict option * Tape.output * float * float =
+  if not timed then
+    let value, tested, out = run_and_test ~tape ~gen ~size ~seed ~test in
+    (value, tested, out, 0., 0.)
+  else
+    let value, verdict, out, gen_dt, run_dt =
+      run_and_test_timed ~tape ~gen ~size ~seed ~test
+    in
+    (value, Some verdict, out, gen_dt, run_dt)
 
 (* A persistent worker pool: domains are expensive to spawn (each
    registers a GC domain), so spawn once per shrink and feed batches
@@ -228,10 +301,14 @@ let eval_once (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
   in
   match tested with
   | None -> (out.Tape.misaligned, None)
-  | Some passed ->
-    if out.Tape.overrun || passed then (out.Tape.misaligned, None)
-    else
-      (out.Tape.misaligned, Some (out.Tape.image, _value))
+  | Some verdict ->
+    if out.Tape.overrun then (out.Tape.misaligned, None)
+    else (
+      match verdict with
+      | Tape_stats.Case_failed ->
+        (out.Tape.misaligned, Some (out.Tape.image, _value))
+      | Tape_stats.Case_passed | Tape_stats.Case_invalid ->
+        (out.Tape.misaligned, None))
 
 (* Pool-side proposal evaluation honouring the realign policy, so a
    pooled run reaches the SAME result as the sequential engine at any
@@ -270,14 +347,56 @@ type realign =
 (* True cost of a shrink, separate from the proposal-count budget:
    [replays] generation runs, [tests] test executions, [misaligns]
    proposals whose replay hit a kind mismatch (the only ones on which
-   [`Both] does extra work). *)
+   [`Both] does extra work).
+
+   RO6 (outreach/ro-roadmap.md): the fields below extend this same
+   record with the generate-phase accounting the statistics report
+   needs -- cases valid/discarded, aggregated event() tags, and a
+   three-way time split (generate / run-the-test / shrink). This
+   reuses the existing [stats]/[no_stats] rather than adding a parallel
+   type, so every existing caller (bench_realign.ml, and anyone who
+   already threads a [stats] through [shrink]) keeps working
+   unchanged: the new fields just start at their zero value. *)
 type stats =
   { mutable replays : int
   ; mutable tests : int
   ; mutable misaligns : int
+  ; mutable cases_valid : int (* generate-phase: test ran and passed *)
+  ; mutable cases_invalid : int
+      (* generate-phase: Tape_stats.assume discarded the case *)
+  ; mutable cases_failed : int (* generate-phase: 0 or 1 *)
+  ; mutable shrink_discards : int
+      (* shrink-phase proposals discarded via assume -- secondary/
+         diagnostic only, not health-checked (Hypothesis stops
+         health-checking once shrinking starts too). *)
+  ; events : (string, int) Hashtbl.t
+      (* Tape_stats.event tags, generate-phase cases only, aggregated
+         across every case (valid, invalid, or the one failing case). *)
+  ; mutable generate_time : float (* wall seconds, Generator.generate only *)
+  ; mutable run_time : float (* wall seconds, the test body only *)
+  ; mutable shrink_time : float (* wall seconds, the whole shrink phase *)
+  ; mutable warnings : Tape_health.t list
+      (* Health checks that fired during this run, most recent first --
+         populated whether or not each one was suppressed (see
+         ?suppress_health_check on [run]); empty when [?domains > 1],
+         since health checks are not evaluated in the pooled path (see
+         [run]'s comment on why). *)
   }
 
-let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
+let no_stats () =
+  { replays = 0
+  ; tests = 0
+  ; misaligns = 0
+  ; cases_valid = 0
+  ; cases_invalid = 0
+  ; cases_failed = 0
+  ; shrink_discards = 0
+  ; events = Hashtbl.create (module String)
+  ; generate_time = 0.
+  ; run_time = 0.
+  ; shrink_time = 0.
+  ; warnings = []
+  }
 
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~budget ~domains ~pool ~(realign : realign)
@@ -304,10 +423,19 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     if out.Tape.misaligned then stats.misaligns <- stats.misaligns + 1;
     match tested with
     | None -> (out.Tape.misaligned, None)
-    | Some passed ->
+    | Some verdict ->
       stats.tests <- stats.tests + 1;
-      if out.Tape.overrun || passed then (out.Tape.misaligned, None)
-      else (out.Tape.misaligned, Some (out.Tape.image, value))
+      (match verdict with
+       | Tape_stats.Case_invalid ->
+         stats.shrink_discards <- stats.shrink_discards + 1
+       | Tape_stats.Case_passed | Tape_stats.Case_failed -> ());
+      if out.Tape.overrun then (out.Tape.misaligned, None)
+      else (
+        match verdict with
+        | Tape_stats.Case_failed ->
+          (out.Tape.misaligned, Some (out.Tape.image, value))
+        | Tape_stats.Case_passed | Tape_stats.Case_invalid ->
+          (out.Tape.misaligned, None))
   in
 
   (* Replay [proposal]; accept iff still failing and shortlex-smaller.
@@ -701,15 +829,54 @@ let replay (type a) (gen : a Base_quickcheck.Generator.t) ?size
     (replay_image_and_apply gen ?size (Tape.image_of_main choices)
        ~f:(fun _ -> ()))
 
+(* HealthCheck.large_base_example's tape analogue: trivialize [image]
+   (every recorded choice forced to its shrink target -- the same
+   operation the shrink loop's own "Pass 1" performs) and replay it
+   through the generator. Trivializing just rewrites the recorded
+   VALUES; replaying is what actually gives the SHORTER shape a real
+   generator produces from them (e.g. a list generator that sees its
+   length choice forced to the minimum genuinely emits a short list and
+   never draws the now-unneeded element choices), mirroring Hypothesis's
+   own [zero_data] probe (engine_hypothesis.py, ChoiceTemplate
+   ("simplest")). Costs one extra generation pass; called at most once
+   per [Tape_health.state] (guarded by the caller in [run]), so it is
+   not paid on every case. *)
+let natural_example_choices (type a) ~(gen : a Base_quickcheck.Generator.t)
+    ~size (image : Tape.image) : int =
+  let trivial = image_trivialized image in
+  let tape = Tape.create () in
+  Tape.start_replay_image tape trivial;
+  let random =
+    Splittable_random.For_tape.attach
+      (Splittable_random.of_int replay_fresh_seed)
+      tape
+  in
+  let (_ : a) = Base_quickcheck.Generator.generate gen ~size ~random in
+  let out = Tape.finish tape in
+  Tape.image_size out.Tape.image
+
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
-    ?(domains = 1) ?(realign : realign = `Consume) ?stats
-    (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool) : a result =
+    ?(domains = 1) ?(realign : realign = `Consume) ?stats ?health
+    ?(suppress_health_check = []) (gen : a Base_quickcheck.Generator.t)
+    ~(test : a -> bool) : a result =
   let stats = match stats with Some s -> s | None -> no_stats () in
+  let health = match health with Some h -> h | None -> Tape_health.create () in
   let tape = Tape.create () in
   let pool = if domains > 1 then Some (Pool.create domains) else None in
   (* Find the first failing case. With a pool, generate and test cases
      in parallel batches; taking the lowest failing index in the batch
-     preserves the sequential engine's choice of failure exactly. *)
+     preserves the sequential engine's choice of failure exactly.
+
+     RO6 (outreach/ro-roadmap.md): every FRESH generate-phase case (both
+     branches below) feeds [stats]' case/event counters, and the
+     sequential branch additionally feeds [health]'s windowed checks.
+     The pooled branch deliberately does NOT run health checks: several
+     cases run concurrently across domains there, so "the first N
+     cases" and "wall-clock time spent generating" are both ill-defined
+     in a way that would make a fired warning meaningless (which case
+     was actually 11th? on which domain's clock?) -- see the write-up.
+     It still counts valid/invalid/events, since those are simple sums,
+     order-independent, and cheap either way. *)
   let first_failure =
     match pool with
     | None ->
@@ -717,16 +884,72 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
       let case = ref 0 in
       while Option.is_none !found && !case < count do
         Tape.start_recording tape;
-        let value, tested, out =
-          run_and_test ~tape ~gen ~size ~seed:(seed + !case) ~test
+        (* Only pay for per-case timing (three Sys.time() calls,
+           measured to be the dominant added cost -- see
+           run_and_test_maybe_timed's comment and
+           demo/stats_overhead_bench.ml) while the health-check window
+           is still open; once it has closed, nothing downstream reads
+           gen_dt/run_dt for this case, so skip computing them. *)
+        let timed = not health.Tape_health.closed in
+        let value, tested, out, gen_dt, run_dt =
+          run_and_test_maybe_timed ~timed ~tape ~gen ~size
+            ~seed:(seed + !case) ~test
         in
+        if timed then begin
+          stats.generate_time <- stats.generate_time +. gen_dt;
+          stats.run_time <- stats.run_time +. run_dt
+        end;
+        Tape_stats.merge_current_events_into stats.events;
         (match tested with
-         | Some false -> found := Some (out.Tape.image, value)
-         | _ -> ());
+         | None ->
+           (* Unreachable: this path always starts a fresh recording,
+              never a replay, so Tape.overrun_now is always false (see
+              run_and_test's comment). *)
+           ()
+         | Some Tape_stats.Case_failed ->
+           stats.cases_failed <- stats.cases_failed + 1;
+           found := Some (out.Tape.image, value)
+         | Some ((Tape_stats.Case_passed | Tape_stats.Case_invalid) as verdict)
+           ->
+           let is_valid =
+             match verdict with
+             | Tape_stats.Case_passed -> true
+             | Tape_stats.Case_invalid | Tape_stats.Case_failed -> false
+           in
+           if is_valid then stats.cases_valid <- stats.cases_valid + 1
+           else stats.cases_invalid <- stats.cases_invalid + 1;
+           if timed then begin
+             let choices = Tape.image_size out.Tape.image in
+             (* [natural_example_choices] replays this case's tape, so
+                it is only worth its own cost once per [health]
+                (guarded here, not just inside
+                [maybe_check_large_base_example], so the argument
+                itself is never even computed on later cases). *)
+             if not health.Tape_health.checked_base_example then
+               Tape_health.maybe_check_large_base_example health
+                 ~suppress:suppress_health_check
+                 ~choices:(natural_example_choices ~gen ~size out.Tape.image);
+             Tape_health.record health ~suppress:suppress_health_check
+               ~status:(if is_valid then `Valid else `Invalid) ~choices
+               ~generate_time:gen_dt
+           end);
         Int.incr case
       done;
+      stats.warnings <- health.Tape_health.fired;
       !found
     | Some pool ->
+      (* RO6 stats/health checks are NOT tracked in the pooled path: the
+         pool's task result type is shared with [shrink]'s own pooled
+         proposal evaluation below (both run through the same [Pool.t],
+         whose result type is fixed once for the whole function), so
+         the per-case verdict detail this needs would have to flow
+         through that shared channel too -- and, as noted above, "the
+         Nth case" and "time spent generating" are both ill-defined
+         once several cases run concurrently across domains anyway.
+         [stats]'/[health]'s generate-phase fields simply stay at their
+         initial zero in pooled mode; [Tape_test] recommends
+         domains = 1 (the default) for the statistics report to mean
+         anything. *)
       let found = ref None in
       let batch_start = ref 0 in
       let width = domains * 2 in
@@ -742,7 +965,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                    ~seed:(seed + !batch_start + d) ~test
                in
                match tested with
-               | Some false -> Some (out.Tape.image, value)
+               | Some Tape_stats.Case_failed -> Some (out.Tape.image, value)
                | _ -> None))
         in
         (* run_batch preserves task order, so the first Some is the
@@ -774,10 +997,12 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
           ; trail = []
           }
       else begin
+        let t0 = Stdlib.Sys.time () in
         let _minimal, attempts, image, trail =
           shrink ~tape ~gen ~size ~test ~budget ~domains ~pool ~realign
             ~stats ~initial_tape:image0 ~initial_value:value
         in
+        stats.shrink_time <- stats.shrink_time +. (Stdlib.Sys.time () -. t0);
         Failed
           { minimal = live_value image
           ; original = value
@@ -790,3 +1015,42 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
   in
   Option.iter pool ~f:Pool.shutdown;
   outcome
+
+(* RO6 (outreach/ro-roadmap.md): the one-line answer to "OCaml's
+   QuickCheck hides output when tests succeed" (the ICSE 2024 paper,
+   quoted there) -- printed unconditionally by [Tape_test.result] on
+   every run, pass or fail, unless the caller opts all the way out
+   (?report:`Silent). *)
+let stats_summary_line (stats : stats) =
+  let warnings_suffix =
+    if List.is_empty stats.warnings then ""
+    else
+      Printf.sprintf " -- health checks fired: %s"
+        (String.concat ~sep:", "
+           (List.rev_map stats.warnings ~f:Tape_health.to_string))
+  in
+  Printf.sprintf "tapecheck: %d cases (%d valid, %d discarded, %d failing)%s"
+    (stats.cases_valid + stats.cases_invalid + stats.cases_failed)
+    stats.cases_valid stats.cases_invalid stats.cases_failed warnings_suffix
+
+(* The fuller report (?report:`Full), the direct analogue of
+   Hypothesis's --hypothesis-show-statistics
+   (outreach/hypothesis-inventory.md section 3): every event() tag and
+   its count, and the generate/run/shrink time split plus shrink call
+   counts the task write-up asks for. *)
+let stats_to_string_hum (stats : stats) : string =
+  let buf = Buffer.create 512 in
+  let add fmt = Stdlib.Printf.ksprintf (Buffer.add_string buf) fmt in
+  add "%s\n" (stats_summary_line stats);
+  if Hashtbl.is_empty stats.events then add "  events: (none)\n"
+  else begin
+    add "  events:\n";
+    Hashtbl.to_alist stats.events
+    |> List.sort ~compare:(fun (_, a) (_, b) -> Int.compare b a)
+    |> List.iter ~f:(fun (label, count) -> add "    %-50s %d\n" label count)
+  end;
+  add "  timing: generate %.4fs, run %.4fs, shrink %.4fs\n" stats.generate_time
+    stats.run_time stats.shrink_time;
+  add "  shrink calls: %d replays, %d tests, %d misaligned, %d discarded proposals\n"
+    stats.replays stats.tests stats.misaligns stats.shrink_discards;
+  Buffer.contents buf
