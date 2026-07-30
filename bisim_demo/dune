@@ -1,0 +1,8 @@
+(executable
+ (name queue_bisim)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio base_quickcheck splittable_random tape tape_engine
+   stateful)
+ (preprocess
+  (pps ppx_quickcheck ppx_sexp_conv ppx_let)))
