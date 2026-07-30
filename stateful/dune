@@ -1,0 +1,8 @@
+(library
+ (name stateful)
+ (wrapped false)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base base_quickcheck splittable_random tape tape_engine)
+ (preprocess
+  (pps ppx_sexp_conv ppx_let)))
