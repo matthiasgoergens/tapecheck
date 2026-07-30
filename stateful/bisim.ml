@@ -81,19 +81,64 @@ let default_max_steps = 50
    engine/tape_health.ml (branch statistics-and-health) merges, these
    three counters are exactly its shape and can feed its health-check
    registry directly instead of the standalone check below. *)
+type op_counts =
+  { mutable op_agree : int
+  ; mutable op_agreed_by_raising : int
+  ; mutable op_disagree : int
+  }
+
 type stats =
   { mutable agree : int
   ; mutable agreed_by_raising : int
   ; mutable disagree : int
+  ; (* Per-operation breakdown, keyed by the constructor name of
+       [sexp_of_cmd]. This is NOT a refinement for its own sake: the
+       aggregate ratio alone is too weak to catch the case this check
+       exists for. In janestreet/core#182 five of thirty-six operations
+       raised unconditionally, so the aggregate mutual-raise rate was
+       around 14% -- comfortably under any sane threshold -- while the
+       five guilty operations were individually at 100%. Aggregate:
+       silent. Per-operation: screaming. Always check per-operation. *)
+    mutable per_op : (string * op_counts) list
   }
 
-let create_stats () = { agree = 0; agreed_by_raising = 0; disagree = 0 }
+let create_stats () =
+  { agree = 0; agreed_by_raising = 0; disagree = 0; per_op = [] }
+
+(* Constructor name of a command, used as the per-operation key.
+   [sexp_of_cmd] is already in [Spec], so this costs the caller
+   nothing. A nullary constructor sexps to an Atom, everything else to
+   a List whose head is the constructor. *)
+let op_label (s : Sexp.t) : string =
+  match s with
+  | Sexp.Atom a -> a
+  | Sexp.List (Sexp.Atom a :: _) -> a
+  | Sexp.List _ -> "<anonymous>"
+
+let counts_for (s : stats) (label : string) : op_counts =
+  match List.Assoc.find s.per_op label ~equal:String.equal with
+  | Some c -> c
+  | None ->
+    let c = { op_agree = 0; op_agreed_by_raising = 0; op_disagree = 0 } in
+    s.per_op <- (label, c) :: s.per_op;
+    c
 
 let sexp_of_stats (s : stats) : Sexp.t =
-  [%sexp_of: (string * int) list]
-    [ "agree", s.agree
-    ; "agreed_by_raising", s.agreed_by_raising
-    ; "disagree", s.disagree
+  let per_op =
+    List.map (List.rev s.per_op) ~f:(fun (label, c) ->
+      ( label
+      , [ "agree", c.op_agree
+        ; "agreed_by_raising", c.op_agreed_by_raising
+        ; "disagree", c.op_disagree
+        ] ))
+  in
+  Sexp.List
+    [ [%sexp_of: (string * int) list]
+        [ "agree", s.agree
+        ; "agreed_by_raising", s.agreed_by_raising
+        ; "disagree", s.disagree
+        ]
+    ; [%sexp_of: (string * (string * int) list) list] per_op
     ]
 
 (* Hypothesis-style health check (the [filter_too_much] analogue for
@@ -109,6 +154,63 @@ let most_steps_agreed_only_by_raising ?(threshold = 0.5) (s : stats) : bool =
   && Float.( >= )
        (Float.of_int s.agreed_by_raising /. Float.of_int total)
        threshold
+
+(* The check that actually has teeth. One operation whose steps agree
+   only by raising is invisible in the aggregate as soon as there are
+   other, healthy operations diluting it -- see the [per_op] comment.
+   [min_steps] keeps a rarely-generated operation from crying wolf off
+   two or three samples. *)
+type warning =
+  { op : string
+  ; steps : int
+  ; agreed_by_raising : int
+  ; ratio : float
+  }
+
+let sexp_of_warning (w : warning) : Sexp.t =
+  [%sexp_of: string * (string * string) list]
+    ( w.op
+    , [ "steps", Int.to_string w.steps
+      ; "agreed_by_raising", Int.to_string w.agreed_by_raising
+      ; "ratio", Printf.sprintf "%.2f" w.ratio
+      ] )
+
+let ops_agreeing_only_by_raising ?(threshold = 0.5) ?(min_steps = 20) (s : stats)
+  : warning list =
+  List.rev s.per_op
+  |> List.filter_map ~f:(fun (op, c) ->
+    let steps = c.op_agree + c.op_agreed_by_raising + c.op_disagree in
+    if steps < min_steps then None
+    else begin
+      let ratio =
+        Float.of_int c.op_agreed_by_raising /. Float.of_int steps
+      in
+      if Float.( >= ) ratio threshold then
+        Some { op; steps; agreed_by_raising = c.op_agreed_by_raising; ratio }
+      else None
+    end)
+
+(* Rendered warning text, or [None] when the run looks healthy. Kept
+   separate from printing so a caller can route it wherever it likes. *)
+let health_report ?threshold ?min_steps (s : stats) : string option =
+  match ops_agreeing_only_by_raising ?threshold ?min_steps s with
+  | [] -> None
+  | ws ->
+    let lines =
+      List.map ws ~f:(fun w ->
+        Printf.sprintf
+          "    %s: %d/%d steps (%.0f%%) agreed only because both sides raised"
+          w.op w.agreed_by_raising w.steps (w.ratio *. 100.))
+    in
+    Some
+      (String.concat ~sep:"\n"
+         (("bisim health check: these operations are not really being compared:"
+           :: lines)
+          @ [ "  Both implementations raised, the exceptions were judged equal, and"
+            ; "  the step was counted as agreement -- so no returned value was ever"
+            ; "  checked. An operation at 100% is indistinguishable from one that is"
+            ; "  not tested at all. Silence this with ~health:false if deliberate."
+            ]))
 
 module Make (S : Spec) = struct
   (* Same state-dependent, length-prefixed bind shape as
@@ -208,6 +310,7 @@ module Make (S : Spec) = struct
           | cmd :: rest ->
             if not (S.precond cmd state) then go state (idx + 1) rest
             else begin
+              let counts = counts_for stats (op_label (S.sexp_of_cmd cmd)) in
               let outcome_l = capture (fun () -> S.run_left cmd left) in
               let outcome_r = capture (fun () -> S.run_right cmd right) in
               let disagreement =
@@ -220,6 +323,7 @@ module Make (S : Spec) = struct
                 | Raised el, Raised er ->
                   if String.equal (on_both_raised el) (on_both_raised er) then begin
                     stats.agreed_by_raising <- stats.agreed_by_raising + 1;
+                    counts.op_agreed_by_raising <- counts.op_agreed_by_raising + 1;
                     None
                   end
                   else Some (Both_raised_but_differ (el, er))
@@ -227,10 +331,13 @@ module Make (S : Spec) = struct
               match disagreement with
               | Some d ->
                 stats.disagree <- stats.disagree + 1;
+                counts.op_disagree <- counts.op_disagree + 1;
                 Diverged (idx, cmd, d)
               | None ->
                 (match (outcome_l, outcome_r) with
-                 | Returned _, Returned _ -> stats.agree <- stats.agree + 1
+                 | Returned _, Returned _ ->
+                   stats.agree <- stats.agree + 1;
+                   counts.op_agree <- counts.op_agree + 1
                  | _ -> () (* Agreed_by_raising already counted above *));
                 go (S.next_state cmd state) (idx + 1) rest
             end
@@ -241,4 +348,30 @@ module Make (S : Spec) = struct
     match run_cmds ?on_both_raised ?stats cmds with
     | Ok_run -> true
     | Diverged _ -> false
+
+  (* Property-level wrapper, and the reason the health check is worth
+     having at all: [test] is called once per case by the engine, so it
+     is the wrong place to judge a ratio. This owns the stats across the
+     whole run and reports at the end.
+
+     Warning is ON by default -- pass [~health:false] to silence it. A
+     statistic nobody reads is how janestreet/core#182 survived six
+     years: the information was derivable from the test's own behaviour
+     the entire time, and nothing ever said it out loud. Opt-in
+     diagnostics only help the people who already suspect the problem. *)
+  let with_health
+        ?on_both_raised
+        ?threshold
+        ?min_steps
+        ?(health = true)
+        ?(report = fun s -> Stdlib.prerr_endline s; Stdlib.flush Stdlib.stderr)
+        (f : (S.cmd list -> bool) -> 'a)
+    : 'a * stats =
+    let stats = create_stats () in
+    let result = f (fun cmds -> test ?on_both_raised ~stats cmds) in
+    if health then (
+      match health_report ?threshold ?min_steps stats with
+      | None -> ()
+      | Some msg -> report msg);
+    (result, stats)
 end
