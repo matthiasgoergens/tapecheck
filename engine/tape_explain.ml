@@ -25,7 +25,16 @@
 
    This module is intentionally a leaf: [Tape_engine] does not know it
    exists, so the "phase" is switched off simply by not calling
-   [analyze] (wired as an opt-in ?explain flag in Tape_test). *)
+   [analyze] (wired as an opt-in ?explain flag in Tape_test). One
+   consequence: this module never goes through [Tape_engine.shrink]'s
+   own attempt budget or stall tracking at all -- every replay here is
+   its own fresh [Tape.start_replay_image] / [run_and_test], entirely
+   independent of the shrink loop that produced the minimal image in
+   the first place. Hypothesis's [_explain] sets `self.max_stall =
+   2**100` at the top precisely because ITS explain phase reuses the
+   SAME shrinker object and its stall-detection would otherwise abort
+   the whole thing early; there is no equivalent knob to disable here,
+   because there was never a shared stall counter to begin with. *)
 
 open! Base
 
@@ -59,50 +68,75 @@ type 'a choice_report =
 
 type 'a t =
   { choices : 'a choice_report list
-  ; budget : int
-  ; used : int (* candidate replays actually spent, <= budget *)
+  ; attempts_per_choice : int
+      (* The cap PER CHOICE, not a pool shared across the whole tape --
+         see the note below on why the old shape was wrong. *)
+  ; used : int (* candidate replays actually spent, across every choice *)
   ; complete : bool
-      (* false if the budget ran out before every choice either
-         exhausted its candidate list or found enough examples -- i.e.
-         some [No_variation_found] verdicts above are weaker than
-         usual, because the search stopped early rather than running
-         dry. Check per-choice [tries] for exactly how little (or how
-         much) a given verdict rests on. *)
+      (* false if some choice's own search did not run to ITS natural
+         conclusion (quota met, candidates and random budget exhausted,
+         or the early-abort-on-mostly-noise heuristic fired) -- i.e.
+         [attempts_per_choice] was set so low (typically 0) that a
+         choice with real alternatives to try got none. With the
+         Hypothesis-sized default below this is essentially always
+         true in practice; it exists so a caller can still ask for, and
+         detect, a deliberately cheap/degenerate run. *)
   }
 
-(* Budget: a few hundred replays, the same order of magnitude as ONE
-   generation-and-test pass through Tape_engine.run's own search, and
-   well under a shrink run's budget (default 2000; the six properties
-   in the README results table average 22-466 shrink calls to reach
-   the minimal example). This analysis runs once, AFTER shrinking has
-   already converged, so every replay it spends is pure overhead on
-   top of an already-passing search; 200 keeps that overhead bounded
-   regardless of how many choices the minimal tape has, while still
-   giving small tapes (a handful of choices, the common case for a
-   minimized example) several tries apiece before the budget runs
-   out. *)
-let default_budget = 200
+(* Governing principle (the reason this shape changed at all): the
+   PASSING path runs on every CI invocation and must stay cheap --
+   that is [Tape_engine]'s own shrink budget, spent constantly. The
+   EXPLAIN path only runs once, after a test has already failed and
+   already been shrunk, and its output goes in front of a human who is
+   about to spend real time reading it. That failing path is rare, so
+   it can afford orders of magnitude more replays than the passing path
+   ever should. A flat global budget of 200 split across however many
+   choices happen to be on the minimal tape (the old shape here) gets
+   this backwards: it taxes every choice by the SIZE of the example,
+   which is exactly when a human most wants a thorough answer.
 
-(* Per-choice caps, independent of the overall budget: stop asking a
-   given choice for more evidence once it has enough (3 distinct
-   still-failing values is plenty to call it "varies freely" without
-   spending the whole budget re-confirming it), and never try more
-   than 8 candidates at any one position even if nothing has failed
-   yet, so one wide-range choice cannot starve every other choice on
-   the tape of its share of the budget. *)
-let max_tries_per_choice = 8
+   Hypothesis's own [_explain] (outreach/hypothesis-sources/
+   shrinker_hypothesis.py, ~line 499) makes the budget PER SPAN
+   instead: `for n_attempt in range(500 + len(candidates))`, one such
+   loop per part of the minimal example, not one loop shared over all
+   of them. [default_attempts_per_choice] below is that same 500,
+   applied per recorded tape choice (tapecheck's finer-grained analogue
+   of a Hypothesis "span" -- see the note further down on why choices
+   don't nest the way spans do). Their own comment is left in as a
+   `# TODO: is 100 same-failures out of 500 attempts a good heuristic?`
+   -- they are not certain the constant is right either, so this is a
+   starting point copied deliberately, not a number treated as
+   sacred. *)
+let default_attempts_per_choice = 500
+
+(* Independent of the attempts budget: how many distinct still-failing
+   example VALUES to keep for the human-readable report once a choice
+   is confirmed to vary. Hypothesis doesn't collect examples at all --
+   once a span accumulates 100 same-ish failures in a row it just
+   stamps a fixed note ("or any other generated value") without keeping
+   any of them. Showing 3 concrete alternative values costs nothing
+   extra in replays (it only trims [found] early) and is more useful to
+   a human than a constant string, so this divergence stays. *)
 let max_examples_per_choice = 3
-let extra_random_samples = 4
 
-(* Candidate alternative values for one recorded choice, most
-   informative first: the shrink target and the range endpoints (the
-   values a reader is most likely to already be comparing against),
-   the immediate neighbors of the current value, then a handful of
-   deterministic pseudo-random samples spread across the range so a
-   choice with a huge span still gets some coverage beyond its edges.
-   [seed] is derived from the choice's tape position, so the sample is
-   reproducible across runs without needing real entropy. *)
-let candidates_for (c : Tape.choice) ~seed : Tape.choice list =
+(* Deterministic candidate alternative values for one recorded choice,
+   most informative first: the shrink target and the range endpoints
+   (the values a reader is most likely to already be comparing
+   against), then the immediate neighbors of the current value.
+   Mirrors Hypothesis's `_explain_candidates`: try a few targeted,
+   plausible values before falling back to genuine random sampling, so
+   a case like `assert n1 == n2` -- where the only passing value of
+   `n1` is exactly `n2`'s value -- isn't reported as freely-variable
+   just because random sampling missed the one value that matters.
+   Deliberately NOT capped and NOT padded with random samples (the old
+   [max_tries_per_choice]/[extra_random_samples] existed only because
+   the old shared budget needed every choice's candidate list bounded
+   up front); the list here is inherently small (at most 5 entries),
+   and genuine random sampling is drawn fresh, attempt by attempt, in
+   [run_item] below instead, exactly as Hypothesis draws a fresh random
+   replacement inside its own attempt loop rather than precomputing a
+   pool of them. *)
+let candidates_for (c : Tape.choice) : Tape.choice list =
   match c with
   | Tape.Marker -> []
   | Tape.Bool b -> [ Tape.Bool (not b) ]
@@ -110,41 +144,42 @@ let candidates_for (c : Tape.choice) ~seed : Tape.choice list =
     if Int64.(lo = hi) then []
     else begin
       let target = Tape.clamp_int64 0L ~lo ~hi in
-      let hand =
-        List.filter_opt
-          [ Some target
-          ; Some lo
-          ; Some hi
-          ; (if Int64.(value > lo) then Some Int64.(value - 1L) else None)
-          ; (if Int64.(value < hi) then Some Int64.(value + 1L) else None)
-          ]
-      in
-      let rand = Splittable_random.of_int seed in
-      let extra =
-        List.init extra_random_samples ~f:(fun _ ->
-          Splittable_random.int64 rand ~lo ~hi)
-      in
-      hand @ extra
+      [ Some target
+      ; Some lo
+      ; Some hi
+      ; (if Int64.(value > lo) then Some Int64.(value - 1L) else None)
+      ; (if Int64.(value < hi) then Some Int64.(value + 1L) else None)
+      ]
+      |> List.filter_opt
       |> List.filter ~f:(fun v -> Int64.(v <> value))
       |> List.dedup_and_sort ~compare:Int64.compare
-      |> (fun l -> List.take l max_tries_per_choice)
       |> List.map ~f:(fun value -> Tape.Integer { value; lo; hi })
     end
   | Tape.Float { value; lo; hi } ->
     if Float.(lo = hi) then []
     else begin
       let target = Tape.clamp_float 0. ~lo ~hi in
-      let rand = Splittable_random.of_int seed in
-      let extra =
-        List.init extra_random_samples ~f:(fun _ ->
-          Splittable_random.float rand ~lo ~hi)
-      in
-      (target :: lo :: hi :: extra)
+      [ target; lo; hi ]
       |> List.filter ~f:(fun v -> Float.(v <> value) && not (Float.is_nan v))
       |> List.dedup_and_sort ~compare:Float.compare
-      |> (fun l -> List.take l max_tries_per_choice)
       |> List.map ~f:(fun value -> Tape.Float { value; lo; hi })
     end
+
+(* A genuinely fresh random alternative, drawn on demand (one draw per
+   attempt, not a precomputed pool) -- Hypothesis's `draw_choice(node
+   .type, node.constraints, random=self.random)` inside the same loop.
+   Only reachable for Integer/Float, whose ranges can be large enough
+   that the handful of [candidates_for] doesn't cover them; Bool has
+   exactly one alternative (already the sole candidate) and Marker is
+   filtered out before this is ever called. *)
+let fresh_random_alternative (c : Tape.choice) (rand : Splittable_random.t) :
+    Tape.choice =
+  match c with
+  | Tape.Integer { lo; hi; _ } ->
+    Tape.Integer { value = Splittable_random.int64 rand ~lo ~hi; lo; hi }
+  | Tape.Float { lo; hi; _ } ->
+    Tape.Float { value = Splittable_random.float rand ~lo ~hi; lo; hi }
+  | Tape.Bool _ | Tape.Marker -> c
 
 let positions_of (image : Tape.image) : (int * Tape.key * int * Tape.choice) list
   =
@@ -154,6 +189,65 @@ let positions_of (image : Tape.image) : (int * Tape.key * int * Tape.choice) lis
       let arr = Tape_engine.seg_get image seg in
       let key = if seg = 0 then Tape.root else fst image.streams.(seg - 1) in
       List.init (Array.length arr) ~f:(fun idx -> (seg, key, idx, arr.(idx))))
+
+(* Redundant-work avoidance, adapted rather than ported directly.
+   Hypothesis's [_explain] looks up `self.engine.passing_choice_sequences
+   (prefix=...)` before running any experiment for a span, and skips the
+   span entirely if a PASSING sequence already on file has the same
+   prefix and suffix -- "the shrinking process means that we've already
+   tried many variations on the minimal test case, so this can save a
+   lot of time." That specific check does not transfer as-is: Hypothesis
+   is hunting for a PASSING alternative (any single one disproves "varies
+   freely" outright), so a known-passing sequence directly answers its
+   question. tapecheck hunts for the opposite thing -- a STILL-FAILING
+   alternative -- so a known PASS tells us nothing about whether a
+   failing one also exists.
+
+   What tapecheck already has on file that DOES answer the right
+   question is [Tape_engine.failure.trail]: every image accepted during
+   shrinking, each one independently confirmed still-failing (that is
+   the acceptance criterion). Two tape images in that chain that agree
+   everywhere except one position are exactly a validated "changing this
+   choice here still fails" data point -- the precise evidence
+   [Varies] wants, already paid for once during shrinking. We surface
+   those as extra CANDIDATES (tried for real, same as
+   [candidates_for]'s hand-picked ones, so [used] accounts for them
+   honestly) rather than as a hard skip, both because they still need
+   one replay to materialize the reported example value and because
+   unlike Hypothesis's binary "varies freely" verdict, ours wants actual
+   example values to show a human. *)
+let trail_alternatives ~(trail : Tape.image list) (image : Tape.image) seg idx :
+    Tape.choice list =
+  let seg_count_image = Tape_engine.seg_count image in
+  List.filter_map trail ~f:(fun cand ->
+    if Tape_engine.seg_count cand <> seg_count_image then None
+    else begin
+      let other_segments_match =
+        List.for_all (List.range 0 seg_count_image) ~f:(fun s ->
+          if s = seg then true
+          else begin
+            let a = Tape_engine.seg_get image s
+            and b = Tape_engine.seg_get cand s in
+            Array.length a = Array.length b
+            && Array.for_alli a ~f:(fun i x -> Tape.compare_choice x b.(i) = 0)
+          end)
+      in
+      if not other_segments_match then None
+      else begin
+        let a = Tape_engine.seg_get image seg and b = Tape_engine.seg_get cand seg in
+        if Array.length a <> Array.length b then None
+        else begin
+          let same_except_idx =
+            Array.for_alli a ~f:(fun i x ->
+              i = idx || Tape.compare_choice x b.(i) = 0)
+          in
+          if same_except_idx && Tape.compare_choice a.(idx) b.(idx) <> 0 then
+            Some b.(idx)
+          else None
+        end
+      end
+    end)
+  |> List.dedup_and_sort ~compare:Tape.compare_choice
 
 (* One perturbation: replace the choice at [(seg, idx)] with [candidate]
    and nothing else, replay, and classify the result. [`Untestable]
@@ -187,63 +281,159 @@ type 'a item =
   ; stream_key : Tape.key
   ; index : int
   ; original : Tape.choice
-  ; mutable remaining : Tape.choice list
+  ; candidates : Tape.choice array (* trail-derived, then hand-picked *)
+  ; rand : Splittable_random.t (* persistent across this item's attempts *)
+  ; cap : int (* total attempts this item may spend, candidates included *)
   ; mutable found : 'a list
+  ; mutable found_choices : Tape.choice list
+      (* The tape choices already backing [found], so a repeat draw of
+         the SAME alternative (a real possibility on a small range, e.g.
+         Bool or a two-valued Integer) doesn't masquerade as a second
+         distinct example: [found] is meant to show a human up to
+         [max_examples_per_choice] genuinely DIFFERENT alternative
+         values, not the same one three times. Only gates what counts
+         toward [found]/the quota; [n_same_failures] below (which
+         governs the early-abort heuristic) still counts every
+         still-failing replay, repeats included, exactly as Hypothesis's
+         own n_same_failures does. *)
   ; mutable tries : int
   }
 
+(* One item's search, run to ITS OWN completion -- no shared pool with
+   any other choice, so processing order across items cannot affect any
+   item's outcome (unlike the old round-robin, which existed only to
+   share a global budget fairly). Hypothesis processes spans
+   largest-first so that its subset-of-an-already-explained-range skip
+   fires correctly; that optimization has no analogue here (see the
+   comment on [trail_alternatives] for why choices, unlike spans, never
+   nest inside one another -- each tape position is already the
+   smallest addressable unit), so there is nothing that ordering could
+   help or hurt. Order is therefore just (seg, key, idx) position order,
+   for reproducible output. *)
+let run_item (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
+    ~(test : a -> bool) (image : Tape.image) (it : a item) : unit =
+  let n_candidates = Array.length it.candidates in
+  let n_same_failures = ref 0 in
+  let attempt_idx = ref 0 in
+  let continue_ = ref true in
+  while
+    !continue_ && !attempt_idx < it.cap
+    && List.length it.found < max_examples_per_choice
+  do
+    (* Port of Hypothesis's early-abort test verbatim: `if n_attempt -
+       10 - len(candidates) > n_same_failures * 5: break` -- stop
+       spending budget once the replays are mostly coming back
+       Untestable/Passed rather than confirming still-failing, instead
+       of grinding through the whole per-choice cap on noise. Their own
+       comment: "TODO: is 100 same-failures out of 500 attempts a good
+       heuristic?" -- not treated as sacred, just a documented start. *)
+    if !attempt_idx - 10 - n_candidates > !n_same_failures * 5 then
+      continue_ := false
+    else begin
+      let candidate =
+        if !attempt_idx < n_candidates then it.candidates.(!attempt_idx)
+        else fresh_random_alternative it.original it.rand
+      in
+      it.tries <- it.tries + 1;
+      (match try_candidate ~gen ~size ~test image it.seg it.index candidate with
+       | `Still_failing v ->
+         Int.incr n_same_failures;
+         if
+           not
+             (List.mem it.found_choices candidate
+                ~equal:(fun a b -> Tape.compare_choice a b = 0))
+         then begin
+           it.found <- it.found @ [ v ];
+           it.found_choices <- candidate :: it.found_choices
+         end
+       | `Passed | `Untestable -> ());
+      Int.incr attempt_idx
+    end
+  done
+
 let analyze (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
-    ~(test : a -> bool) ?(budget = default_budget) (image : Tape.image) : a t
-  =
+    ~(test : a -> bool) ?(attempts_per_choice = default_attempts_per_choice)
+    ?(trail : Tape.image list = [])
+    (image : Tape.image) : a t =
   let items =
     List.filter_map (positions_of image) ~f:(fun (seg, key, idx, choice) ->
       match choice with
       | Tape.Marker -> None
       | _ ->
+        let no_alternative_exists = List.is_empty (candidates_for choice) in
         (* Deterministic per-position seed: reproducible across runs,
            independent of wall-clock or process state. *)
         let seed = Stdlib.Hashtbl.hash (seg, idx, key) in
+        let candidates =
+          (* Trail-derived (already-validated) alternatives first, then
+             the hand-picked ones; a value appearing in both is only
+             tried once. *)
+          trail_alternatives ~trail image seg idx
+          @ candidates_for choice
+          |> List.dedup_and_sort ~compare:Tape.compare_choice
+          |> Array.of_list
+        in
+        let n_candidates = Array.length candidates in
+        (* [attempts_per_choice <= 0] disables the search for this item
+           entirely, including its free candidates -- a deliberately
+           harder guarantee than Hypothesis's own `range(0 +
+           len(candidates))` (which would still try candidates at a
+           configured cap of zero). A caller asking for zero plainly
+           wants zero replays, not "just the free ones"; ?explain:false
+           already covers "skip the whole phase" for everyone else. *)
+        let cap =
+          if no_alternative_exists then 0
+          else if attempts_per_choice <= 0 then 0
+          else begin
+            let random_fallback_budget =
+              match choice with
+              | Tape.Integer _ | Tape.Float _ -> attempts_per_choice
+              (* Bool has exactly one alternative, already the sole
+                 candidate; Marker never reaches here. *)
+              | Tape.Bool _ | Tape.Marker -> 0
+            in
+            n_candidates + random_fallback_budget
+          end
+        in
         Some
           { seg
           ; stream_key = key
           ; index = idx
           ; original = choice
-          ; remaining = candidates_for choice ~seed
+          ; candidates
+          ; rand = Splittable_random.of_int seed
+          ; cap
           ; found = []
+          ; found_choices = []
           ; tries = 0
           })
   in
-  let used = ref 0 in
-  let item_wants_more it =
-    (not (List.is_empty it.remaining))
-    && List.length it.found < max_examples_per_choice
+  List.iter items ~f:(run_item ~gen ~size ~test image);
+  let used = List.sum (module Int) items ~f:(fun it -> it.tries) in
+  (* [complete] is about a search being pre-empted, not about how it
+     concluded: reaching your own per-choice cap without confirming
+     [Varies], or the early-abort-on-mostly-noise heuristic firing, are
+     both ordinary, expected ways for an item's search to finish (they
+     are exactly how Hypothesis's own per-span loop ends for most spans
+     too) -- neither makes the overall report incomplete. The only way
+     a real search gets cut short here is [attempts_per_choice <= 0]
+     while genuine candidates existed to try. *)
+  let complete =
+    List.for_all items ~f:(fun it ->
+      not (it.cap = 0 && not (Array.is_empty it.candidates)))
   in
-  let work_left () = List.exists items ~f:item_wants_more in
-  (* Round-robin, one candidate per item per round: every choice gets a
-     fair first look before any choice gets a second, so a budget that
-     runs out partway through still leaves every choice with at least
-     one try (when budget >= choice count) rather than exhausting the
-     first few choices' full quota and leaving the rest completely
-     untried. *)
-  while !used < budget && work_left () do
-    List.iter items ~f:(fun it ->
-      if !used < budget && item_wants_more it then
-        match it.remaining with
-        | [] -> ()
-        | c :: rest -> (
-          it.remaining <- rest;
-          it.tries <- it.tries + 1;
-          Int.incr used;
-          match try_candidate ~gen ~size ~test image it.seg it.index c with
-          | `Still_failing v -> it.found <- it.found @ [ v ]
-          | `Passed | `Untestable -> ()))
-  done;
-  let complete = List.for_all items ~f:(fun it -> not (item_wants_more it)) in
   let choices =
     List.map items ~f:(fun it ->
       let outcome =
         if not (List.is_empty it.found) then Varies { examples = it.found }
-        else if it.tries = 0 && List.is_empty it.remaining then
+        else if it.cap = 0 && Array.is_empty it.candidates then
+          (* [cap] can be 0 for two different reasons: a genuinely
+             single-point choice (no candidate ever existed), or
+             [attempts_per_choice <= 0] disabling an otherwise-real
+             search. Only the former is [No_alternative_possible]; the
+             empty-candidates check tells them apart, since a real
+             search that got disabled still has candidates it never
+             got to run. *)
           No_alternative_possible
         else No_variation_found
       in
@@ -255,7 +445,7 @@ let analyze (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
       ; tries = it.tries
       })
   in
-  { choices; budget; used = !used; complete }
+  { choices; attempts_per_choice; used; complete }
 
 let string_of_choice = function
   | Tape.Integer { value; lo; hi } ->
@@ -284,9 +474,9 @@ let to_string_hum (type a) ~(sexp_of : a -> Sexp.t) (t : a t) : string =
   let buf = Buffer.create 1024 in
   let add fmt = Stdlib.Printf.ksprintf (Buffer.add_string buf) fmt in
   add
-    "explain: free-variation analysis of the minimal example (budget \
-     %d, used %d/%d%s)\n"
-    t.budget t.used t.budget
+    "explain: free-variation analysis of the minimal example (up to %d \
+     attempts per choice, %d replays used%s)\n"
+    t.attempts_per_choice t.used
     (if t.complete then ""
      else ", budget exhausted before every choice got a full check");
   add

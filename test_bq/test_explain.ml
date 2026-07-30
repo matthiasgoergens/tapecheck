@@ -34,7 +34,11 @@ let () =
       | Tape_explain.No_variation_found -> true
       | _ -> false)
   | _ -> failwith "unreachable");
-  check "used <= budget" (report.used <= report.budget);
+  (* Each choice's own cap is [attempts_per_choice] plus its (small,
+     hand-picked) candidate count; +5 covers the largest possible
+     candidate list here (no trail is supplied in this test). *)
+  check "used <= choices * (attempts_per_choice + 5)"
+    (report.used <= List.length report.choices * (report.attempts_per_choice + 5));
 
   (* The paper's own motivating case, done directly (see also
      demo/explain_demo.ml for the full narrative): pair (a, b), fails
@@ -84,11 +88,15 @@ let () =
     check "single-point range: zero tries spent" (cr.tries = 0)
   | _ -> failwith "unreachable");
 
-  (* Budget honesty: a budget of 0 must try nothing, spend nothing, and
-     say plainly that the search did not complete -- never silently
-     report a stronger verdict than it earned. *)
+  (* Budget honesty: attempts_per_choice = 0 must try nothing, spend
+     nothing, and say plainly that the search did not complete -- never
+     silently report a stronger verdict than it earned. (This is a
+     stricter guarantee than Hypothesis's own `range(0 + len(candidates))`,
+     which would still spend the free candidates at a configured cap of
+     zero; a caller passing 0 here gets literally zero replays.) *)
   let report4 =
-    Tape_explain.analyze ~gen:gen2 ~size:10 ~test:test2 ~budget:0 image2
+    Tape_explain.analyze ~gen:gen2 ~size:10 ~test:test2 ~attempts_per_choice:0
+      image2
   in
   check "budget 0: nothing spent" (report4.used = 0);
   check "budget 0: reports incomplete" (not report4.complete);

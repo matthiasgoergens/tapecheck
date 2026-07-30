@@ -49,13 +49,14 @@ let () =
        analysis over the minimal tape's individual choices. *)
     let t0 = Stdlib.Sys.time () in
     let report =
-      Tape_explain.analyze ~gen ~size:10 ~test ~budget:Tape_explain.default_budget
+      Tape_explain.analyze ~gen ~size:10 ~test
+        ~attempts_per_choice:Tape_explain.default_attempts_per_choice ~trail
         image
     in
     let elapsed = Stdlib.Sys.time () -. t0 in
     printf "%s\n" (Tape_explain.to_string_hum ~sexp_of:[%sexp_of: int * int] report);
-    printf "explain phase cost: %.4fs wall, %d replays (budget %d)\n" elapsed
-      report.used report.budget;
+    printf "explain phase cost: %.4fs wall, %d replays (up to %d per choice)\n"
+      elapsed report.used report.attempts_per_choice;
     (* Sanity check for the demo itself: fail loudly if the analysis
        does not actually distinguish the two components the way the
        paper's story requires, rather than silently printing a report

@@ -37,9 +37,9 @@ let bench (type a) ~name ~(gen : a G.t) ~(test : a -> bool) =
         ~budget:2000
     with
     | Tape_engine.Passed _ -> ()
-    | Tape_engine.Failed { image; attempts; _ } ->
+    | Tape_engine.Failed { image; attempts; trail; _ } ->
       let t0 = Stdlib.Sys.time () in
-      let report = Tape_explain.analyze ~gen ~size:10 ~test image in
+      let report = Tape_explain.analyze ~gen ~size:10 ~test ~trail image in
       let elapsed = Stdlib.Sys.time () -. t0 in
       acc :=
         { found = !acc.found + 1
@@ -57,8 +57,8 @@ let bench (type a) ~name ~(gen : a G.t) ~(test : a -> bool) =
   printf "  avg minimal-tape choices:   %6.1f\n" (per r.choices_sum);
   printf "  avg shrink attempts:        %6.1f  (cost of shrinking itself)\n"
     (per r.shrink_attempts_sum);
-  printf "  avg explain replays used:   %6.1f  (budget %d, default)\n"
-    (per r.used_sum) Tape_explain.default_budget;
+  printf "  avg explain replays used:   %6.1f  (up to %d per choice, default)\n"
+    (per r.used_sum) Tape_explain.default_attempts_per_choice;
   printf "  budget exhausted early:     %3d/%d runs\n"
     (r.found - r.complete_count) r.found;
   printf "  avg explain wall time:      %7.5fs\n" (per_f r.wall_sum);
@@ -86,4 +86,22 @@ let () =
       (let open G.Let_syntax in
        let%bind len = G.int_uniform_inclusive 1 64 in
        G.list_with_length (G.int_uniform_inclusive 0 1000) ~length:len)
-    ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100)
+    ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100);
+
+  (* Deliberately adversarial: the per-choice budget shape (500 attempts
+     plus candidates, not a shared 200 split across every choice) is
+     invisible unless something actually exhausts it. That needs BOTH a
+     high enough still-failing rate that the early-abort heuristic never
+     fires (it aborts almost immediately whenever alternatives are
+     mostly Passed/Untestable -- see main[0] in demo/explain_demo.exe's
+     own output, which stops at 13 tries, not 500) AND too few DISTINCT
+     failing values for [max_examples_per_choice] (3) to ever be
+     satisfied, so the search has no other reason to stop early either.
+     A boolean-shaped choice with exactly one legal failing value out of
+     two gets both at once: half of random draws still fail (comfortably
+     above the abort threshold), but there is only ever ONE distinct
+     failing value to find, so [found] can never reach 3. This is the
+     worst case the new shape allows, not a typical one. *)
+  bench ~name:"int in [0,1], fail iff v = 0 (worst case: budget genuinely exhausted)"
+    ~gen:(G.int_uniform_inclusive 0 1)
+    ~test:(fun v -> v <> 0)
