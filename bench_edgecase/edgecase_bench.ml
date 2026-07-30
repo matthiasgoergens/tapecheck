@@ -98,6 +98,65 @@ let measure_min_int_tape () =
   Tape_engine.run G.int64_uniform ~count:2000 ~size:30
     ~test:(fun v -> not (Int64.equal v Int64.min_value))
 
+(* ---- 2b. Float boundary injection: does generation ever produce the
+   EXACT lower bound of a continuous range? [G.float_uniform_exclusive]
+   is base_quickcheck's own raw continuous sampler with no boundary
+   special-casing of its own (unlike [G.float_inclusive], which already
+   hand-rolls a 5%/5%/90% split at the base_quickcheck layer -- using
+   that here would measure base_quickcheck's existing behaviour, not
+   this port's), so it isolates what OUR bias (tape/tape.ml's
+   [biased_float]) contributes. It calls [Splittable_random.float]
+   with bounds one ulp inside the requested range, so "the bound" here
+   is that one-ulp-in value. ---- *)
+
+let float_lo = 1.5 and float_hi = 8.5
+let float_lo_inclusive = Float.one_ulp `Up float_lo
+
+let measure_float_boundary_stock ~n =
+  let hits = ref 0 in
+  for i = 0 to n - 1 do
+    let random = Splittable_random.of_int i in
+    let v = G.generate (G.float_uniform_exclusive float_lo float_hi) ~size:30 ~random in
+    if Float.equal v float_lo_inclusive then Int.incr hits
+  done;
+  !hits
+
+let measure_float_boundary_tape ~n =
+  let hits = ref 0 in
+  let tape = Tape.create () in
+  for i = 0 to n - 1 do
+    Tape.start_recording tape;
+    let random =
+      Splittable_random.For_tape.attach (Splittable_random.of_int i) tape
+    in
+    let v = G.generate (G.float_uniform_exclusive float_lo float_hi) ~size:30 ~random in
+    ignore (Tape.finish tape : Tape.output);
+    if Float.equal v float_lo_inclusive then Int.incr hits
+  done;
+  !hits
+
+(* ---- 2c. Float shrinking correctness: biased float generation must
+   still shrink to the exact boundary, same as the int properties in
+   demo/shrink_table.ml. fail iff v >= 50.0 over [0., 100.]; the true
+   minimum is exactly 50.0. ---- *)
+
+let measure_float_shrink ~trials ~cases_per_trial =
+  let found = ref 0 and minimal = ref 0 in
+  for trial = 0 to trials - 1 do
+    let seed = trial * 1_000_003 in
+    match
+      Tape_engine.run
+        (G.float_uniform_exclusive 0. 100.)
+        ~seed ~count:cases_per_trial ~size:30 ~budget:5000
+        ~test:(fun v -> Float.(v < 50.))
+    with
+    | Tape_engine.Passed _ -> ()
+    | Tape_engine.Failed { minimal = m; _ } ->
+      Int.incr found;
+      if Float.equal m 50. then Int.incr minimal
+  done;
+  (!found, !minimal, trials)
+
 (* ---- 3. Generation-path performance cost: ns/draw for a fresh
    Integer draw under a recording tape (where biasing applies), vs the
    same draw with no tape attached at all (plain uniform, the pre
@@ -160,6 +219,24 @@ let () =
   | Tape_engine.Failed { minimal; original; attempts; _ } ->
     printf "  tape: found min_int; minimal = %Ld, original = %Ld, shrink attempts = %d\n"
       minimal original attempts);
+  printf "\n";
+
+  printf "=== 2b. Float boundary injection: exact lower bound of [%.1f, %.1f] ===\n" float_lo
+    float_hi;
+  let n_float_hitrate = 200_000 in
+  let stock_float_hits = measure_float_boundary_stock ~n:n_float_hitrate in
+  let tape_float_hits = measure_float_boundary_tape ~n:n_float_hitrate in
+  printf "  stock (no tape, uniform): %6d / %d hits  (%.6f%%)\n" stock_float_hits
+    n_float_hitrate
+    (100. *. Float.of_int stock_float_hits /. Float.of_int n_float_hitrate);
+  printf "  tape  (edge-case biased): %6d / %d hits  (%.4f%%)\n" tape_float_hits
+    n_float_hitrate
+    (100. *. Float.of_int tape_float_hits /. Float.of_int n_float_hitrate);
+  printf "\n";
+
+  printf "=== 2c. Float shrinking: fail iff v >= 50.0 over [0., 100.] ===\n";
+  let ffound, fminimal, ftotal = measure_float_shrink ~trials:100 ~cases_per_trial:200 in
+  printf "  tape: found %d/%d, fully minimal to 50.0 %d/%d\n" ffound ftotal fminimal ftotal;
   printf "\n";
 
   printf "=== 3. Generation-path performance cost ===\n";
