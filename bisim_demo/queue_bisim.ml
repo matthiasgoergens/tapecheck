@@ -25,28 +25,10 @@
 open! Base
 open Stdio
 
-module Fast_queue = struct
-  type t = { mutable front : int list; mutable back : int list }
-
-  let create () = { front = []; back = [] }
-
-  let enqueue t v = t.back <- v :: t.back
-
-  (* BUG: refilling [front] from [back] should also clear [back]; it
-     doesn't, so a second refill later replays [back]'s old contents. *)
-  let dequeue t : int option =
-    match t.front with
-    | x :: rest ->
-      t.front <- rest;
-      Some x
-    | [] -> (
-      t.front <- List.rev t.back;
-      match t.front with
-      | x :: rest ->
-        t.front <- rest;
-        Some x
-      | [] -> None)
-end
+(* The buggy fast queue lives in queue_fixture/fast_queue.ml, shared
+   with head_to_head/head_to_head.ml so both arms of that comparison
+   exercise the identical bug. *)
+module Fast_queue = Fast_queue
 
 module Q = struct
   type state = unit

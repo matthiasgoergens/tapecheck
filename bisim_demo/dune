@@ -3,6 +3,6 @@
  (enabled_if
   (<> %{profile} oxcaml))
  (libraries base stdio base_quickcheck splittable_random tape tape_engine
-   stateful)
+   stateful queue_fixture)
  (preprocess
   (pps ppx_quickcheck ppx_sexp_conv ppx_let)))
