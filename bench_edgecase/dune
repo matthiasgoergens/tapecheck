@@ -1,0 +1,13 @@
+; Measured before/after numbers for the edge-case-biased generation
+; port (tape/tape.ml), ported from Python Hypothesis's Conjecture
+; provider: divisibility hit-rate (proptest-rs/proptest upstream issue
+; #500), full-int64-range min_int discovery, and the raw draw_int/
+; draw_float generation-path cost.
+(executable
+ (name edgecase_bench)
+ (modules edgecase_bench)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio unix base_quickcheck splittable_random tape tape_engine)
+ (ocamlopt_flags
+  (:standard -O3)))
