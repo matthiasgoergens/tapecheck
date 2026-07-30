@@ -1,0 +1,19 @@
+; This executable is the head-to-head measurement: tapecheck's Bisim
+; engine versus qcheck-stm, same bug (queue_fixture/fast_queue.ml),
+; same seeds. It needs qcheck/qcheck-core/qcheck-stm, which are NOT
+; installed in any shared opam switch (see the task's constraint on
+; opam install against shared switches) -- only in a local switch
+; created under this worktree (`opam switch create ./ 5.3.0`). The
+; `optional` field means dune silently skips building this executable
+; when those libraries aren't findable, so the rest of the workspace
+; (including under the shared 5.3.0/5.2.0+ox switches other agents use)
+; is completely unaffected either way.
+(executable
+ (name head_to_head)
+ (optional)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio base_quickcheck splittable_random tape tape_engine
+   stateful queue_fixture qcheck qcheck-core qcheck-stm.sequential)
+ (preprocess
+  (pps ppx_quickcheck ppx_sexp_conv ppx_let)))
