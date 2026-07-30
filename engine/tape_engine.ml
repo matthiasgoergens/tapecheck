@@ -23,6 +23,18 @@ type 'a failure =
   ; attempts : int (* test executions spent shrinking *)
   ; choices : Tape.choice array (* main stream of the winning tape *)
   ; image : Tape.image (* the winning tape, for replay/persistence *)
+  ; trail : Tape.image list
+      (* Every image accepted during shrinking, oldest first, ending
+         just before [image] (an accept always overwrites [best], so
+         the trail's last element is the second-to-last accepted image,
+         not [image] itself; empty when the first failure was already
+         fully trivial, so shrinking never ran). Hypothesis reports
+         intermediate examples alongside the minimal one; this is the
+         same idea, cheap to keep because a [Tape.image] is just the
+         compact recording, not a materialized value -- replay it with
+         [replay_image_and_apply] to see what it built. Secondary output:
+         the free-variation analysis in [Tape_explain] is what actually
+         answers the paper's "the minimum can mislead" complaint. *)
   }
 
 type 'a result =
@@ -270,9 +282,14 @@ let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~budget ~domains ~pool ~(realign : realign)
     ~(stats : stats) ~(initial_tape : Tape.image) ~(initial_value : a) :
-    a * int * Tape.image =
+    a * int * Tape.image * Tape.image list =
   let best = ref initial_tape in
   let best_value = ref initial_value in
+  (* Every accepted image, oldest first once reversed at the end: cheap
+     (an image is a compact recording, not a materialized value), and
+     the secondary "intermediate examples" output the task write-up
+     asks for if it is cheap. *)
+  let trail = ref [] in
   let attempts = ref 0 in
 
   (* One replay under [policy]; count it, and return a candidate
@@ -322,6 +339,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       | Some (image, value) when Tape.compare_image image !best < 0 ->
         best := image;
         best_value := value;
+        trail := image :: !trail;
         true
       | _ -> false
     end
@@ -365,6 +383,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        | Some (i, image, value) ->
          best := image;
          best_value := value;
+         trail := image :: !trail;
          Some i
        | None -> None)
   in
@@ -650,7 +669,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let improved = minimize_choices () || improved in
     continue_ := improved
   done;
-  (!best_value, !attempts, !best)
+  (!best_value, !attempts, !best, List.rev !trail)
 
 (* Replay a persisted tape image and apply [f] to the regenerated
    value. The tape is deliberately left in replay mode: functions
@@ -752,9 +771,10 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
           ; attempts = 0
           ; choices = image0.main
           ; image = image0
+          ; trail = []
           }
       else begin
-        let _minimal, attempts, image =
+        let _minimal, attempts, image, trail =
           shrink ~tape ~gen ~size ~test ~budget ~domains ~pool ~realign
             ~stats ~initial_tape:image0 ~initial_value:value
         in
@@ -764,6 +784,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
           ; attempts
           ; choices = image.main
           ; image
+          ; trail
           }
       end
   in
