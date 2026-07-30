@@ -175,12 +175,17 @@ let sexp_of_warning (w : warning) : Sexp.t =
       ; "ratio", Printf.sprintf "%.2f" w.ratio
       ] )
 
-let ops_agreeing_only_by_raising ?(threshold = 0.5) ?(min_steps = 20) (s : stats)
+let ops_agreeing_only_by_raising
+      ?(threshold = 0.5)
+      ?(min_steps = 20)
+      ?(expected_raising = [])
+      (s : stats)
   : warning list =
   List.rev s.per_op
   |> List.filter_map ~f:(fun (op, c) ->
     let steps = c.op_agree + c.op_agreed_by_raising + c.op_disagree in
     if steps < min_steps then None
+    else if List.mem expected_raising op ~equal:String.equal then None
     else begin
       let ratio =
         Float.of_int c.op_agreed_by_raising /. Float.of_int steps
@@ -190,27 +195,78 @@ let ops_agreeing_only_by_raising ?(threshold = 0.5) ?(min_steps = 20) (s : stats
       else None
     end)
 
+(* Operations that look bad but have too few samples to judge. Dropping
+   these silently is how a rarely-generated broken operation escapes
+   entirely: [Rare_broken] at 12/12 = 100% is well under [min_steps] and
+   vanishes. Surfaced separately rather than mixed in, because "probably
+   broken" and "not enough data to say" are different claims. *)
+let ops_undersampled ?(threshold = 0.5) ?(min_steps = 20) ?(expected_raising = [])
+      (s : stats) : warning list =
+  List.rev s.per_op
+  |> List.filter_map ~f:(fun (op, c) ->
+    let steps = c.op_agree + c.op_agreed_by_raising + c.op_disagree in
+    if steps = 0 || steps >= min_steps then None
+    else if List.mem expected_raising op ~equal:String.equal then None
+    else begin
+      let ratio = Float.of_int c.op_agreed_by_raising /. Float.of_int steps in
+      if Float.( >= ) ratio threshold then
+        Some { op; steps; agreed_by_raising = c.op_agreed_by_raising; ratio }
+      else None
+    end)
+
+(* Whether the per-operation check can actually see anything. If every
+   command carries the same constructor -- [type cmd = Op of int * int]
+   is the obvious way to write it -- then all operations share one label
+   and the check silently degrades to the aggregate ratio it exists to
+   replace. That failure is invisible from the outside, which makes it
+   worse than the bug it was meant to catch, so it gets its own loud
+   warning rather than a quiet zero. *)
+let label_resolution_is_degenerate (s : stats) : bool =
+  let total = s.agree + s.agreed_by_raising + s.disagree in
+  List.length s.per_op <= 1 && total >= 50
+
 (* Rendered warning text, or [None] when the run looks healthy. Kept
    separate from printing so a caller can route it wherever it likes. *)
-let health_report ?threshold ?min_steps (s : stats) : string option =
-  match ops_agreeing_only_by_raising ?threshold ?min_steps s with
-  | [] -> None
-  | ws ->
-    let lines =
-      List.map ws ~f:(fun w ->
-        Printf.sprintf
-          "    %s: %d/%d steps (%.0f%%) agreed only because both sides raised"
-          w.op w.agreed_by_raising w.steps (w.ratio *. 100.))
-    in
-    Some
-      (String.concat ~sep:"\n"
-         (("bisim health check: these operations are not really being compared:"
-           :: lines)
-          @ [ "  Both implementations raised, the exceptions were judged equal, and"
-            ; "  the step was counted as agreement -- so no returned value was ever"
-            ; "  checked. An operation at 100% is indistinguishable from one that is"
-            ; "  not tested at all. Silence this with ~health:false if deliberate."
-            ]))
+let health_report ?threshold ?min_steps ?expected_raising (s : stats)
+  : string option =
+  let flagged = ops_agreeing_only_by_raising ?threshold ?min_steps ?expected_raising s in
+  let undersampled = ops_undersampled ?threshold ?min_steps ?expected_raising s in
+  let degenerate = label_resolution_is_degenerate s in
+  let describe w =
+    Printf.sprintf "    %s: %d/%d steps (%.0f%%) agreed only because both sides raised"
+      w.op w.agreed_by_raising w.steps (w.ratio *. 100.)
+  in
+  let sections =
+    List.concat
+      [ (if degenerate then
+           [ "bisim health check: CANNOT SEE per-operation detail."
+           ; "  Every command shares one constructor name, so the per-operation"
+           ; "  check has collapsed to a plain aggregate ratio and will miss a"
+           ; "  defect confined to a few operations. This is the usual shape of"
+           ; "  `type cmd = Op of int * int`. Pass ~op_label to name operations."
+           ]
+         else [])
+      ; (match flagged with
+         | [] -> []
+         | ws ->
+           ("bisim health check: these operations never compared a returned value:"
+            :: List.map ws ~f:describe)
+           @ [ "  Both sides raised and the exceptions were judged equal, so the step"
+             ; "  counted as agreement. If that agreement IS the property under test,"
+             ; "  say so with ~expected_raising and this will stop reporting it."
+             ])
+      ; (match undersampled with
+         | [] -> []
+         | ws ->
+           ("bisim health check: too few samples to judge these (raising so far):"
+            :: List.map ws ~f:describe)
+           @ [ "  Below ~min_steps, so not counted as a finding. Generated this"
+             ; "  rarely, a broken operation can hide here indefinitely."
+             ])
+      ]
+  in
+  if List.is_empty sections then None
+  else Some (String.concat ~sep:"\n" sections)
 
 module Make (S : Spec) = struct
   (* Same state-dependent, length-prefixed bind shape as
@@ -295,9 +351,14 @@ module Make (S : Spec) = struct
      behaviour can pass [~on_both_raised:(fun _ -> "")] explicitly; the
      point of this parameter is that such a choice is now visible at
      the call site instead of buried in a match arm. *)
-  let run_cmds ?(on_both_raised = Exn.to_string) ?stats (cmds : S.cmd list) :
-      outcome =
+  let run_cmds ?(on_both_raised = Exn.to_string) ?op_label:label_of_cmd ?stats
+        (cmds : S.cmd list) : outcome =
     let stats = match stats with Some s -> s | None -> create_stats () in
+    let label_of_cmd =
+      match label_of_cmd with
+      | Some f -> f
+      | None -> fun cmd -> op_label (S.sexp_of_cmd cmd)
+    in
     let left = S.init_left () in
     let right = S.init_right () in
     Exn.protect
@@ -310,7 +371,7 @@ module Make (S : Spec) = struct
           | cmd :: rest ->
             if not (S.precond cmd state) then go state (idx + 1) rest
             else begin
-              let counts = counts_for stats (op_label (S.sexp_of_cmd cmd)) in
+              let counts = counts_for stats (label_of_cmd cmd) in
               let outcome_l = capture (fun () -> S.run_left cmd left) in
               let outcome_r = capture (fun () -> S.run_right cmd right) in
               let disagreement =
@@ -344,8 +405,8 @@ module Make (S : Spec) = struct
         in
         go S.init_state 0 cmds)
 
-  let test ?on_both_raised ?stats (cmds : S.cmd list) : bool =
-    match run_cmds ?on_both_raised ?stats cmds with
+  let test ?on_both_raised ?op_label ?stats (cmds : S.cmd list) : bool =
+    match run_cmds ?on_both_raised ?op_label ?stats cmds with
     | Ok_run -> true
     | Diverged _ -> false
 
@@ -361,16 +422,18 @@ module Make (S : Spec) = struct
      diagnostics only help the people who already suspect the problem. *)
   let with_health
         ?on_both_raised
+        ?op_label
         ?threshold
         ?min_steps
+        ?expected_raising
         ?(health = true)
         ?(report = fun s -> Stdlib.prerr_endline s; Stdlib.flush Stdlib.stderr)
         (f : (S.cmd list -> bool) -> 'a)
     : 'a * stats =
     let stats = create_stats () in
-    let result = f (fun cmds -> test ?on_both_raised ~stats cmds) in
+    let result = f (fun cmds -> test ?on_both_raised ?op_label ~stats cmds) in
     if health then (
-      match health_report ?threshold ?min_steps stats with
+      match health_report ?threshold ?min_steps ?expected_raising stats with
       | None -> ()
       | Some msg -> report msg);
     (result, stats)
