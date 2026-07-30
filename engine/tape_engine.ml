@@ -35,6 +35,23 @@ type 'a failure =
          [replay_image_and_apply] to see what it built. Secondary output:
          the free-variation analysis in [Tape_explain] is what actually
          answers the paper's "the minimum can mislead" complaint. *)
+  ; converged : bool
+      (* true iff shrinking stopped because it reached a genuine local
+         minimum (a full round of every pass tried and found nothing
+         smaller) WITH budget and time still to spare -- i.e. we know
+         for certain nothing more was possible, not just that we ran
+         out of room to keep looking. false means [budget] (attempt
+         count) or the wall-clock deadline was exhausted first: the
+         search was TRUNCATED, and [minimal] may still be reducible
+         further. This distinction must never be silently lost --
+         Hypothesis's own MAX_SHRINKS/MAX_SHRINKING_SECONDS exist
+         because slow shrinking is a real, reported pain point
+         (upstream issues #231, #2340), and a truncated result that
+         looks identical to a converged one is worse than no result:
+         it invites treating a merely-best-effort example as the true
+         minimum. See [Tape_test]'s handling for how this is surfaced
+         to a human, including how to resume shrinking from exactly
+         this point. *)
   }
 
 type 'a result =
@@ -280,9 +297,9 @@ type stats =
 let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
 
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
-    ~(test : a -> bool) ~budget ~domains ~pool ~(realign : realign)
-    ~(stats : stats) ~(initial_tape : Tape.image) ~(initial_value : a) :
-    a * int * Tape.image * Tape.image list =
+    ~(test : a -> bool) ~budget ~(max_seconds : float option) ~domains ~pool
+    ~(realign : realign) ~(stats : stats) ~(initial_tape : Tape.image)
+    ~(initial_value : a) : a * int * Tape.image * Tape.image list * bool =
   let best = ref initial_tape in
   let best_value = ref initial_value in
   (* Every accepted image, oldest first once reversed at the end: cheap
@@ -291,6 +308,24 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      asks for if it is cheap. *)
   let trail = ref [] in
   let attempts = ref 0 in
+  (* Two independent stopping conditions, exactly Hypothesis's own
+     MAX_SHRINKS / MAX_SHRINKING_SECONDS shape (engine_hypothesis.py):
+     a count (attempts here, since this engine's passes already meter
+     themselves by total replay attempts rather than accepted
+     improvements -- see the write-up for why tapecheck does not reuse
+     Hypothesis's literal "500", which counts something different) and
+     a wall-clock deadline, checked independently so either can fire
+     first. [max_seconds = None] disables the wall-clock side only;
+     the attempt count always applies. *)
+  let deadline =
+    Option.map max_seconds ~f:(fun s -> Unix.gettimeofday () +. s)
+  in
+  let budget_ok () =
+    !attempts < budget
+    && (match deadline with
+        | None -> true
+        | Some d -> Float.( < ) (Unix.gettimeofday ()) d)
+  in
 
   (* One replay under [policy]; count it, and return a candidate
      (image, value) iff it is still-failing (could be accepted),
@@ -315,7 +350,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      replays [`Both] spends on it (shrinking is off the CI happy path;
      spend to hand a human a smaller example). *)
   let attempt proposal =
-    if !attempts >= budget then false
+    if not (budget_ok ()) then false
     else begin
       Int.incr attempts;
       let primary, secondary =
@@ -399,9 +434,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let lower_and_delete () =
     let improved = ref false in
     let s = ref 0 in
-    while !s < seg_count !best && !attempts < budget do
+    while !s < seg_count !best && budget_ok () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && !attempts < budget do
+      while !i < Array.length (seg_get !best !s) && budget_ok () do
         let arr = seg_get !best !s in
         (match arr.(!i) with
         | Tape.Integer { value; lo; hi }
@@ -423,12 +458,12 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
              next deletable block usually sits exactly there. *)
           let accepted = ref false in
           let k = ref 1 in
-          while (not !accepted) && !k <= 4 && !attempts < budget do
+          while (not !accepted) && !k <= 4 && budget_ok () do
             let j = ref (!i + 1) in
             while
               (not !accepted)
               && !j <= Array.length (seg_get !best !s) - !k
-              && !attempts < budget
+              && budget_ok ()
             do
               let arr = seg_get !best !s in
               let batch =
@@ -452,7 +487,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                    a later candidate than !j). *)
                 let jj = !j + offset in
                 let again = ref true in
-                while !again && !attempts < budget do
+                while !again && budget_ok () do
                   let arr = seg_get !best !s in
                   match
                     (if !i < Array.length arr then Some arr.(!i) else None)
@@ -495,7 +530,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let delete_streams () =
     let improved = ref false in
     let s = ref 1 in
-    while !s < seg_count !best && !attempts < budget do
+    while !s < seg_count !best && budget_ok () do
       if attempt (without_stream !best !s) then improved := true
         (* the array shifted left; stay at the same index *)
       else Int.incr s
@@ -511,9 +546,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let redistribute_pairs () =
     let improved = ref false in
     let s = ref 0 in
-    while !s < seg_count !best && !attempts < budget do
+    while !s < seg_count !best && budget_ok () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && !attempts < budget do
+      while !i < Array.length (seg_get !best !s) && budget_ok () do
         let arr = seg_get !best !s in
         (match arr.(!i) with
         | Tape.Integer { value = vi; lo = lo_i; hi = hi_i }
@@ -545,7 +580,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
               in
               let d = ref d_max in
               let accepted = ref false in
-              while (not !accepted) && Int64.(!d > 0L) && !attempts < budget do
+              while (not !accepted) && Int64.(!d > 0L) && budget_ok () do
                 let new_i =
                   if above then Int64.( - ) vi !d else Int64.( + ) vi !d
                 in
@@ -599,7 +634,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       let low = ref 0L and high = ref dist in
       while
         Stdlib.Int64.unsigned_compare (Int64.( - ) !high !low) 1L > 0
-        && !attempts < budget
+        && budget_ok ()
       do
         let mid =
           Int64.( + ) !low
@@ -623,7 +658,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       if Float.( <> ) rounded value then ignore (try_value rounded : bool);
       let low = ref target and high = ref value in
       let steps = ref 0 in
-      while !steps < 40 && !attempts < budget do
+      while !steps < 40 && budget_ok () do
         Int.incr steps;
         let mid = !low +. ((!high -. !low) /. 2.) in
         if Float.( = ) mid !low || Float.( = ) mid !high then steps := 40
@@ -639,9 +674,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let minimize_choices () =
     let improved_any = ref false in
     let s = ref 0 in
-    while !s < seg_count !best && !attempts < budget do
+    while !s < seg_count !best && budget_ok () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && !attempts < budget do
+      while !i < Array.length (seg_get !best !s) && budget_ok () do
         let before = !best in
         (match (seg_get !best !s).(!i) with
         | Tape.Integer { value; lo; hi } -> minimize_integer !s !i value lo hi
@@ -662,14 +697,23 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   in
 
   let continue_ = ref true in
-  while !continue_ && !attempts < budget do
+  while !continue_ && budget_ok () do
     let improved = lower_and_delete () in
     let improved = delete_streams () || improved in
     let improved = redistribute_pairs () || improved in
     let improved = minimize_choices () || improved in
     continue_ := improved
   done;
-  (!best_value, !attempts, !best, List.rev !trail)
+  (* [budget_ok ()] still true here can only mean the loop exited
+     because [continue_] went false, i.e. one full round of every pass
+     ran to completion and found nothing smaller ANYWHERE, with budget
+     and time to spare -- a genuine fixpoint. If it is false, some pass
+     may have been cut off partway through (its own inner while loops
+     share the same [budget_ok ()]), so [continue_] being false in that
+     case proves nothing; report truncated rather than risk a false
+     "converged". *)
+  let converged = budget_ok () in
+  (!best_value, !attempts, !best, List.rev !trail, converged)
 
 (* Replay a persisted tape image and apply [f] to the regenerated
    value. The tape is deliberately left in replay mode: functions
@@ -701,8 +745,48 @@ let replay (type a) (gen : a Base_quickcheck.Generator.t) ?size
     (replay_image_and_apply gen ?size (Tape.image_of_main choices)
        ~f:(fun _ -> ()))
 
+(* Shared tail of both [run] (a fresh search) and [resume] (continuing
+   from a previously-saved tape): given a confirmed-still-failing
+   (image0, value), either report it as already fully trivial or spend
+   the shrink budget on it, and package the result -- including the
+   converged/truncated distinction that lets a caller tell a genuine
+   local minimum from a best-effort one. *)
+let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
+    ~size ~(test : a -> bool) ~budget ~(max_seconds : float option) ~domains
+    ~pool ~(realign : realign) ~(stats : stats) ~(image0 : Tape.image)
+    ~(value : a) : a result =
+  let live_value image =
+    fst (replay_image_and_apply gen ~size image ~f:(fun _ -> ()))
+  in
+  if image_all_trivial image0 then
+    Failed
+      { minimal = live_value image0
+      ; original = value
+      ; attempts = 0
+      ; choices = image0.main
+      ; image = image0
+      ; trail = []
+      ; converged = true
+      }
+  else begin
+    let _minimal, attempts, image, trail, converged =
+      shrink ~tape ~gen ~size ~test ~budget ~max_seconds ~domains ~pool
+        ~realign ~stats ~initial_tape:image0 ~initial_value:value
+    in
+    Failed
+      { minimal = live_value image
+      ; original = value
+      ; attempts
+      ; choices = image.main
+      ; image
+      ; trail
+      ; converged
+      }
+  end
+
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
-    ?(domains = 1) ?(realign : realign = `Consume) ?stats
+    ?(max_seconds : float option = None) ?(domains = 1)
+    ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool) : a result =
   let stats = match stats with Some s -> s | None -> no_stats () in
   let tape = Tape.create () in
@@ -757,36 +841,48 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
      keeps its observed behaviour after the engine returns (a function
      backed by a finished tape would silently fall back to fresh
      randomness on the very calls the report is about). *)
-  let live_value image =
-    fst (replay_image_and_apply gen ~size image ~f:(fun _ -> ()))
-  in
   let outcome =
     match first_failure with
     | None -> Passed { cases = count }
     | Some (image0, value) ->
-      if image_all_trivial image0 then
-        Failed
-          { minimal = live_value image0
-          ; original = value
-          ; attempts = 0
-          ; choices = image0.main
-          ; image = image0
-          ; trail = []
-          }
-      else begin
-        let _minimal, attempts, image, trail =
-          shrink ~tape ~gen ~size ~test ~budget ~domains ~pool ~realign
-            ~stats ~initial_tape:image0 ~initial_value:value
-        in
-        Failed
-          { minimal = live_value image
-          ; original = value
-          ; attempts
-          ; choices = image.main
-          ; image
-          ; trail
-          }
-      end
+      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds ~domains
+        ~pool ~realign ~stats ~image0 ~value
+  in
+  Option.iter pool ~f:Pool.shutdown;
+  outcome
+
+(* Resumable shrinking: continue from a tape saved earlier (typically
+   printed on a previous run that hit its budget -- see [Tape_test]'s
+   truncation message) instead of searching for a fresh failure. The
+   tape is exactly the same serializable image [run] already produces
+   ([Tape.serialize_image]/[deserialize_image], the same "ct1" format
+   the regression file uses), which is the whole point: a tape is a
+   value you can print, save, and hand back in, unlike a rose tree's
+   in-memory shrink state. [image] is replayed once to confirm it still
+   fails (and to obtain the value shrinking continues from); if it no
+   longer does -- the generator changed, or the tape was hand-edited
+   into something that now passes -- this reports [Passed { cases = 0 }]
+   rather than guessing, exactly as loudly as [Tape_test]'s existing
+   stale-regression-entry handling. *)
+let resume (type a) ?(size = 10) ?(budget = 2000)
+    ?(max_seconds : float option = None) ?(domains = 1)
+    ?(realign : realign = `Consume) ?stats
+    (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool)
+    (image : Tape.image) : a result =
+  let stats = match stats with Some s -> s | None -> no_stats () in
+  let tape = Tape.create () in
+  let pool = if domains > 1 then Some (Pool.create domains) else None in
+  let value, tested, out =
+    let replay_tape = Tape.create () in
+    Tape.start_replay_image replay_tape image;
+    run_and_test ~tape:replay_tape ~gen ~size ~seed:replay_fresh_seed ~test
+  in
+  let outcome =
+    match tested with
+    | Some false when not out.Tape.overrun ->
+      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds ~domains
+        ~pool ~realign ~stats ~image0:image ~value
+    | _ -> Passed { cases = 0 }
   in
   Option.iter pool ~f:Pool.shutdown;
   outcome

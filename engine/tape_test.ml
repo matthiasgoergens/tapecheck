@@ -81,10 +81,132 @@ module Regressions = struct
           size comment)
 end
 
+(* Hypothesis's own numbers (outreach/hypothesis-sources/engine_hypothesis.py):
+   `MAX_SHRINKS: int = 500` (a count) and `MAX_SHRINKING_SECONDS: int =
+   300` (wall-clock), two INDEPENDENT knobs -- a user wants to be able
+   to say "at most N shrink steps", "at most T seconds", or both, which
+   is exactly the pain point behind upstream issues #231 ("Slow
+   shrinking gives poor dev experience") and #2340 ("Stop shrink phase
+   after timeout when progress is very slow"). Both default GENEROUS on
+   purpose, not conservative: the passing path runs on every CI
+   invocation and must stay cheap, but this path only runs once a test
+   has already failed and is about to be shown to a human; someone who
+   needs a tighter bound (a CI job that must not stall) sets a smaller
+   value explicitly, rather than every caller paying for the cautious
+   default.
+
+   [default_max_shrink_seconds] copies Hypothesis's 300 verbatim: wall-
+   clock seconds mean the same thing regardless of what is being
+   counted underneath. [default_max_shrinks] deliberately does NOT
+   copy Hypothesis's 500 verbatim: Hypothesis's `self.shrinks` counts
+   ACCEPTED improvements only ("500" there means 500 successful
+   shrinks, typically backed by many times that many rejected
+   attempts), whereas [Tape_engine]'s budget counts TOTAL replay
+   attempts, accepted or not -- a pre-existing property of how every
+   pass in [Tape_engine.shrink] already meters itself, not something
+   this task introduced. Reusing "500" as a total-attempt cap would be
+   far tighter than Hypothesis's real generosity, and would undershoot
+   this project's own measured numbers: the list-length property in
+   the README results table already averages 641 TOTAL attempts to
+   reach its true minimum on an ordinary seed, leaving "500" almost no
+   headroom. [Tape_engine.run]'s pre-existing default of 2000 -- chosen
+   with exactly this property set in mind, and already used by
+   demo/shrink_table.exe and demo/explain_bench.exe -- gives roughly
+   the same margin over that measured worst case (~3x) that
+   Hypothesis's 500-accepted-shrinks gives over typical Hypothesis
+   usage, so it is reused here rather than inventing a fresh number. *)
+let default_max_shrinks = 2000
+let default_max_shrink_seconds : float option = Some 300.
+
+(* Printed when shrinking stops because it ran out of budget rather
+   than because it converged -- the distinction Hypothesis itself
+   treats as important enough to warn about loudly (its own "WARNING:
+   Hypothesis has spent more than five minutes working to shrink..."
+   message on the same MAX_SHRINKING_SECONDS deadline). The tape is
+   printed in exactly the "ct1" hex format already used by regression
+   files (see [Regressions] above), because that format IS the
+   resumable state: unlike a rose-tree shrinker's in-memory search
+   state, a tape is already a value you can print, save, and hand back
+   in verbatim via [resume_result]/[resume_run]/[resume_run_exn]. *)
+let truncation_message ~(image : Tape.image) ~size ~attempts ~max_shrinks
+    ~(max_shrink_seconds : float option) =
+  let hex = Regressions.hex_of_string (Tape.serialize_image image) in
+  let seconds_shown =
+    match max_shrink_seconds with
+    | None -> "disabled"
+    | Some s -> Printf.sprintf "%.0f" s
+  in
+  Printf.sprintf
+    "shrinking TRUNCATED, not converged: stopped after %d attempts \
+     (budget: up to %d attempts, up to %ss of wall-clock time -- \
+     whichever limit was hit first) without reaching a point where \
+     every remaining edit had been tried and none of them helped. The \
+     example above is the SMALLEST FOUND SO FAR -- treat it as a lead, \
+     not a proof of minimality; a smaller one may still exist.\n\n\
+     To keep shrinking from exactly this point, save this tape and \
+     resume it:\n\n\
+     \  %s @%d\n\n\
+     \    Tape_test.resume_run_exn ~tape:\"%s\" ~size:%d ~f:(* your \
+     property *) (module Your_module)\n\n\
+     Or rerun from scratch with more room: raise ?max_shrinks (currently \
+     %d) and/or ?max_shrink_seconds (currently %s).\n"
+    attempts max_shrinks seconds_shown hex size hex size max_shrinks
+    seconds_shown
+
+(* Shared tail for both a fresh failing run ([result]) and a resumed one
+   ([resume_result]): given the tape engine's [failure], decide whether
+   the shrunk minimal still reproduces, and if so persist it, print the
+   opt-in explain report, and print the truncation report when
+   shrinking did not converge. Kept as one function so a resumed run
+   gets identical regression/explain/truncation handling to a fresh
+   one, rather than two copies that can drift apart. *)
+let report_failure (type a e) ~(f : a -> (unit, e) Result.t)
+    ~(sexp_of : a -> Sexp.t) ~(gen : a Base_quickcheck.Generator.t)
+    ~regressions ~explain ~explain_budget ~max_shrinks ~max_shrink_seconds
+    ~size (failure : a Tape_engine.failure) : (unit, a * e) Result.t =
+  let { Tape_engine.minimal; image; converged; trail; attempts; _ } =
+    failure
+  in
+  match f minimal with
+  | Ok () ->
+    (* The shrunken value no longer fails deterministically; report it
+       with no error payload path available, so rerun is the caller's
+       problem. This mirrors flaky-test behavior in Base_quickcheck,
+       which would also report confusingly here. Treat as passed. *)
+    Ok ()
+  | Error e ->
+    Option.iter regressions ~f:(fun path ->
+      Regressions.append path ~image ~size ~comment:(Sexp.to_string (sexp_of minimal)));
+    (* Phase.explain, switched off by default (?explain:false):
+       free-variation analysis over the just-shrunk minimal example,
+       printed for a human the way Hypothesis prints its own
+       explanation alongside the falsifying example. Off by default
+       because it is pure overhead on top of a failing run that is
+       about to be reported anyway; on, it costs a bounded number of
+       extra replays PER CHOICE (Tape_explain.default_attempts_per_choice,
+       configurable via ?explain_budget). *)
+    if explain then
+      Stdlib.print_string
+        (Tape_explain.to_string_hum ~sexp_of
+           (Tape_explain.analyze ~gen ~size
+              ~test:(fun v -> Result.is_ok (f v))
+              ~attempts_per_choice:explain_budget ~trail image));
+    (* Truncated vs converged must never be silently lost -- see
+       [truncation_message]. Unconditional, unlike ?explain: this is
+       safety information about how much to trust [minimal], not an
+       optional extra report. *)
+    if not converged then
+      Stdlib.print_string
+        (truncation_message ~image ~size ~attempts ~max_shrinks
+           ~max_shrink_seconds);
+    Error (minimal, e)
+
 let result (type a e) ~(f : a -> (unit, e) Result.t)
     ?(config = default_config) ?(examples = []) ?regressions
     ?(realign = `Both) ?(explain = false)
-    ?(explain_budget = Tape_explain.default_budget)
+    ?(explain_budget = Tape_explain.default_attempts_per_choice)
+    ?(max_shrinks = default_max_shrinks)
+    ?(max_shrink_seconds = default_max_shrink_seconds)
     (module M : Base_quickcheck.Test.S with type t = a) :
     (unit, a * e) Result.t =
   let test v = Result.is_ok (f v) in
@@ -164,36 +286,17 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
       (match
          Tape_engine.run M.quickcheck_generator ~test ~realign
            ~seed:(base_seed + !case) ~count:1 ~size:sizes.(!case)
-           ~budget:config.shrink_count
+           ~budget:max_shrinks ~max_seconds:max_shrink_seconds
        with
       | Tape_engine.Passed _ -> ()
-      | Tape_engine.Failed { minimal; image; _ } -> (
-        match f minimal with
-        | Error e ->
-          Option.iter regressions ~f:(fun path ->
-            Regressions.append path ~image ~size:sizes.(!case)
-              ~comment:(Sexp.to_string (M.sexp_of_t minimal)));
-          (* Phase.explain, switched off by default (?explain:false):
-             free-variation analysis over the just-shrunk minimal
-             example, printed for a human the way Hypothesis prints its
-             own explanation alongside the falsifying example. Off by
-             default because it is pure overhead on top of a failing
-             run that is about to be reported anyway; on, it costs a
-             bounded number of extra replays (Tape_explain.default_budget,
-             configurable via ?explain_budget). *)
-          if explain then
-            Stdlib.print_string
-              (Tape_explain.to_string_hum ~sexp_of:M.sexp_of_t
-                 (Tape_explain.analyze ~gen:M.quickcheck_generator
-                    ~size:sizes.(!case) ~test ~budget:explain_budget image));
-          failure := Some (Error (minimal, e))
-        | Ok () ->
-          (* The shrunken value no longer fails deterministically;
-             report it with no error payload path available, so rerun
-             is the caller's problem. This mirrors flaky-test behavior
-             in Base_quickcheck, which would also report confusingly
-             here. Treat as passed for this case. *)
-          ()));
+      | Tape_engine.Failed engine_failure -> (
+        match
+          report_failure ~f ~sexp_of:M.sexp_of_t ~gen:M.quickcheck_generator
+            ~regressions ~explain ~explain_budget ~max_shrinks
+            ~max_shrink_seconds ~size:sizes.(!case) engine_failure
+        with
+        | Error _ as e -> failure := Some e
+        | Ok () -> ()));
       Int.incr case
     done;
     (match !failure with
@@ -201,12 +304,12 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
      | None -> Ok ())
 
 let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
-    ?realign ?explain ?explain_budget
+    ?realign ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds
     (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
   let f v = Or_error.try_with_join (fun () -> f v) in
   match
     result ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
-      (module M)
+      ?max_shrinks ?max_shrink_seconds (module M)
   with
   | Ok () -> Ok ()
   | Error (input, error) ->
@@ -217,9 +320,81 @@ let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
           (error : Error.t)]
 
 let run_exn (type a) ~(f : a -> unit) ?config ?examples ?regressions ?realign
-    ?explain ?explain_budget
+    ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds
     (module M : Base_quickcheck.Test.S with type t = a) : unit =
   let f v = Or_error.try_with (fun () -> f v) in
   run ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
-    (module M)
+    ?max_shrinks ?max_shrink_seconds (module M)
+  |> Or_error.ok_exn
+
+(* Resumable shrinking: continue from a tape printed by
+   [truncation_message] above (or from any other source of a saved
+   "ct1" hex tape, e.g. a regression file's tape column) with a FRESH
+   budget, instead of re-searching for a failure from scratch. This is
+   the payoff of the tape being a serializable recording rather than an
+   in-memory rose-tree shrink state: the stopping point of a truncated
+   run is a value you can print, save, and hand back in verbatim.
+   [size] must match the size the tape was recorded at (same caveat as
+   a regression file's "@size" column: base_quickcheck combinators read
+   ~size for control flow, so replaying at a different size can
+   regenerate a different value); the historical default of 30 matches
+   [Regressions]'s own default for a size-less entry. *)
+let resume_result (type a e) ~(f : a -> (unit, e) Result.t) ?(size = 30)
+    ?regressions ?(realign = `Both) ?(explain = false)
+    ?(explain_budget = Tape_explain.default_attempts_per_choice)
+    ?(max_shrinks = default_max_shrinks)
+    ?(max_shrink_seconds = default_max_shrink_seconds) ~(tape : string)
+    (module M : Base_quickcheck.Test.S with type t = a) :
+    (unit, a * e) Result.t =
+  let test v = Result.is_ok (f v) in
+  match
+    Option.bind (Regressions.string_of_hex tape) ~f:Tape.deserialize_image
+  with
+  | None ->
+    Error.raise_s
+      [%message
+        "corrupt tape: could not parse the hex-encoded image" (tape : string)]
+  | Some image -> (
+    match
+      Tape_engine.resume M.quickcheck_generator ~test ~size ~realign
+        ~budget:max_shrinks ~max_seconds:max_shrink_seconds image
+    with
+    | Tape_engine.Passed _ ->
+      (* Loud, not a silent Ok (): mirrors the existing stale-
+         regression-entry handling above -- a tape that stops
+         reproducing means either the generator drifted or this tape
+         was never a real failure, and both deserve the caller's
+         attention rather than a quiet pass. *)
+      Error.raise_s
+        [%message
+          "resumed tape no longer fails: nothing to shrink (the generator \
+           or the property may have changed since this tape was saved)"
+            (tape : string)]
+    | Tape_engine.Failed engine_failure ->
+      report_failure ~f ~sexp_of:M.sexp_of_t ~gen:M.quickcheck_generator
+        ~regressions ~explain ~explain_budget ~max_shrinks ~max_shrink_seconds
+        ~size engine_failure)
+
+let resume_run (type a) ~(f : a -> unit Or_error.t) ?size ?regressions
+    ?realign ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ~tape
+    (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
+  let f v = Or_error.try_with_join (fun () -> f v) in
+  match
+    resume_result ~f ?size ?regressions ?realign ?explain ?explain_budget
+      ?max_shrinks ?max_shrink_seconds ~tape (module M)
+  with
+  | Ok () -> Ok ()
+  | Error (input, error) ->
+    Or_error.error_s
+      [%message
+        "Base_quickcheck.Test.run: test failed (tape engine, resumed)"
+          (input : M.t)
+          (error : Error.t)]
+
+let resume_run_exn (type a) ~(f : a -> unit) ?size ?regressions ?realign
+    ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ~tape
+    (module M : Base_quickcheck.Test.S with type t = a) : unit =
+  let f v = Or_error.try_with (fun () -> f v) in
+  resume_run ~f ?size ?regressions ?realign ?explain ?explain_budget
+    ?max_shrinks ?max_shrink_seconds ~tape (module M)
   |> Or_error.ok_exn
