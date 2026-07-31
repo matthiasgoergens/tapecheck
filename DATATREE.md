@@ -55,6 +55,55 @@ purpose, because a better message exists elsewhere. That is a
 whole-system decision invisible from this file alone, and precisely the
 sort of thing a paper would never mention.
 
+## Do their scars transfer to us?
+
+Matthias's follow-up, and the right question: a scar is a decision under
+someone's constraints, so copying it uncritically is the same error as
+ignoring it. Both were checked.
+
+### Scar 1 (skip the hash lookup): NO, we can afford it
+
+I reasoned twice and was wrong twice, then measured.
+
+First guess: "we are 69x cheaper per call, so we can afford what they
+skipped". Backwards — if draws are cheap, a fixed-cost lookup is a
+*larger* proportion.
+
+Second guess, from measurement: `Hashtbl` lookup 21.2 ns against a
+136.8 ns recorded draw, i.e. **15.5% of a draw**, so the scar transfers
+*more* strongly to us.
+
+Matthias then pointed out that proportion-of-a-draw is the wrong
+denominator. What a user pays is absolute time, and draws are only part
+of a test call:
+
+```
+draws are ~25% of a test call (2.2 us of 8.9 us)
+adding one hash lookup per draw: +0.34 us per call = +3.8%
+
+  over      1,600 draws (a typical run): +0.00002 s
+  over    100,000 draws:                 +0.002 s
+  over 10,000,000 draws:                 +0.21 s
+```
+
+**+3.8% per test call, and microseconds per run in absolute terms.** For
+a check that catches silently-broken generators, that is cheap. The scar
+does not transfer: their trade was made in a language where the
+denominator looks different, and we should take the check they declined.
+
+### Scar 2 (ignore INTERESTING -> VALID): NO, and worse
+
+They tolerate that hole *because* "it is much easier to produce good
+error messages for these further up the stack" — i.e. the case is
+handled elsewhere in their system. tapecheck has no such upstream
+machinery. Porting the bodge would buy the hole without the
+compensation, which is strictly worse than either handling it here or
+building the upstream message first.
+
+So: two scars read, two scars rejected, for opposite reasons. Reading
+them was still worth it — the *reasoning* transferred even where the
+decisions did not.
+
 ## What this means for tapecheck
 
 The honest position is that the two-replay check is a cheap smoke
