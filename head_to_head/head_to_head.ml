@@ -420,6 +420,101 @@ let run_handle_stm_trial ~seed : arm_result option =
         ; shown = String.concat ~sep:"; " (List.map instance ~f:H_stm.show_cmd)
         })
 
+
+(* ---------- Boosted qcheck-stm: grant it far more shrink effort ----------
+
+   Reading QCheck2.Test.shrink_ (qcheck-core 0.91,
+   _opam/lib/qcheck-core/QCheck2.ml:1885-1935) shows the shrink loop
+   recurses on every success and stops only when NO candidate fails:
+
+     match i' with
+     | None -> i, r, m, steps
+     | Some (i_tree',r',m') -> shrink_ st i_tree' r' m' ~steps:(steps + 1)
+
+   There is no step cap and no budget parameter, so qcheck-stm's output
+   is already a fixpoint of its own shrinker and "it ran out of effort"
+   should be impossible. That is an argument from source, though, not a
+   measurement. This arm measures it: take the counterexample qcheck-stm
+   settled on and shrink it again from scratch, with its own shrinker,
+   repeatedly, until it stops changing or [passes] rounds elapse.
+
+   If the 232/300 figure were an effort artefact, extra rounds would
+   improve it. If the shrinker structurally cannot construct the smaller
+   candidate -- because deleting an earlier Alloc leaves a later Use
+   pointing at an index that no longer exists, so the case stops failing
+   and the deletion is rejected -- then no amount of extra effort moves
+   it. *)
+(* Harness self-check. A boosted arm that silently does nothing produces
+   exactly the same numbers as a boosted arm that works and finds
+   nothing, so count what actually happened. *)
+let reshrink_calls = ref 0
+let reshrink_reproduced = ref 0
+let reshrink_fellthrough = ref 0
+let reshrink_improved = ref 0
+
+let reshrink_handle_stm (cex : H_stm.cmd list) : H_stm.cmd list * int =
+  Int.incr reshrink_calls;
+  let base = Handle_stm_arm.arb_cmds H_stm.init_state in
+  let arb =
+    QCheck.make
+      ?print:base.QCheck.print
+      ?shrink:base.QCheck.shrink
+      (QCheck.Gen.return cex)
+  in
+  let cell =
+    QCheck.Test.make_cell ~count:1 ~name:"handle-alloc-reshrink" arb
+      Handle_stm_arm.agree_prop
+  in
+  let result =
+    QCheck.Test.check_cell ~rand:(Stdlib.Random.State.make [| 1 |]) cell
+  in
+  match QCheck.TestResult.get_state result with
+  | QCheck.TestResult.Failed { instances = { instance; shrink_steps; _ } :: _ } ->
+    Int.incr reshrink_reproduced;
+    if not (List.equal Poly.equal instance cex) then Int.incr reshrink_improved;
+    (instance, shrink_steps)
+  | _ ->
+    Int.incr reshrink_fellthrough;
+    (cex, 0)
+
+let run_handle_stm_trial_boosted ~passes ~seed : arm_result option =
+  match run_handle_stm_trial ~seed with
+  | None -> None
+  | Some first ->
+    if first.op_count < 0 then Some first
+    else begin
+      (* Recover the command list by re-running; run_handle_stm_trial
+         only hands back a printed form, so redo the shrink loop over
+         the structured value. *)
+      let cell =
+        QCheck.Test.make_cell ~count:cases_per_trial ~name:"handle-alloc"
+          (Handle_stm_arm.arb_cmds H_stm.init_state)
+          Handle_stm_arm.agree_prop
+      in
+      let result =
+        QCheck.Test.check_cell ~rand:(Stdlib.Random.State.make [| seed |]) cell
+      in
+      match QCheck.TestResult.get_state result with
+      | QCheck.TestResult.Failed { instances = { instance; shrink_steps; _ } :: _ }
+        ->
+        let rec go cur cost n =
+          if n = 0 then (cur, cost)
+          else begin
+            let next, extra = reshrink_handle_stm cur in
+            if List.equal Poly.equal next cur then (cur, cost + extra)
+            else go next (cost + extra) (n - 1)
+          end
+        in
+        let final, total_cost = go instance shrink_steps passes in
+        Some
+          { exact_minimal = is_handle_minimal_stm final
+          ; op_count = List.length final
+          ; cost = total_cost
+          ; shown = String.concat ~sep:"; " (List.map final ~f:H_stm.show_cmd)
+          }
+      | _ -> Some first
+    end
+
 (* ---------- Run both arms over the same seeds, report ---------- *)
 
 type summary =
@@ -482,4 +577,15 @@ let () =
     ~title:
       "Scenario 2: handle allocator (adversarial case: later ops reference \
        earlier ones)"
-    ~run_tape:run_handle_tape_trial ~run_stm:run_handle_stm_trial
+    ~run_tape:run_handle_tape_trial ~run_stm:run_handle_stm_trial;
+  run_scenario
+    ~title:
+      "Scenario 3: handle allocator, qcheck-stm granted 20 extra full shrink \
+       passes (tests whether 232/300 is an effort artefact)"
+    ~run_tape:run_handle_tape_trial
+    ~run_stm:(run_handle_stm_trial_boosted ~passes:20);
+  printf
+    "\n  boosted-arm self-check: reshrink called %d times, reproduced the \
+     failure %d, fell through %d, changed the case %d\n"
+    !reshrink_calls !reshrink_reproduced !reshrink_fellthrough
+    !reshrink_improved
