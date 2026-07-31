@@ -233,3 +233,43 @@ Two consequences, one general and one ours:
 A less invasive option than changing the default: add a shrink-friendly
 list generator alongside it, so nothing existing moves. That fragments
 the API, which is its own cost, but it needs no migration at all.
+
+## Prototyped: does a better list encoding actually help?
+
+`diag2/probe_listgen.ml`. Two alternatives to `G.list`, both trivial:
+`list_len` (draw the length once, then that many elements) and
+`list_cont` (a continuation bool before each element, which is what
+Hypothesis's `lists()` does).
+
+Length distributions matched — a first run used a 1/2 continuation
+probability, giving mean length 1 against `G.list`'s 3.5, which made the
+comparison partly about distribution rather than encoding. At 3/4 the
+means are 2.9 vs 3.5.
+
+| | G.list | list_len | list_cont |
+|---|---|---|---|
+| tape choices per element | 4.72 | 5.26 | **2.34** |
+| `length >= 3` quality | 100/100 | 100/100 | 100/100 |
+| `length >= 3` cost | 178 | 183 | **560** |
+| `sum >= 100` quality | 100/100 | 100/100 | 94/100 |
+| `sum >= 100` cost | 173 | 177 | **84** |
+| **`self_len` quality** | **47/100** | 47/100 | **92/100** |
+| `self_len` cost | 170 | 206 | 135 |
+
+**The diagnosis is confirmed.** `self_len`'s 47/100 really was a
+generator-encoding limit, not a shrinker gap: changing only the encoding
+takes it to 92/100, which also clears Hypothesis's 53/100 comfortably.
+`list_len` changes nothing, which is the right control — drawing the
+length as one number still leaves everything downstream dependent on it.
+
+**But it is not a uniform win**, and that matters more than the headline.
+`list_cont` costs 3x on `length >= 3` and loses 6 points of quality on
+`sum >= 100`. Interleaving a bool before every element gives the passes
+more to chew on: deletion becomes easy, but reaching exactly `[0;0;0]`
+now means driving both the bools and the values.
+
+So the honest summary is that the encoding choice trades one class of
+property against another, rather than dominating. Which is a better
+thing to put to base_quickcheck's maintainers than "yours is worse":
+the question is which class matters more in their tests, and that is
+theirs to answer, not mine.
