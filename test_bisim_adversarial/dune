@@ -1,0 +1,5 @@
+(test
+ (name test_bisim_adversarial)
+ (libraries base stdio base_quickcheck stateful)
+ (preprocess
+  (pps ppx_sexp_conv ppx_let)))

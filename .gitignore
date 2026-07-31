@@ -4,3 +4,6 @@ vendor-study/
 *.cmo
 *.cmx
 *.o
+.scratch/
+_opam/
+.opam-switch/
