@@ -1113,6 +1113,51 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
       }
   end
 
+(* Non-deterministic generator detection, ported in spirit from
+   Hypothesis's DataTree, which raises Flaky with:
+
+     "Inconsistent data generation! Data generation behaved differently
+      between different runs. Is your data generation depending on
+      external state?"
+
+   A generator that reads a clock, a global, or an unseeded PRNG makes
+   every recorded tape meaningless: replay produces a different value,
+   so a saved failure will not reproduce, shrinking chases a moving
+   target, and the whole model quietly stops holding. Today tapecheck
+   produces silent nonsense in that situation.
+
+   The check is exact here and needs no equality on values, which is the
+   nice part. Replay the SAME image twice and compare the images the two
+   replays record. A deterministic generator consumes the tape
+   identically both times and records an identical image; one that draws
+   from outside the tape does not. [Tape.compare_image] is already
+   defined, so this costs one extra replay and no new machinery.
+
+   Deliberately checked once per run, on the first failure, rather than
+   per case: the failing path is off the CI happy path, and a generator
+   that is non-deterministic is non-deterministic on the first try. *)
+let check_generator_determinism (type a) ~(gen : a Base_quickcheck.Generator.t)
+    ~size ~(test : a -> bool) (image : Tape.image) : bool =
+  let replay_once () =
+    let tape = Tape.create () in
+    Tape.start_replay_image tape image;
+    let _v, _tested, out =
+      run_and_test ~tape ~gen ~size ~seed:replay_fresh_seed ~test
+    in
+    out.Tape.image
+  in
+  let a = replay_once () in
+  let b = replay_once () in
+  Tape.compare_image a b = 0
+
+let nondeterminism_warning =
+  "tapecheck: INCONSISTENT DATA GENERATION.\n\
+  \  Replaying the same tape twice produced different draws, so this\n\
+  \  generator is not a pure function of the tape. Is it reading a clock,\n\
+  \  a global, or an unseeded random source?\n\
+  \  Consequences: saved failures will not reproduce, shrinking chases a\n\
+  \  moving target, and the minimal example reported may not fail at all."
+
 (* Automatic failure replay. See tape_db.ml for why this exists and why
    deleting stale entries matters as much as saving new ones. *)
 let run_with_db (type a) ~(db : Tape_db.t) ~(db_key : string)
