@@ -504,6 +504,135 @@ let last_shape () =
   ( !sweeps, !initial_choices, !final_choices, !scan_i_visits, !scan_jk_visits
   , !lad_successes )
 
+
+(* Mutable state for a tape SEARCH -- shared by shrinking today, and by
+   anything else that proposes edits and keeps the best result.
+
+   Hoisted out of [shrink] so that [target()] (TARGET-PBT.md) and
+   multi-bug reporting (MULTI-BUG.md) can reuse the proposal machinery
+   instead of copying it. Both were blocked on exactly this: every pass
+   in [shrink] closed over a single [best], so the refactor got dearer
+   the longer it waited.
+
+   The one field that differs between users is [accept]: shrinking
+   accepts a strictly shortlex-smaller still-failing image, a target
+   search would accept an improved score, and multi-bug would accept a
+   still-failing image with the SAME origin. Everything else -- budget
+   accounting, duplicate skipping, realignment, the worker pool -- is
+   common. *)
+type 'a search =
+  { s_gen : 'a Base_quickcheck.Generator.t
+  ; s_size : int
+  ; s_test : 'a -> bool
+  ; s_tape : Tape.t
+  ; s_realign : realign
+  ; s_stats : stats
+  ; s_pool : (Tape.image * 'a) option Pool.t option
+  ; s_domains : int
+  ; s_budget : int
+  ; s_max_shrinks : int
+  ; s_deadline : float option
+    (* These are the SAME ref cells the caller's own loop uses, not
+       copies. That is what makes the hoist free: [shrink]'s passes go
+       on reading [!best] and [!attempts] directly, while the shared
+       proposal machinery below reads [st.s_best] -- one storage
+       location, no bulk rewrite of 69 call sites, and no risk of the
+       two views drifting apart. *)
+  ; s_best : Tape.image ref
+  ; s_best_value : 'a ref
+  ; s_trail : Tape.image list ref
+  ; s_attempts : int ref
+  ; s_shrinks : int ref
+  ; s_attempts_at_last_shrink : int ref
+  ; s_max_stall : int ref
+  ; s_seen : (Tape.image, unit) Hashtbl.t
+  ; s_accept : best:Tape.image -> Tape.image -> 'a -> bool
+        (* The ONLY thing that differs between users of this machinery.
+           Shrinking accepts a strictly shortlex-smaller image; a target
+           search would accept an improved score; multi-bug would accept
+           a still-failing image carrying the same origin. *)
+  }
+
+let search_budget_ok (st : 'a search) =
+  !(st.s_attempts) < st.s_budget
+  && !(st.s_shrinks) < st.s_max_shrinks
+  && !(st.s_attempts) - !(st.s_attempts_at_last_shrink) < !(st.s_max_stall)
+  && (match st.s_deadline with
+      | None -> true
+      | Some d -> Float.( < ) (Unix.gettimeofday ()) d)
+
+let search_note_shrink (st : 'a search) =
+  Int.incr st.s_shrinks;
+  Int.incr accepted_shrinks;
+  st.s_max_stall
+    := Int.max !(st.s_max_stall)
+         ((!(st.s_attempts) - !(st.s_attempts_at_last_shrink)) * 2);
+  st.s_attempts_at_last_shrink := !(st.s_attempts)
+
+(* One replay under [policy]; count it, and return a candidate
+   (image, value) iff it is still-failing, with whether it misaligned. *)
+let search_candidate (type a) (st : a search) ~policy proposal =
+  Tape.start_replay_image ~policy st.s_tape proposal;
+  let value, tested, out =
+    run_and_test ~tape:st.s_tape ~gen:st.s_gen ~size:st.s_size
+      ~seed:replay_fresh_seed ~test:st.s_test
+  in
+  st.s_stats.replays <- st.s_stats.replays + 1;
+  if out.Tape.misaligned then
+    st.s_stats.misaligns <- st.s_stats.misaligns + 1;
+  match tested with
+  | None -> (out.Tape.misaligned, None)
+  | Some verdict ->
+    st.s_stats.tests <- st.s_stats.tests + 1;
+    (match verdict with
+     | Tape_stats.Case_invalid ->
+       st.s_stats.shrink_discards <- st.s_stats.shrink_discards + 1
+     | Tape_stats.Case_passed | Tape_stats.Case_failed -> ());
+    if out.Tape.overrun then (out.Tape.misaligned, None)
+    else (
+      match verdict with
+      | Tape_stats.Case_failed ->
+        (out.Tape.misaligned, Some (out.Tape.image, value))
+      | Tape_stats.Case_passed | Tape_stats.Case_invalid ->
+        (out.Tape.misaligned, None))
+
+let search_attempt (type a) (st : a search) proposal =
+  if not (search_budget_ok st) then false
+  else if Option.is_some (Hashtbl.find st.s_seen proposal) then begin
+    Int.incr duplicate_proposals;
+    false
+  end
+  else begin
+    Int.incr st.s_attempts;
+    Hashtbl.set st.s_seen ~key:proposal ~data:();
+    Int.incr distinct_proposals;
+    let primary, secondary =
+      match st.s_realign with
+      | `Freeze -> (Tape.Freeze, Tape.Consume)
+      | `Consume | `Both -> (Tape.Consume, Tape.Freeze)
+    in
+    let mis1, c1 = search_candidate st ~policy:primary proposal in
+    let cands =
+      match st.s_realign with
+      | `Both when mis1 ->
+        let _mis2, c2 = search_candidate st ~policy:secondary proposal in
+        [ c1; c2 ]
+      | _ -> [ c1 ]
+    in
+    let best_cand =
+      List.filter_opt cands
+      |> List.min_elt ~compare:(fun (a, _) (b, _) -> Tape.compare_image a b)
+    in
+    match best_cand with
+    | Some (image, value) when st.s_accept ~best:!(st.s_best) image value ->
+      st.s_best := image;
+      st.s_best_value := value;
+      st.s_trail := image :: !(st.s_trail);
+      search_note_shrink st;
+      true
+    | _ -> false
+  end
+
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~budget ~(max_seconds : float option)
     ~(max_shrinks : int) ~(max_stall : int option)
@@ -597,131 +726,43 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let shrinks = ref 0 in
   let attempts_at_last_shrink = ref 0 in
   let max_stall = ref (Option.value max_stall ~default:Int.max_value) in
-  let budget_ok () =
-    !attempts < budget
-    && !shrinks < max_shrinks
-    && !attempts - !attempts_at_last_shrink < !max_stall
-    && (match deadline with
-        | None -> true
-        | Some d -> Float.( < ) (Unix.gettimeofday ()) d)
+  (* Build the shared search state over the SAME ref cells this
+     function's passes already use, then alias the proposal machinery to
+     it. Nothing below changes: [budget_ok] and [attempt] keep their
+     names and signatures. See the [search] type for why this exists --
+     target() and multi-bug reporting were both blocked on the proposal
+     machinery being trapped inside this function. *)
+  let st =
+    { s_gen = gen
+    ; s_size = size
+    ; s_test = test
+    ; s_tape = tape
+    ; s_realign = realign
+    ; s_stats = stats
+    ; s_pool = pool
+    ; s_domains = domains
+    ; s_budget = budget
+    ; s_max_shrinks = max_shrinks
+    ; s_deadline = deadline
+    ; s_best = best
+    ; s_best_value = best_value
+    ; s_trail = trail
+    ; s_attempts = attempts
+    ; s_shrinks = shrinks
+    ; s_attempts_at_last_shrink = attempts_at_last_shrink
+    ; s_max_stall = max_stall
+    ; s_seen = seen_proposals
+    ; (* Shrinking's acceptance rule: strictly shortlex-smaller. This is
+         the one field a different search would replace. *)
+      s_accept = (fun ~best image _value -> Tape.compare_image image best < 0)
+    }
   in
-  (* Called on every accepted improvement: bank the success, refund the
-     stall allowance, and widen it to twice what this shrink cost to
-     find. *)
-  (* The per-pass failure budget is a FIXED 20, matching Hypothesis's
-     max_failures (shrinker.py, the [while failures < max_failures] loop).
-     It is deliberately not adaptive, and that was measured rather than
-     assumed.
-
-     I first grafted Hypothesis's max_stall growth rule
-     (shrinker.py:969-971, "twice what the last successful shrink cost")
-     onto this cutoff, reasoning that a fixed 20 would silently lose
-     quality on a property needing a longer dry spell. Measured on a
-     purpose-built case (diag2/probe_cutoff.ml, "deep bind" with
-     len in [1,200]): with the cutoff at 3 the property drops to 47/100
-     fully minimal, so the concern is real -- but adaptation on or off
-     gives the SAME 47/100. It cannot help, because the growth only fires
-     after a success and a too-small budget never gets a first success.
-     A bootstrap problem, not a tuning one.
-
-     The premise was also wrong. max_failures and max_stall are two
-     different mechanisms in Hypothesis: the per-pass early exit is a
-     fixed constant, and the adaptive rule belongs to the global
-     dry-spell counter (which measured inert here -- see the max_stall
-     comment above). Grafting one onto the other was my invention.
-
-     What the experiment did establish: 20 is safe on everything measured
-     (deep bind at 20 matches no-cutoff exactly, 100/100), and 3 is not.
-     Do not lower it; test_regression guards the deep-bind case. *)
-  let note_shrink () =
-    Int.incr shrinks;
-    Int.incr accepted_shrinks;
-    max_stall := Int.max !max_stall ((!attempts - !attempts_at_last_shrink) * 2);
-    attempts_at_last_shrink := !attempts
-  in
-
-  (* One replay under [policy]; count it, and return a candidate
-     (image, value) iff it is still-failing (could be accepted),
-     together with whether the replay misaligned. *)
-  let candidate ~policy proposal =
-    Tape.start_replay_image ~policy tape proposal;
-    let value, tested, out =
-      run_and_test ~tape ~gen ~size ~seed:replay_fresh_seed ~test
-    in
-    stats.replays <- stats.replays + 1;
-    if out.Tape.misaligned then stats.misaligns <- stats.misaligns + 1;
-    match tested with
-    | None -> (out.Tape.misaligned, None)
-    | Some verdict ->
-      stats.tests <- stats.tests + 1;
-      (match verdict with
-       | Tape_stats.Case_invalid ->
-         stats.shrink_discards <- stats.shrink_discards + 1
-       | Tape_stats.Case_passed | Tape_stats.Case_failed -> ());
-      if out.Tape.overrun then (out.Tape.misaligned, None)
-      else (
-        match verdict with
-        | Tape_stats.Case_failed ->
-          (out.Tape.misaligned, Some (out.Tape.image, value))
-        | Tape_stats.Case_passed | Tape_stats.Case_invalid ->
-          (out.Tape.misaligned, None))
-  in
-
-  (* Replay [proposal]; accept iff still failing and shortlex-smaller.
-     One logical proposal = one budget tick, regardless of how many
-     replays [`Both] spends on it (shrinking is off the CI happy path;
-     spend to hand a human a smaller example). *)
-  let attempt proposal =
-    if not (budget_ok ()) then false
-    else if Option.is_some (Hashtbl.find seen_proposals proposal) then begin
-      (* Already tried this exact image: SKIP it rather than re-running
-         the generator and the test.
-
-         Sound, and only recently so. A repeat was either accepted --
-         in which case [best] has moved and this proposal cannot be
-         shortlex-smaller than it a second time -- or rejected, and a
-         deterministic generator rejects it again. The parity review
-         made that conditional explicit: caching is safe "assuming
-         flakiness is made loud first so caching cannot hide it".
-         Flakiness IS now loud (Flaky_test raises, and the determinism
-         check runs on every failure path), so the precondition holds.
-
-         Costs no [attempts]: nothing was executed. Measured duplicate
-         rates were 10-20% of proposals on list properties. *)
-      Int.incr duplicate_proposals;
-      false
-    end
-    else begin
-      Int.incr attempts;
-      Hashtbl.set seen_proposals ~key:proposal ~data:();
-      Int.incr distinct_proposals;
-      let primary, secondary =
-        match realign with
-        | `Freeze -> (Tape.Freeze, Tape.Consume)
-        | `Consume | `Both -> (Tape.Consume, Tape.Freeze)
-      in
-      let mis1, c1 = candidate ~policy:primary proposal in
-      let cands =
-        match realign with
-        | `Both when mis1 ->
-          let _mis2, c2 = candidate ~policy:secondary proposal in
-          [ c1; c2 ]
-        | _ -> [ c1 ]
-      in
-      let best_cand =
-        List.filter_opt cands
-        |> List.min_elt ~compare:(fun (a, _) (b, _) -> Tape.compare_image a b)
-      in
-      match best_cand with
-      | Some (image, value) when Tape.compare_image image !best < 0 ->
-        best := image;
-        best_value := value;
-        trail := image :: !trail;
-        note_shrink ();
-        true
-      | _ -> false
-    end
-  in
+  let budget_ok () = search_budget_ok st in
+  let note_shrink () = search_note_shrink st in
+  let candidate ~policy proposal = search_candidate st ~policy proposal in
+  let attempt proposal = search_attempt st proposal in
+  ignore (note_shrink : unit -> unit);
+  ignore (candidate : policy:Tape.policy -> Tape.image -> bool * (Tape.image * a) option);
 
   (* Evaluate several independent proposals (in parallel domains when a
      pool exists) and accept the LOWEST-INDEX improvement, exactly the

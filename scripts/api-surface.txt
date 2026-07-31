@@ -76,6 +76,10 @@ run_with_db
 save
 scan_i_visits
 scan_jk_visits
+search_attempt
+search_budget_ok
+search_candidate
+search_note_shrink
 seed_int
 seg_count
 seg_get
