@@ -74,6 +74,45 @@ one. It also has independent value: the branch's own two bug fixes
 unreachable via double-counting) were both silent-undercount bugs, which
 suggests the area is prone to them.
 
+## Step 3 is now DONE: `test_stats_accounting/`
+
+Written, and it immediately paid for itself by correcting me rather than
+finding a bug.
+
+My first version asserted that `stats.tests` equals every call to the
+test function. It reported three failures — an all-passing run counting
+0 despite 250 calls, and off-by-2 / off-by-1 elsewhere. That looked like
+exactly the silent-undercount bug this plan predicted.
+
+It was not. `stats.tests` is incremented in exactly one place, inside
+the shrink path, and the type's own comment says why:
+
+> **True cost of a shrink**, separate from the proposal-count budget:
+> `[replays]` generation runs, `[tests]` test executions, ...
+
+Generation is *deliberately* excluded. The engine is right; my ground
+truth was wrong. Rewritten to assert the documented meaning, all four
+now pass:
+
+```
+  ok  all passing: no shrink, so tests = 0        (250 generation calls, correctly uncounted)
+  ok  run: tests = total - generation        106  (108 total, 2 spent finding the failure)
+  ok  resume: tests = total - 1 confirmation  84
+  ok  determinism check does not inflate tests  0 (8 replays, none counted as shrink work)
+```
+
+**And this sharpens the merge hazard rather than dissolving it.**
+`tests` means shrink-phase work by design. The branch's `cases_valid`,
+`cases_invalid`, `cases_failed` mean *all* cases — so they must be fed
+on precisely the generation path that `tests` correctly ignores.
+Copying the shape of `tests` accounting would give counters that are
+silently zero on a passing run, which is the failure this test now
+catches.
+
+So when merging, extend this file with the mirror-image assertions:
+`cases_valid + cases_invalid + cases_failed` must equal the *total* call
+count, including generation, on `run`, `resume` and a database replay.
+
 ## Do it next
 
 Every further change to `tape_engine.ml` makes this worse. It is the
