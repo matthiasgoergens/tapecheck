@@ -23,6 +23,19 @@
 
 open! Base
 
+(* What to do when a write fails -- a read-only filesystem, a full disk,
+   a permissions problem.
+
+   [Warn] is the default, deliberately. Swallowing the error silently is
+   how this feature quietly stops working: the run still passes, nothing
+   is persisted, and the next run is mysteriously slow again with no
+   indication why. A database that is silently not saving is worse than
+   no database, because you believe you have one. *)
+type on_write_error =
+  | Warn (* default: proceed, but say so on stderr *)
+  | Silent (* proceed quietly -- for when you already know writes fail *)
+  | Raise (* treat it as a hard error, e.g. in CI that expects a writable dir *)
+
 type t =
   { dir : string
   ; replay : bool
@@ -30,13 +43,40 @@ type t =
            fresh search -- e.g. to check that a bug is still findable
            from scratch, which a database otherwise hides. *)
   ; record : bool
-        (* Write tapes back. Turn off on a read-only filesystem, or in
-           CI where the database would not persist anyway. Writes
-           already swallow their errors so a read-only disk cannot break
-           a run, but relying on that is not the same as saying so. *)
+        (* Whether to attempt writes at all. Off means not even trying,
+           which is distinct from trying and failing quietly: on a
+           known-read-only filesystem there is nothing to warn about. *)
+  ; on_write_error : on_write_error
+  ; mutable warned : bool
+        (* Warn once per database, not once per failing write. A test
+           suite writing on every property would otherwise produce one
+           line per test. *)
   }
 
-let create ~dir ?(replay = true) ?(record = true) () = { dir; replay; record }
+let create ~dir ?(replay = true) ?(record = true) ?(on_write_error = Warn) () =
+  { dir; replay; record; on_write_error; warned = false }
+
+let report_write_error t ~key (e : exn) =
+  match t.on_write_error with
+  | Silent -> ()
+  | Raise ->
+    Stdlib.failwith
+      (Printf.sprintf "tapecheck: could not write failure tape for %S in %S: %s"
+         key t.dir (Stdlib.Printexc.to_string e))
+  | Warn ->
+    if not t.warned then begin
+      t.warned <- true;
+      Stdlib.prerr_endline
+        (Printf.sprintf
+           "tapecheck: could not save the failure tape for %S in %S (%s).\n\
+           \  Re-runs will not be able to replay this failure, so they stay \
+            slow.\n\
+           \  Pass ~record:false if that directory is intentionally \
+            unwritable, or\n\
+           \  ~on_write_error:Silent to suppress this."
+           key t.dir (Stdlib.Printexc.to_string e));
+      Stdlib.flush Stdlib.stderr
+    end
 
 (* Keys are caller-supplied test names. Sanitised because they end up as
    filenames and a test name is arbitrary text. *)
@@ -75,20 +115,20 @@ let load t ~key : Tape.image option =
 let save t ~key (img : Tape.image) : unit =
   if not t.record then ()
   else
-  try
-    ensure_dir t;
-    let file = path t ~key in
-    let tmp = file ^ ".tmp" in
-    let oc = Stdlib.open_out_bin tmp in
-    Stdlib.output_string oc (Tape.serialize_image img);
-    Stdlib.close_out oc;
-    Stdlib.Sys.rename tmp file
-  with _ -> ()
+    try
+      ensure_dir t;
+      let file = path t ~key in
+      let tmp = file ^ ".tmp" in
+      let oc = Stdlib.open_out_bin tmp in
+      Stdlib.output_string oc (Tape.serialize_image img);
+      Stdlib.close_out oc;
+      Stdlib.Sys.rename tmp file
+    with e -> report_write_error t ~key e
 
 let remove t ~key : unit =
   if not t.record then ()
   else
-  try
-    let file = path t ~key in
-    if Stdlib.Sys.file_exists file then Stdlib.Sys.remove file
-  with _ -> ()
+    try
+      let file = path t ~key in
+      if Stdlib.Sys.file_exists file then Stdlib.Sys.remove file
+    with e -> report_write_error t ~key e

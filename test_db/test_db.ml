@@ -92,7 +92,31 @@ let () =
     (not record_off_wrote);
   Stdio.printf "  ~replay:false reads nothing:         %b\n"
     (not replay_off_reads);
-  if not (stored_ok && gone && (not record_off_wrote) && not replay_off_reads)
+  (* Write-failure policy. An unwritable directory is simulated with a
+     path under a regular FILE, so mkdir and open both fail. *)
+  let blocked = "/etc/hostname/nope" in
+  let warned = ref false in
+  let db_warn = Tape_db.create ~dir:blocked () in
+  let db_silent = Tape_db.create ~dir:blocked ~on_write_error:Tape_db.Silent () in
+  let db_raise = Tape_db.create ~dir:blocked ~on_write_error:Tape_db.Raise () in
+  let img = Option.value_exn img1 in
+  (* Warn (default) and Silent must both survive; only Raise throws. *)
+  (try Tape_db.save db_warn ~key img with _ -> warned := true);
+  let warn_survived = not !warned in
+  let silent_survived =
+    try Tape_db.save db_silent ~key img; true with _ -> false
+  in
+  let raise_raised =
+    try Tape_db.save db_raise ~key img; false with _ -> true
+  in
+  Stdio.printf "  default Warn survives a bad dir:     %b\n" warn_survived;
+  Stdio.printf "  Silent survives a bad dir:           %b\n" silent_survived;
+  Stdio.printf "  Raise turns it into an error:        %b\n" raise_raised;
+  if not
+       (stored_ok && gone
+       && (not record_off_wrote)
+       && (not replay_off_reads)
+       && warn_survived && silent_survived && raise_raised)
   then Stdlib.exit 1;
 
   (* The 1.3x above understates the feature badly, because that bug is
