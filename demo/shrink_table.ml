@@ -146,6 +146,21 @@ let () =
     ~is_minimal:(fun v -> v = 100)
     ~sexp_of:[%sexp_of: int];
 
+  (* Long-range dependency, from harder_benchmarks.py in
+     ../tapecheck-hypothesis-baseline. Deleting an element breaks
+     [hd l = length l], and lowering [hd l] breaks it too, so only a
+     SIMULTANEOUS lower-and-delete makes progress -- precisely what
+     lower_and_delete exists for and what Hypothesis has no single pass
+     for. Measured Hypothesis: found 89/100, fully minimal 53/100, worst
+     [8;0;0;0;0;0;0;0] against a true minimum of [1]. *)
+  row ~name:"self_len: fails iff l <> [] && hd l = length l   [hypothesis: 53/100]"
+    ~gen:(G.list (G.int_uniform_inclusive 0 50))
+    ~shrinker:(Some (S.list S.int))
+    ~test:(fun l ->
+      not (match l with [] -> false | h :: _ -> h = List.length l))
+    ~is_minimal:(fun l -> List.equal Int.equal l [ 1 ])
+    ~sexp_of:[%sexp_of: int list];
+
   row ~name:"bind: len in [1,64], list_with_length, fail iff sum >= 100 (no stock shrinker derivable)"
     ~gen:
       (let open G.Let_syntax in
