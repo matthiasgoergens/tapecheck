@@ -1598,9 +1598,21 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
    it can raise the values in a list but never add an element, and an
    empty starting draw has nothing to climb at all. Hypothesis's
    optimiser can extend the buffer (its [__extend] field, set to "full"
-   in the target phase). Porting that means letting a proposal run past
-   the end of the recorded tape and drawing fresh, which the replay path
-   currently treats as an overrun. Worth doing; not done. *)
+   in the target phase).
+
+   A cheap growth move was tried and REJECTED: append a copy of the last
+   choice and let replay read it. Measured over 30 seeds
+   (diag2/probe_growth.ml) it added a list element in 3/30 runs under
+   [G.list] and 0/30 under a continuation-bool encoding -- the opposite
+   way round from what I predicted, and useless either way. Under the
+   continuation encoding the last choice is the STOP bool, so appending
+   another changes nothing; growing there means flipping that bool AND
+   supplying a value, which append-a-copy cannot express.
+
+   Real growth needs their mechanism rather than a proxy: extend with
+   FRESH data and let the generator draw more, which means letting a
+   proposal run past the recorded end instead of treating that as an
+   overrun. Worth doing; still not done. *)
 let run_target (type a) ?(seed = 0) ?(size = 10) ?(max_improvements = 100)
     ?(budget = 2000) ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(objective : a -> float) :
