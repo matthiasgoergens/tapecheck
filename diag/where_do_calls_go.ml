@@ -78,6 +78,13 @@ let () =
   row ~name:"pair in [0,1000]^2, fail iff a + b >= 100"
     ~gen:(G.both (G.int_uniform_inclusive 0 1000) (G.int_uniform_inclusive 0 1000))
     ~test:(fun (a, b) -> a + b < 100);
+  row ~name:"self_len: fails iff hd l = length l  (FRONTIER: tape 47, hyp 53)"
+    ~gen:(G.list (G.int_uniform_inclusive 0 50))
+    ~test:(fun l ->
+      not (match l with [] -> false | h :: _ -> h = List.length l));
+  row ~name:"zig-zag: fails iff |m - n| = 1  (now fixed by lower_together)"
+    ~gen:(G.both (G.int_uniform_inclusive 0 300) (G.int_uniform_inclusive 0 300))
+    ~test:(fun (m, n) -> abs (m - n) <> 1);
   row ~name:"int uniform (control: tapecheck already cheap here)"
     ~gen:(G.int_uniform_inclusive 0 1_000_000)
     ~test:(fun v -> v < 123_457)
