@@ -118,15 +118,42 @@ lost? Options, none obviously right:
 
 ### On changing base_quickcheck's list generator
 
-Tempting, and probably wrong to propose on its own. Stock
-`Shrinker.list` works on values rather than the tape, so the encoding
-does not affect ordinary base_quickcheck users at all — the
-beneficiaries are replay-based tools. And changing it changes generated
-values for every seed, breaking every expect test that records generated
-output, which Jane Street relies on heavily. Asking someone to take that
-churn for a downstream tool's benefit is a bad trade.
+I first argued against proposing this, on the grounds that changing the
+encoding changes generated values for every seed and so breaks every
+expect test recording generated output. **Matthias pushed back and is
+right**: that is an ordinary migration concern, handled by a version bump
+or by versioning the recorded encoding so old seeds still reproduce.
+Libraries make deliberate breaking generator changes routinely. The
+objection was about migration cost, not about merit, and I was treating
+it as a blocker.
 
-One piece might stand alone: the loop draws once per unit of size
-budget, so draw count is O(size) merely to decide element sizes. That
-looks like an inefficiency on its own terms. NOT MEASURED — a question,
-not a claim, and it should be measured before being raised anywhere.
+So the question reduces to whether the encoding is worse on its merits.
+**Measured, and it is** (`diag2/probe_drawcount.ml`, 200 seeds per row):
+
+| `~size` | tape choices | list elements | choices/element |
+|---|---|---|---|
+| 5 | 8.2 | 1.7 | 4.70 |
+| 10 | 16.5 | 3.5 | 4.72 |
+| 20 | 33.4 | 6.2 | 5.43 |
+| 40 | 66.8 | 10.8 | 6.19 |
+| 80 | 131.6 | 19.4 | 6.79 |
+
+Tape length is **~1.65 x `size`, independent of the resulting list
+length**. At `size = 80` that is 131 choices for a 19-element list, where
+the element values account for 19 of them. Roughly 85% of the tape is
+size-budget bookkeeping: the `for _ = 1 to remaining` loop draws once per
+unit of budget, then a permutation pass draws again per element.
+
+Two consequences, one general and one ours:
+
+- **General**: generation spends O(size) PRNG draws to decide how to
+  split a budget among O(size/4) elements. Whether that matters for
+  ordinary users depends on whether draws are a real cost next to the
+  element generation they gate — not established here.
+- **Ours**: every shrink pass is O(choices) or worse, so a 5-7x inflated
+  tape is a 5-7x inflated shrink. This is a direct, measured cost of the
+  encoding to any replay-based tool.
+
+A less invasive option than changing the default: add a shrink-friendly
+list generator alongside it, so nothing existing moves. That fragments
+the API, which is its own cost, but it needs no migration at all.
