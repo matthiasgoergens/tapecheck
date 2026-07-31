@@ -546,6 +546,12 @@ type 'a search =
   ; s_attempts_at_last_shrink : int ref
   ; s_max_stall : int ref
   ; s_seen : (Tape.image, unit) Hashtbl.t
+  ; s_interesting : Tape_stats.verdict -> bool
+        (* Which verdicts count as a candidate at all. Shrinking wants
+           only [Case_failed] -- a proposal that stops failing is no
+           use. A target search wants any VALID case, since it is
+           maximising a score over passing inputs, not chasing a
+           failure. *)
   ; s_accept : best:Tape.image -> Tape.image -> 'a -> bool
         (* The ONLY thing that differs between users of this machinery.
            Shrinking accepts a strictly shortlex-smaller image; a target
@@ -590,11 +596,9 @@ let search_candidate (type a) (st : a search) ~policy proposal =
      | Tape_stats.Case_passed | Tape_stats.Case_failed -> ());
     if out.Tape.overrun then (out.Tape.misaligned, None)
     else (
-      match verdict with
-      | Tape_stats.Case_failed ->
+      if st.s_interesting verdict then
         (out.Tape.misaligned, Some (out.Tape.image, value))
-      | Tape_stats.Case_passed | Tape_stats.Case_invalid ->
-        (out.Tape.misaligned, None))
+      else (out.Tape.misaligned, None))
 
 let search_attempt (type a) (st : a search) proposal =
   if not (search_budget_ok st) then false
@@ -752,9 +756,13 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ; s_attempts_at_last_shrink = attempts_at_last_shrink
     ; s_max_stall = max_stall
     ; s_seen = seen_proposals
-    ; (* Shrinking's acceptance rule: strictly shortlex-smaller. This is
-         the one field a different search would replace. *)
-      s_accept = (fun ~best image _value -> Tape.compare_image image best < 0)
+    ; (* Shrinking: only a still-failing proposal is a candidate, and it
+         is accepted only if strictly shortlex-smaller. *)
+      s_interesting =
+        (function
+        | Tape_stats.Case_failed -> true
+        | Tape_stats.Case_passed | Tape_stats.Case_invalid -> false)
+    ; s_accept = (fun ~best image _value -> Tape.compare_image image best < 0)
     }
   in
   let budget_ok () = search_budget_ok st in
@@ -1432,6 +1440,150 @@ let nondeterminism_warning =
   \  a global, or an unseeded random source?\n\
   \  Consequences: saved failures will not reproduce, shrinking chases a\n\
   \  moving target, and the minimal example reported may not fail at all."
+
+(* Targeted property-based testing: hill-climb to MAXIMISE a score,
+   rather than shrinking to minimise a tape.
+
+   Ported from Hypothesis's Optimiser (optimiser.py), which cites
+   Loescher & Sagonas, "Targeted property-based testing", ISSTA 2017.
+   Their own framing is worth keeping: "a fairly naive hill climbing
+   algorithm ... not expected to produce amazing results, because it is
+   designed to be run in a fairly small testing budget, so it
+   prioritises finding easy wins and bailing out quickly".
+
+   Four details from their implementation that the idea alone does not
+   imply, all of which are carried over here:
+
+   1. LATERAL MOVES at equal score, gated on the tape not growing.
+      A strict hill climber sticks on plateaus; accepting equal-score
+      moves escapes them, and tying that to "the tape did not grow"
+      stops it wandering. Their comment: "gives us a certain amount of
+      freedom for lateral moves that will take us out of local maxima".
+   2. Walk choices BACK TO FRONT, restarting from the end whenever the
+      best improves.
+   3. Replace against the CURRENT best, not the starting case, "so if we
+      luck into a good draw we get to keep the good bits".
+   4. Cap improvements (100), because a score need not be bounded above
+      -- without it the loop has no termination condition at all.
+
+   Uses [find_integer] for the value search, and the same [search]
+   machinery as shrinking: only [s_interesting] (any valid case, not
+   just failures) and [s_accept] (better score, or equal score with no
+   growth) differ.
+
+   LIMITATION: this EDITS existing choices and cannot grow the tape, so
+   it can raise the values in a list but never add an element, and an
+   empty starting draw has nothing to climb at all. Hypothesis's
+   optimiser can extend the buffer (its [__extend] field, set to "full"
+   in the target phase). Porting that means letting a proposal run past
+   the end of the recorded tape and drawing fresh, which the replay path
+   currently treats as an overrun. Worth doing; not done. *)
+let run_target (type a) ?(seed = 0) ?(size = 10) ?(max_improvements = 100)
+    ?(budget = 2000) ?(realign : realign = `Consume) ?stats
+    (gen : a Base_quickcheck.Generator.t) ~(objective : a -> float) :
+    a * float * int =
+  let stats = match stats with Some s -> s | None -> no_stats () in
+  let tape = Tape.create () in
+  Tape.start_recording tape;
+  let value0, _tested, out0 =
+    run_and_test ~tape ~gen ~size ~seed ~test:(fun _ -> true)
+  in
+  let best_score = ref (objective value0) in
+  let best = ref out0.Tape.image
+  and best_value = ref value0
+  and trail = ref []
+  and attempts = ref 0
+  and shrinks = ref 0
+  and alast = ref 0
+  and mstall = ref Int.max_value in
+  let improvements = ref 0 in
+  let st =
+    { s_gen = gen
+    ; s_size = size
+    ; s_test = (fun _ -> true)
+    ; s_tape = tape
+    ; s_realign = realign
+    ; s_stats = stats
+    ; s_pool = None
+    ; s_domains = 1
+    ; s_budget = budget
+    ; s_max_shrinks = Int.max_value
+    ; s_deadline = None
+    ; s_best = best
+    ; s_best_value = best_value
+    ; s_trail = trail
+    ; s_attempts = attempts
+    ; s_shrinks = shrinks
+    ; s_attempts_at_last_shrink = alast
+    ; s_max_stall = mstall
+    ; s_seen = Hashtbl.Poly.create ()
+    ; (* Any VALID case is a candidate -- we are maximising over passing
+         inputs, not chasing a failure. *)
+      s_interesting =
+        (function
+        | Tape_stats.Case_passed | Tape_stats.Case_failed -> true
+        | Tape_stats.Case_invalid -> false)
+    ; s_accept =
+        (fun ~best image value ->
+          let sc = objective value in
+          if Float.( > ) sc !best_score then begin
+            best_score := sc;
+            Int.incr improvements;
+            true
+          end
+          else if
+            (* Detail 1: lateral move, but only if the tape does not grow. *)
+            Float.( = ) sc !best_score
+            && Tape.image_size image <= Tape.image_size best
+          then true
+          else false)
+    }
+  in
+  (* Detail 2: back to front, restarting on improvement. Detail 3 is
+     implicit -- every proposal is built from [!best], which moves. *)
+  let examined = Hashtbl.Poly.create () in
+  let continue_ = ref true in
+  while !continue_ && !improvements <= max_improvements && search_budget_ok st do
+    let arr = (!best).Tape.main in
+    let n = Array.length arr in
+    let improved_here = ref false in
+    let i = ref (n - 1) in
+    while (not !improved_here) && !i >= 0 && search_budget_ok st do
+      (if not (Hashtbl.mem examined !i) then begin
+         Hashtbl.set examined ~key:!i ~data:();
+         match arr.(!i) with
+         | Tape.Integer { value; lo; hi } ->
+           let try_delta d =
+             let arr = (!best).Tape.main in
+             if !i >= Array.length arr then false
+             else begin
+               let v = Int64.( + ) value d in
+               if Int64.( > ) v hi || Int64.( < ) v lo then false
+               else
+                 search_attempt st
+                   { !best with
+                     Tape.main =
+                       Array.mapi arr ~f:(fun j c ->
+                         if j = !i then Tape.Integer { value = v; lo; hi }
+                         else c)
+                   }
+             end
+           in
+           (* Detail 4's companion: find_integer for the step size, in
+              both directions, since a score may be maximised either
+              way. *)
+           if Int64.( > ) (find_integer (fun k -> try_delta k)) 0L then
+             improved_here := true
+           else if
+             Int64.( > ) (find_integer (fun k -> try_delta (Int64.neg k))) 0L
+           then improved_here := true
+         | Tape.Float _ | Tape.Bool _ | Tape.Marker -> ()
+       end);
+      Int.decr i
+    done;
+    if !improved_here then Hashtbl.clear examined else continue_ := false
+  done;
+  (!best_value, !best_score, !attempts)
 
 (* Automatic failure replay. See tape_db.ml for why this exists and why
    deleting stale entries matters as much as saving new ones. *)
