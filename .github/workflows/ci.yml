@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# The Hypothesis comparison harness lives on the unrelated-history
+# `hypothesis-baseline` branch and is Python; it is deliberately not
+# built here.
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ocaml-compiler: ["5.1", "5.2", "5.3"]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          dune-cache: true
+
+      # tape.opam is a dependency manifest, not an installable package:
+      # the libraries have no public_name because the vendored
+      # splittable_random fork is private (see the opam file). So the
+      # deps-only install is the only part of it CI relies on.
+      - run: opam install . --deps-only --with-test
+
+      - run: opam exec -- dune build
+
+      # The suite is the point of this workflow, not the build. It
+      # contains the regression guard (shrink quality AND cost, with
+      # every threshold tied to a specific past regression), the bisim
+      # health assertions, the statistics accounting checks, and the
+      # determinism checks.
+      - run: opam exec -- dune test
+
+  # Shrink quality is deterministic given the seeds, so a drift in the
+  # numbers is a real signal rather than flakiness. Run the guard on its
+  # own so its output is easy to find in the log when it fails.
+  regression-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"
+          dune-cache: true
+      - run: opam install . --deps-only --with-test
+      - run: opam exec -- dune exec test_regression/regression_guard.exe
