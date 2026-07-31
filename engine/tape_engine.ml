@@ -1134,10 +1134,36 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
    defined, so this costs one extra replay and no new machinery.
 
    Deliberately checked once per run, on the first failure, rather than
-   per case: the failing path is off the CI happy path, and a generator
-   that is non-deterministic is non-deterministic on the first try. *)
-let check_generator_determinism (type a) ~(gen : a Base_quickcheck.Generator.t)
-    ~size ~(test : a -> bool) (image : Tape.image) : bool =
+   per case: the failing path is off the CI happy path.
+
+   LIMITATION, measured (test_nondet/test_flaky_gen.ml). Two replays
+   catch an ALWAYS-divergent generator every time, but an intermittently
+   flaky one only when the two samples happen to straddle the
+   divergence. Detection tracks 2p(1-p) almost exactly:
+
+     flake rate 0.50 -> 50% detected
+     flake rate 0.10 -> 17%
+     flake rate 0.01 ->  3%
+
+   So this is a coin-flip detector for rare flakiness. [replays] raises
+   the sample count -- detection becomes 1 - (p^k + (1-p)^k) -- which
+   helps linearly and cheaply, but does not change the shape.
+
+   (Note a generator that CONSISTENTLY draws differently from what the
+   tape recorded is deterministic and correctly passes: consistently
+   different is not divergent.)
+
+   The real fix is Hypothesis's, and it is structural rather than
+   statistical: DataTree observes every draw of every run against a
+   persistent tree, so a divergence anywhere is caught, with an effective
+   sample size of the whole run rather than k. tapecheck already replays
+   hundreds of times during shrinking, so hooking the check there would
+   get the same power nearly free. Written up in MINING-BACKLOG.md; not
+   done, because it touches the replay path rather than sitting beside
+   it. *)
+let check_generator_determinism (type a) ?(replays = 8)
+    ~(gen : a Base_quickcheck.Generator.t) ~size ~(test : a -> bool)
+    (image : Tape.image) : bool =
   let replay_once () =
     let tape = Tape.create () in
     Tape.start_replay_image tape image;
@@ -1146,9 +1172,13 @@ let check_generator_determinism (type a) ~(gen : a Base_quickcheck.Generator.t)
     in
     out.Tape.image
   in
-  let a = replay_once () in
-  let b = replay_once () in
-  Tape.compare_image a b = 0
+  let first = replay_once () in
+  let rec go k =
+    if k <= 1 then true
+    else if Tape.compare_image (replay_once ()) first <> 0 then false
+    else go (k - 1)
+  in
+  go replays
 
 let nondeterminism_warning =
   "tapecheck: INCONSISTENT DATA GENERATION.\n\

@@ -73,6 +73,44 @@ narrow signature.
    *same* origin.
 4. **A report listing each minimised failure.**
 
+## Interface: a second entry point, not a changed one
+
+Matthias's suggestion, and it dissolves the worst of the cost: keep
+`test : 'a -> bool` exactly as it is and add a *differently named*
+entry point with the signature multi-bug reporting needs. Nothing
+existing changes, and the two can coexist indefinitely.
+
+Sketch:
+
+```ocaml
+(* unchanged: one failure, one minimal example *)
+val run : ... -> test:('a -> bool) -> 'a result
+
+(* new: the test RAISES to fail, so each failure carries an identity *)
+val run_multi :
+  ... -> test:('a -> unit) -> 'a multi_result
+(* where multi_result carries one minimised example PER distinct origin *)
+```
+
+Origin from the exception plus the top non-library frame of
+`Printexc.get_raw_backtrace`, which is the OCaml analogue of their
+(exception type, file, line) tuple.
+
+Two things this buys beyond compatibility:
+
+- The tests that most want multi-bug reporting already raise. `Bisim`
+  and `Stateful` catch exceptions internally today; they would be the
+  natural first callers rather than retrofits.
+- It keeps the *cheap* path cheap. `run` never needs to build a map or
+  compare origins, so nothing in the common case pays for a feature it
+  does not use.
+
+Open question in the sketch: whether `run_multi` shares the pass
+implementations with `run` (parameterising the passes over "is this
+still interesting?") or duplicates the loop. Sharing is obviously right
+but is exactly the refactor that gets dearer the longer it waits, since
+every pass currently closes over a single `best`.
+
 ## Cost, and why this is written down rather than done
 
 This is not a pass or a knob; it changes the engine's central loop from
