@@ -50,6 +50,13 @@ jobs:
       # determinism checks.
       - run: opam exec -- dune test
 
+      # Catches a public function being DROPPED. Added after a merge
+      # resolver silently discarded resume_result/resume_run/
+      # resume_run_exn -- 73 lines of one side against 1 of the other,
+      # and the rule took the wrong side. A test happened to call one of
+      # them; nothing structural would have noticed.
+      - run: ./scripts/check_api_surface.sh
+
   # Shrink quality is deterministic given the seeds, so a drift in the
   # numbers is a real signal rather than flakiness. Run the guard on its
   # own so its output is easy to find in the log when it fails.
