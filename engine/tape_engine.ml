@@ -1113,6 +1113,34 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
       }
   end
 
+(* Automatic failure replay. See tape_db.ml for why this exists and why
+   deleting stale entries matters as much as saving new ones. *)
+let run_with_db (type a) ~(db : Tape_db.t) ~(db_key : string)
+    ~(run_fresh : unit -> a result)
+    ~(resume_from : Tape.image -> a result)
+    ~(image_of : a result -> Tape.image option) : a result =
+  let stored = Tape_db.load db ~key:db_key in
+  let outcome =
+    match stored with
+    | None -> run_fresh ()
+    | Some img -> (
+      (* Replay the saved tape FIRST. This is the whole point: a bug that
+         is still present reproduces on call one instead of after a
+         search. *)
+      match resume_from img with
+      | Failed _ as f -> f
+      | Passed _ ->
+        (* It no longer fails, so the entry is stale. Delete it and do a
+           normal run. Without this the database only ever grows and
+           re-runs get SLOWER, which is the opposite of the point. *)
+        Tape_db.remove db ~key:db_key;
+        run_fresh ())
+  in
+  (match image_of outcome with
+   | Some img -> Tape_db.save db ~key:db_key img
+   | None -> ());
+  outcome
+
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     ?(max_seconds : float option = None) ?(max_shrinks = 500)
     ?(max_stall : int option = None)
