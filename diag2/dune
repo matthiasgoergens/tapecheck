@@ -1,5 +1,5 @@
 (executables
- (names probe_selflen probe_cutoff probe_drawcount)
+ (names probe_selflen probe_cutoff probe_drawcount probe_split)
  (libraries base stdio base_quickcheck splittable_random tape tape_engine)
  (preprocess
   (pps ppx_sexp_conv ppx_let)))

@@ -112,8 +112,8 @@ measurement, leaving two.
 - **Own the combinators.** A tapecheck-provided `list`, `filter` etc.
   that bracket their draws. Exact, but forfeits the drop-in property for
   anything that opts in — the same trade as `DISCARD-TRACKING.md`.
-- ~~**Infer spans from splittable_random topology.**~~ **TESTED AND
-  DEAD.** This was the attractive option, because it would get structure
+- **Infer spans from splittable_random topology — dead as things stand,
+  but only because of what the combinators currently do.** This was the attractive option, because it would get structure
   without any cooperation from generator authors. It does not work, and
   the reason is decisive rather than a matter of tuning:
   `Splittable_random.split` appears **exactly once in all of
@@ -126,6 +126,42 @@ measurement, leaving two.
   whatsoever about data structure. `diag2/probe_selflen.ml` shows this
   directly: a 2-element list puts all 21 choices in `main` with zero
   streams. There is nothing to infer from.
+
+  **But Matthias's follow-up is the right one: the combinators could be
+  changed to split.** Tested (`diag2/probe_split.ml`) with a hand-written
+  list generator that splits once per element:
+
+  | | elements | main | streams | self_len quality | calls |
+  |---|---|---|---|---|---|
+  | stock `G.list` | 6 | 21 choices | **0** | 47/100 | 170 |
+  | split list | 5 | 6 choices | **5**, 1 choice each | **17/100** | 53 |
+
+  Two things confirmed and one surprise.
+
+  Confirmed: the structure appears exactly as predicted — one stream per
+  element, keys being paths so nesting would compose — and the tape
+  roughly halves, which is the ~85%-bookkeeping finding arriving from
+  another direction.
+
+  Surprise: **shrink quality gets WORSE, 47/100 down to 17/100.** The
+  passes operate within a segment, so with the length choice in `main`
+  and the element values on separate streams, the "lower the length and
+  delete an element" move cannot be expressed at all. The structure is
+  present and the shrinker is not built to use it.
+
+  So this is not a free win, and it is a bigger change than it first
+  looks: it needs matching shrinker work, not just a generator change.
+  One encouraging detail — tapecheck already has a `delete_streams` pass
+  that measures **0 attempts on every property**, dormant only because
+  nothing ever splits. Under split generators it becomes the
+  element-deletion primitive, and `pass_to_descendant` becomes
+  promote-a-substream. The machinery is half-built for a world that does
+  not currently exist.
+
+  Whether the change is a good idea remains open. It is a breaking change
+  to generated values (versionable, per the discussion below), it costs
+  shrink quality until the passes are rewritten, and the benefit accrues
+  to replay-based tools rather than to ordinary base_quickcheck users.
 
 ### On changing base_quickcheck's list generator
 
