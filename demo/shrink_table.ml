@@ -146,6 +146,26 @@ let () =
     ~is_minimal:(fun v -> v = 100)
     ~sexp_of:[%sexp_of: int];
 
+  (* THE ZIG-ZAG TRAP, ported from Hypothesis's
+     tests/quality/test_zig_zagging.py::test_avoids_zig_zag_trap. Two
+     values must stay exactly 1 apart to keep failing, so lowering
+     either ALONE always succeeds by one step and never more: a naive
+     shrinker walks m and n down in lockstep, O(m) attempts instead of
+     O(log m). Hypothesis considers this important enough to assert a
+     quantitative bound on it,
+       budget = 2 * n_bits * ceil(log2 n_bits) + 2
+     which for 20-bit values is ~2*20*5 + 2 = 202. It is the only
+     shrink-COST test in their quality suite, and cost is precisely what
+     tapecheck's own suite was missing. *)
+  row ~name:"zig-zag: fails iff |m - n| = 1   [hypothesis asserts a cost bound]"
+    ~gen:
+      (G.both (G.int_uniform_inclusive 0 300)
+         (G.int_uniform_inclusive 0 300))
+    ~shrinker:(Some [%quickcheck.shrinker: int * int])
+    ~test:(fun (m, n) -> abs (m - n) <> 1)
+    ~is_minimal:(fun (m, n) -> (m = 0 && n = 1) || (m = 1 && n = 0))
+    ~sexp_of:[%sexp_of: int * int];
+
   (* Long-range dependency, from harder_benchmarks.py in
      ../tapecheck-hypothesis-baseline. Deleting an element breaks
      [hd l = length l], and lowering [hd l] breaks it too, so only a

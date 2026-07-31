@@ -210,6 +210,26 @@ let () =
        ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100)
        ~is_minimal:(fun l -> List.equal Int.equal l [ 100 ]));
 
+  (* Ported from Hypothesis tests/quality/test_zig_zagging.py. Two
+     values must stay exactly 1 apart, so lowering either alone works by
+     one step and never more. Without lower_together this cost 2929
+     calls and reached the true minimum only 51/100, because the
+     lockstep descent exhausted the budget; with it, 37 calls and every
+     found case minimal. Guards the zig-zag defence specifically. *)
+  check
+    { name = "zig-zag, fails iff |m - n| = 1"
+    ; min_found = 75
+    ; min_minimal = 75 (* measured 83 of 83 found *)
+    ; max_avg_calls = 60 (* measured 37; was 2929 without lower_together *)
+    ; catches =
+        "removing or breaking lower_together, the port of Hypothesis's          lower_blocks_together. Also catches reverting find_integer to a          halve-from-the-top gallop: the linear scan over 1..4 first is          what stops small steps costing log(range) failures each."
+    }
+    (measure
+       ~gen:(G.both (G.int_uniform_inclusive 0 300)
+               (G.int_uniform_inclusive 0 300))
+       ~test:(fun (m, n) -> abs (m - n) <> 1)
+       ~is_minimal:(fun (m, n) -> (m = 0 && n = 1) || (m = 1 && n = 0)));
+
   (* Deliberately NOT at 100/100: this is the open frontier case, where
      both engines are far from optimal (tape 47, Hypothesis 53). The
      floor is set just under the current value so a genuine improvement

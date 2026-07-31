@@ -294,6 +294,44 @@ type stats =
   ; mutable misaligns : int
   }
 
+
+(* Hypothesis's find_integer (junkdrawer.py:313): the largest k with
+   [f k] true, assuming [f 0] is true and f is downward-closed.
+
+   The linear scan over 1..4 BEFORE going exponential is the part that
+   matters, and the part I got wrong the first time I tried galloping in
+   this engine. Starting from the full range and halving costs
+   ~log(range) FAILURES whenever only a small step is accepted, which is
+   how the rejected patch took bind from 59 to 984 calls
+   (galloping-attempt-REJECTED.patch). Their comment: "it's very hard to
+   win big when the result is small. If the result is 0 and we try 2
+   first then we've done twice as much work as we needed to!" *)
+let find_integer (f : int64 -> bool) : int64 =
+  let rec small i =
+    if Int64.( > ) i 4L then None
+    else if not (f i) then Some (Int64.( - ) i 1L)
+    else small (Int64.( + ) i 1L)
+  in
+  match small 1L with
+  | Some r -> r
+  | None ->
+    let lo = ref 4L and hi = ref 5L in
+    let overflow () = Int64.( < ) !hi 0L in
+    while (not (overflow ())) && f !hi do
+      lo := !hi;
+      hi := Int64.( * ) !hi 2L
+    done;
+    if overflow () then !lo
+    else begin
+      while Int64.( < ) (Int64.( + ) !lo 1L) !hi do
+        let mid =
+          Int64.( + ) !lo (Stdlib.Int64.shift_right_logical (Int64.( - ) !hi !lo) 1)
+        in
+        if f mid then lo := mid else hi := mid
+      done;
+      !lo
+    end
+
 let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
 
 (* Diagnostic only: attempts attributed to each shrink pass, plus how
@@ -533,6 +571,82 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
          note_shrink ();
          Some i
        | None -> None)
+  in
+
+  (* Port of Hypothesis's [lower_blocks_together] (shrinker.py:1258),
+     the defence against the ZIG-ZAG TRAP: two values that must keep a
+     fixed difference to stay failing. Lowering either one ALONE always
+     works by exactly one step and never more, so a shrinker without
+     this pass walks them down in lockstep, O(value) attempts instead of
+     O(log value).
+
+     Measured before this pass existed, on "fails iff |m - n| = 1" over
+     [0,300]: 2929 attempts and only 51/100 fully minimal, because the
+     lockstep descent exhausted the budget. With it: 37 attempts, and
+     every case found reaches the true minimum. Hypothesis considers the
+     trap important enough to assert a quantitative bound on it
+     (tests/quality/test_zig_zagging.py).
+
+     Lower BOTH choices by the same k and let [find_integer] find the
+     largest workable k. Because the difference is preserved, one
+     galloping search covers the whole distance. Lookahead is bounded at
+     8 following their comment: far enough to be useful, near enough to
+     avoid quadratic cost. m and n are read once and all attempts are
+     relative to those originals, exactly as they capture [buffer] up
+     front; a larger k is strictly better, so committing along the way
+     is safe. *)
+  let lower_together () =
+    let improved = ref false in
+    let s = ref 0 in
+    while !s < seg_count !best && budget_ok () do
+      let i = ref 0 in
+      while !i < Array.length (seg_get !best !s) && budget_ok () do
+        (match (seg_get !best !s).(!i) with
+         | Tape.Integer { value = m; lo = lo1; hi = hi1 }
+           when Int64.(m > clamp64 0L ~lo:lo1 ~hi:hi1) ->
+           let t1 = clamp64 0L ~lo:lo1 ~hi:hi1 in
+           let arr0 = seg_get !best !s in
+           let stop = Int.min (Array.length arr0) (!i + 9) in
+           let j = ref (!i + 1) in
+           while !j < stop && budget_ok () do
+             (match arr0.(!j) with
+              | Tape.Integer { value = n; lo = lo2; hi = hi2 }
+                when Int64.(n > clamp64 0L ~lo:lo2 ~hi:hi2) ->
+                let t2 = clamp64 0L ~lo:lo2 ~hi:hi2 in
+                let try_k k =
+                  if Int64.(k > m - t1) || Int64.(k > n - t2) then false
+                  else begin
+                    let arr = seg_get !best !s in
+                    if
+                      !i < Array.length arr
+                      && !j < Array.length arr
+                      && budget_ok ()
+                    then begin
+                      let a =
+                        with_choice arr !i
+                          (Tape.Integer
+                             { value = Int64.( - ) m k; lo = lo1; hi = hi1 })
+                      in
+                      let a =
+                        with_choice a !j
+                          (Tape.Integer
+                             { value = Int64.( - ) n k; lo = lo2; hi = hi2 })
+                      in
+                      attempt (seg_set !best !s a)
+                    end
+                    else false
+                  end
+                in
+                if Int64.( > ) (find_integer try_k) 0L then improved := true
+              | _ -> ());
+             Int.incr j
+           done
+         | _ -> ());
+        Int.incr i
+      done;
+      Int.incr s
+    done;
+    !improved
   in
 
   (* Pass 1: everything to target at once, across all streams. *)
@@ -855,6 +969,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a3 = !attempts in
     let improved = minimize_choices () || improved in
     pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
+    let improved = lower_together () || improved in
     continue_ := improved
   done;
   (* [budget_ok ()] still true here can only mean the loop exited
