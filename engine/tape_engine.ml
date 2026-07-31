@@ -296,6 +296,18 @@ type stats =
 
 let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
 
+(* Diagnostic only: attempts attributed to each shrink pass, plus how
+   many proposals were exact repeats of one already tried. Reset at the
+   start of every shrink. Used to find where tapecheck spends 641 calls
+   on a property Hypothesis finishes in 27 (see
+   ../tapecheck-hypothesis-baseline/README.md). *)
+let pass_names = [| "lower_and_delete"; "delete_streams"; "redistribute_pairs"; "minimize_choices"; "pre-loop" |]
+let pass_costs = Array.create ~len:5 0
+let duplicate_proposals = ref 0
+let distinct_proposals = ref 0
+let last_pass_costs () = Array.to_list (Array.mapi pass_costs ~f:(fun i c -> (pass_names.(i), c)))
+let last_duplicate_stats () = (!duplicate_proposals, !distinct_proposals)
+
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~budget ~(max_seconds : float option)
     ~(max_shrinks : int) ~(max_stall : int option) ~domains ~pool
@@ -369,6 +381,10 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let deadline =
     Option.map max_seconds ~f:(fun s -> Unix.gettimeofday () +. s)
   in
+  Array.fill pass_costs ~pos:0 ~len:(Array.length pass_costs) 0;
+  duplicate_proposals := 0;
+  distinct_proposals := 0;
+  let seen_proposals = Hashtbl.Poly.create () in
   let shrinks = ref 0 in
   let attempts_at_last_shrink = ref 0 in
   let max_stall = ref (Option.value max_stall ~default:Int.max_value) in
@@ -415,6 +431,11 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     if not (budget_ok ()) then false
     else begin
       Int.incr attempts;
+      (match Hashtbl.find seen_proposals proposal with
+       | Some () -> Int.incr duplicate_proposals
+       | None ->
+         Hashtbl.set seen_proposals ~key:proposal ~data:();
+         Int.incr distinct_proposals);
       let primary, secondary =
         match realign with
         | `Freeze -> (Tape.Freeze, Tape.Consume)
@@ -761,11 +782,20 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   in
 
   let continue_ = ref true in
+  pass_costs.(4) <- !attempts;
   while !continue_ && budget_ok () do
+    let a0 = !attempts in
     let improved = lower_and_delete () in
+    pass_costs.(0) <- pass_costs.(0) + (!attempts - a0);
+    let a1 = !attempts in
     let improved = delete_streams () || improved in
+    pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
+    let a2 = !attempts in
     let improved = redistribute_pairs () || improved in
+    pass_costs.(2) <- pass_costs.(2) + (!attempts - a2);
+    let a3 = !attempts in
     let improved = minimize_choices () || improved in
+    pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
     continue_ := improved
   done;
   (* [budget_ok ()] still true here can only mean the loop exited
