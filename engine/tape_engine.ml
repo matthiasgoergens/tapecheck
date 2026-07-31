@@ -463,6 +463,31 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   (* Called on every accepted improvement: bank the success, refund the
      stall allowance, and widen it to twice what this shrink cost to
      find. *)
+  (* The per-pass failure budget is a FIXED 20, matching Hypothesis's
+     max_failures (shrinker.py, the [while failures < max_failures] loop).
+     It is deliberately not adaptive, and that was measured rather than
+     assumed.
+
+     I first grafted Hypothesis's max_stall growth rule
+     (shrinker.py:969-971, "twice what the last successful shrink cost")
+     onto this cutoff, reasoning that a fixed 20 would silently lose
+     quality on a property needing a longer dry spell. Measured on a
+     purpose-built case (diag2/probe_cutoff.ml, "deep bind" with
+     len in [1,200]): with the cutoff at 3 the property drops to 47/100
+     fully minimal, so the concern is real -- but adaptation on or off
+     gives the SAME 47/100. It cannot help, because the growth only fires
+     after a success and a too-small budget never gets a first success.
+     A bootstrap problem, not a tuning one.
+
+     The premise was also wrong. max_failures and max_stall are two
+     different mechanisms in Hypothesis: the per-pass early exit is a
+     fixed constant, and the adaptive rule belongs to the global
+     dry-spell counter (which measured inert here -- see the max_stall
+     comment above). Grafting one onto the other was my invention.
+
+     What the experiment did establish: 20 is safe on everything measured
+     (deep bind at 20 matches no-cutoff exactly, 100/100), and 3 is not.
+     Do not lower it; test_regression guards the deep-bind case. *)
   let note_shrink () =
     Int.incr shrinks;
     Int.incr accepted_shrinks;

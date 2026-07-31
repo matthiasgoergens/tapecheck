@@ -230,6 +230,30 @@ let () =
        ~test:(fun (m, n) -> abs (m - n) <> 1)
        ~is_minimal:(fun (m, n) -> (m = 0 && n = 1) || (m = 1 && n = 0)));
 
+  (* Guards the per-pass cutoff CONSTANT, not just its presence. With
+     max_pass_failures at 20 this matches no-cutoff exactly (100/100);
+     at 3 it collapses to 47/100 (diag2/probe_cutoff.ml). Adaptation
+     cannot rescue a too-small value -- growth only fires after a
+     success, and a too-small budget never gets one -- so the constant
+     itself has to be defended. Do not lower 20. *)
+  check
+    { name = "deep bind, len in [1,200], sum >= 500"
+    ; min_found = 95
+    ; min_minimal = 95 (* measured 100; 47 with the cutoff at 3 *)
+    ; max_avg_calls = 240 (* measured 158; 250 with no cutoff at all *)
+    ; catches =
+        "lowering max_pass_failures below 20. Measured: 20 matches \
+         no-cutoff exactly, 3 gives 47/100 fully minimal. The seven other \
+         properties all succeed well inside 20 and cannot detect this."
+    }
+    (measure
+       ~gen:
+         (let open G.Let_syntax in
+          let%bind len = G.int_uniform_inclusive 1 200 in
+          G.list_with_length (G.int_uniform_inclusive 0 1000) ~length:len)
+       ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 500)
+       ~is_minimal:(fun l -> List.equal Int.equal l [ 500 ]));
+
   (* Deliberately NOT at 100/100: this is the open frontier case, where
      both engines are far from optimal (tape 47, Hypothesis 53). The
      floor is set just under the current value so a genuine improvement
