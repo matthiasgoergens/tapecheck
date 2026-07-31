@@ -39,6 +39,7 @@ depends: [
   "ppx_let"
   "ppx_sexp_conv"
   "ppx_sexp_message"
+  "ppx_sexp_value"
 ]
 depopts: [
   "qcheck"
