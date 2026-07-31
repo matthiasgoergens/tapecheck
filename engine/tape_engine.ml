@@ -792,37 +792,51 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
         | Some _ -> acc
         | None -> if attempt p then Some i else None)
     | ps, Some pool ->
-      (* NOT deduplicated. The sequential path skips proposals it has
-         already tried; this one does not consult [seen_proposals] at
-         all, so a pooled run can still re-execute a repeat. Flagged in
-         review and left deliberately: the batch is dispatched before
-         any result comes back, so filtering would have to happen at
-         build time, and the shared task-result type is fixed for the
-         whole function. Pooled runs are the minority path (?domains
-         defaults to 1) and shrinking is off the CI happy path, so this
-         is a known gap rather than an oversight. *)
-      let results =
-        Pool.run_batch pool
-          (List.map ps ~f:(fun p () ->
-               eval_proposal ~gen ~size ~test ~realign p))
+      (* Deduplicated too, now. My earlier note here said filtering
+         "would have to happen at build time" and left it -- which was
+         true and not an obstacle: the proposals are all known before
+         dispatch. The only real constraint is that the caller uses the
+         returned position as an offset, so the mapping back to ORIGINAL
+         indices has to survive the filter. *)
+      let kept =
+        List.filter_mapi ps ~f:(fun i p ->
+          if Hashtbl.mem seen_proposals p then begin
+            Int.incr duplicate_proposals;
+            None
+          end
+          else begin
+            Hashtbl.set seen_proposals ~key:p ~data:();
+            Int.incr distinct_proposals;
+            Some (i, p)
+          end)
       in
-      attempts := !attempts + List.length ps;
-      let accepted =
-        List.foldi results ~init:None ~f:(fun i acc r ->
-          match (acc, r) with
-          | Some _, _ | _, None -> acc
-          | None, Some (image, value) ->
-            if Tape.compare_image image !best < 0 then Some (i, image, value)
-            else None)
-      in
-      (match accepted with
-       | Some (i, image, value) ->
-         best := image;
-         best_value := value;
-         trail := image :: !trail;
-         note_shrink ();
-         Some i
-       | None -> None)
+      if List.is_empty kept then None
+      else begin
+        let results =
+          Pool.run_batch pool
+            (List.map kept ~f:(fun (_, p) () ->
+                 eval_proposal ~gen ~size ~test ~realign p))
+        in
+        attempts := !attempts + List.length kept;
+        let accepted =
+          List.foldi results ~init:None ~f:(fun i acc r ->
+            match (acc, r) with
+            | Some _, _ | _, None -> acc
+            | None, Some (image, value) ->
+              if Tape.compare_image image !best < 0 then
+                (* Map back to the position in the ORIGINAL batch. *)
+                Some (fst (List.nth_exn kept i), image, value)
+              else None)
+        in
+        match accepted with
+        | Some (i, image, value) ->
+          best := image;
+          best_value := value;
+          trail := image :: !trail;
+          note_shrink ();
+          Some i
+        | None -> None
+      end
   in
 
   (* Port of Hypothesis's [lower_blocks_together] (shrinker.py:1258),
