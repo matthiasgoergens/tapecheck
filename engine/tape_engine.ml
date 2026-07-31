@@ -673,13 +673,28 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      spend to hand a human a smaller example). *)
   let attempt proposal =
     if not (budget_ok ()) then false
+    else if Option.is_some (Hashtbl.find seen_proposals proposal) then begin
+      (* Already tried this exact image: SKIP it rather than re-running
+         the generator and the test.
+
+         Sound, and only recently so. A repeat was either accepted --
+         in which case [best] has moved and this proposal cannot be
+         shortlex-smaller than it a second time -- or rejected, and a
+         deterministic generator rejects it again. The parity review
+         made that conditional explicit: caching is safe "assuming
+         flakiness is made loud first so caching cannot hide it".
+         Flakiness IS now loud (Flaky_test raises, and the determinism
+         check runs on every failure path), so the precondition holds.
+
+         Costs no [attempts]: nothing was executed. Measured duplicate
+         rates were 10-20% of proposals on list properties. *)
+      Int.incr duplicate_proposals;
+      false
+    end
     else begin
       Int.incr attempts;
-      (match Hashtbl.find seen_proposals proposal with
-       | Some () -> Int.incr duplicate_proposals
-       | None ->
-         Hashtbl.set seen_proposals ~key:proposal ~data:();
-         Int.incr distinct_proposals);
+      Hashtbl.set seen_proposals ~key:proposal ~data:();
+      Int.incr distinct_proposals;
       let primary, secondary =
         match realign with
         | `Freeze -> (Tape.Freeze, Tape.Consume)
@@ -728,6 +743,15 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
         | Some _ -> acc
         | None -> if attempt p then Some i else None)
     | ps, Some pool ->
+      (* NOT deduplicated. The sequential path skips proposals it has
+         already tried; this one does not consult [seen_proposals] at
+         all, so a pooled run can still re-execute a repeat. Flagged in
+         review and left deliberately: the batch is dispatched before
+         any result comes back, so filtering would have to happen at
+         build time, and the shared task-result type is fixed for the
+         whole function. Pooled runs are the minority path (?domains
+         defaults to 1) and shrinking is off the CI happy path, so this
+         is a known gap rather than an oversight. *)
       let results =
         Pool.run_batch pool
           (List.map ps ~f:(fun p () ->

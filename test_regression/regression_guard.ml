@@ -120,7 +120,7 @@ let () =
     { name = "int uniform, fail iff v >= 123_457"
     ; min_found = 100
     ; min_minimal = 100
-    ; max_avg_calls = 55 (* measured 38 *)
+    ; max_avg_calls = 50 (* measured 34 after duplicate-skipping *)
     ; catches =
         "scalar shrinking via minimize_choices' binary search; if this \
          regresses to linear descent the cost explodes"
@@ -134,7 +134,7 @@ let () =
     { name = "pair, fail iff a + b >= 100"
     ; min_found = 100
     ; min_minimal = 100
-    ; max_avg_calls = 32 (* measured 22 *)
+    ; max_avg_calls = 26 (* measured 18 after duplicate-skipping *)
     ; catches = "multi-choice coordination on the cheapest possible case"
     }
     (measure
@@ -147,7 +147,7 @@ let () =
     { name = "int list, fail iff length >= 3"
     ; min_found = 100
     ; min_minimal = 100
-    ; max_avg_calls = 250 (* measured 176, was 641 before the cutoff *)
+    ; max_avg_calls = 205 (* measured 147; 178 before duplicate-skipping, 641 before the cutoff *)
     ; catches =
         "REMOVING the per-pass failure cutoff (?max_pass_failures). \
          lower_and_delete scores ZERO successes here while spending 96% \
@@ -163,7 +163,7 @@ let () =
     { name = "int list, fail iff sum >= 100"
     ; min_found = 100
     ; min_minimal = 100
-    ; max_avg_calls = 245 (* measured 173, was 456 before the cutoff *)
+    ; max_avg_calls = 130 (* measured 90; 173 before duplicate-skipping, 456 before the cutoff *)
     ; catches =
         "as above; also the max_stall port, which took this property to \
          26/100 fully minimal by cutting passes off before they ran"
@@ -177,7 +177,7 @@ let () =
     { name = "filtered even ints, fail iff v >= 100"
     ; min_found = 100
     ; min_minimal = 100
-    ; max_avg_calls = 130 (* measured 90 *)
+    ; max_avg_calls = 112 (* measured 79 after duplicate-skipping *)
     ; catches =
         "filtered-generator overhead. Rejected draws stay on the tape and \
          get minimised: 90 here vs 37 for the same shape unfiltered. If \
@@ -193,7 +193,7 @@ let () =
     { name = "bind, fail iff sum >= 100 (no stock shrinker)"
     ; min_found = 100
     ; min_minimal = 100
-    ; max_avg_calls = 80 (* measured 56 *)
+    ; max_avg_calls = 74 (* measured 52 after duplicate-skipping *)
     ; catches =
         "THE GALLOPING DESCENT REGRESSION. bind is the only \
          greedy-dominated property (30 of 40 attempts). Replacing \
@@ -220,7 +220,7 @@ let () =
     { name = "zig-zag, fails iff |m - n| = 1"
     ; min_found = 75
     ; min_minimal = 75 (* measured 83 of 83 found *)
-    ; max_avg_calls = 60 (* measured 37; was 2929 without lower_together *)
+    ; max_avg_calls = 44 (* measured 28; 2929 without lower_together *)
     ; catches =
         "removing or breaking lower_together, the port of Hypothesis's          lower_blocks_together. Also catches reverting find_integer to a          halve-from-the-top gallop: the linear scan over 1..4 first is          what stops small steps costing log(range) failures each."
     }
@@ -240,7 +240,7 @@ let () =
     { name = "deep bind, len in [1,200], sum >= 500"
     ; min_found = 95
     ; min_minimal = 95 (* measured 100; 47 with the cutoff at 3 *)
-    ; max_avg_calls = 240 (* measured 158; 250 with no cutoff at all *)
+    ; max_avg_calls = 210 (* measured 149; 250 with no cutoff at all *)
     ; catches =
         "lowering max_pass_failures below 20. Measured: 20 matches \
          no-cutoff exactly, 3 gives 47/100 fully minimal. The seven other \
@@ -263,7 +263,7 @@ let () =
     { name = "self_len, fails iff hd l = length l  [frontier: not 100/100]"
     ; min_found = 90
     ; min_minimal = 40 (* measured 47; Hypothesis gets 53 *)
-    ; max_avg_calls = 245 (* measured 175 *)
+    ; max_avg_calls = 180 (* measured 127 after duplicate-skipping *)
     ; catches =
         "the long-range-dependency frontier. Both engines get trapped on \
          a list of n zeros headed by n. If min_minimal ever exceeds 53 \
