@@ -1441,6 +1441,129 @@ let nondeterminism_warning =
   \  Consequences: saved failures will not reproduce, shrinking chases a\n\
   \  moving target, and the minimal example reported may not fail at all."
 
+(* Multiple distinct failures in ONE run, each minimised separately.
+
+   Ported from Hypothesis, which keys failures by [interesting_origin]
+   (data.py) -- exception type plus location, including __cause__ and
+   __context__ chains -- and shrinks each origin under a predicate that
+   preserves it (engine.py, shrink_interesting_examples).
+
+   THE DETAIL THAT MAKES IT WORK, and which is easy to omit: shrinking
+   bug A must only accept candidates that still fail AS BUG A. Without
+   that constraint, shrinking one failure "slips" into a different,
+   smaller one and the first is lost. That is exactly what [s_accept]
+   is for, so this needed no new machinery -- only a different
+   acceptance rule.
+
+   [test] here RAISES to fail, unlike [run]'s bool. That is deliberate
+   (Matthias's suggestion): a bool has no identity, so two different
+   bugs are indistinguishable from one bug found twice. Keeping [run]
+   untouched means nothing existing pays for a feature it does not use,
+   and the cheap path stays cheap. *)
+type origin =
+  { exn_name : string
+  ; loc : string
+  }
+
+let compare_origin a b =
+  match String.compare a.exn_name b.exn_name with
+  | 0 -> String.compare a.loc b.loc
+  | c -> c
+
+let sexp_of_origin o =
+  Sexp.List [ Sexp.Atom o.exn_name; Sexp.Atom o.loc ]
+
+(* Exception identity plus the first source location in its backtrace.
+   The OCaml analogue of their (type, file, line) tuple. A raise with no
+   recorded backtrace still gets a stable origin from its exception
+   name alone, which is weaker but never wrong. *)
+let origin_of_exn exn bt =
+  let exn_name =
+    let s = Stdlib.Printexc.to_string exn in
+    match String.lsplit2 s ~on:'(' with Some (n, _) -> n | None -> s
+  in
+  let loc =
+    match Stdlib.Printexc.backtrace_slots bt with
+    | None -> "<no backtrace>"
+    | Some slots ->
+      let rec first = function
+        | [] -> "<no location>"
+        | slot :: rest -> (
+          match Stdlib.Printexc.Slot.location slot with
+          | Some l ->
+            Printf.sprintf "%s:%d" l.Stdlib.Printexc.filename
+              l.Stdlib.Printexc.line_number
+          | None -> first rest)
+      in
+      first (Array.to_list slots)
+  in
+  { exn_name; loc }
+
+type 'a failure_report =
+  { fr_origin : origin
+  ; fr_minimal : 'a
+  ; fr_image : Tape.image
+  ; fr_attempts : int
+  }
+
+let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
+    ?(budget = 2000) ?(realign : realign = `Consume) ?stats
+    (gen : a Base_quickcheck.Generator.t) ~(test : a -> unit) :
+    a failure_report list =
+  let stats = match stats with Some s -> s | None -> no_stats () in
+  Stdlib.Printexc.record_backtrace true;
+  let found : (origin, Tape.image * a) Hashtbl.t = Hashtbl.Poly.create () in
+  let tape = Tape.create () in
+  let last_origin = ref None in
+  (* A wrapper that reports failure as [false] and records WHICH failure
+     it was. The origin has to be captured here, inside the callback,
+     because the exception does not survive; the image has to be taken
+     after, from the finished tape. *)
+  let probing v =
+    last_origin := None;
+    match test v with
+    | () -> true
+    | exception e ->
+      last_origin := Some (origin_of_exn e (Stdlib.Printexc.get_raw_backtrace ()));
+      false
+  in
+  for case = 0 to count - 1 do
+    Tape.start_recording tape;
+    let value, _tested, out =
+      run_and_test ~tape ~gen ~size ~seed:(seed + case) ~test:probing
+    in
+    match !last_origin with
+    | Some o when not (Hashtbl.mem found o) ->
+      Hashtbl.set found ~key:o ~data:(out.Tape.image, value)
+    | _ -> ()
+  done;
+  (* Shrink each origin separately. The whole point is the predicate:
+     a candidate counts as failing ONLY if it fails with the SAME
+     origin, so shrinking bug A cannot slip into a smaller bug B and
+     lose A. Everything else is the ordinary shrink pass suite, reused
+     unchanged by handing it a different [~test]. *)
+  Hashtbl.fold found ~init:[] ~f:(fun ~key:o ~data:(img, v) acc ->
+    let same_origin_only value =
+      match test value with
+      | () -> true
+      | exception e ->
+        let o' = origin_of_exn e (Stdlib.Printexc.get_raw_backtrace ()) in
+        (* "true" means passing, i.e. not a candidate. A DIFFERENT bug
+           is treated as a pass here on purpose. *)
+        compare_origin o o' <> 0
+    in
+    let shrink_tape = Tape.create () in
+    let minimal, attempts, image, _trail, _converged =
+      shrink ~tape:shrink_tape ~gen ~size ~test:same_origin_only ~budget
+        ~max_seconds:None ~max_shrinks:500 ~max_stall:None
+        ~max_pass_failures:(Some 20) ~domains:1 ~pool:None ~realign ~stats
+        ~initial_tape:img ~initial_value:v
+    in
+    { fr_origin = o; fr_minimal = minimal; fr_image = image;
+      fr_attempts = attempts }
+    :: acc)
+  |> List.sort ~compare:(fun a b -> compare_origin a.fr_origin b.fr_origin)
+
 (* Targeted property-based testing: hill-climb to MAXIMISE a score,
    rather than shrinking to minimise a tape.
 
