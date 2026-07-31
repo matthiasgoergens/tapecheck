@@ -19,7 +19,7 @@ let seed_offset =
 
 let row ~name ~gen ~test =
   let totals = Hashtbl.Poly.create () in
-  let dups = ref 0 and distinct = ref 0 and runs = ref 0 in
+  let dups = ref 0 and distinct = ref 0 and runs = ref 0 and greedy = ref 0 in
   for t = 0 to trials - 1 do
     match Tape_engine.run gen ~test ~seed:((t + seed_offset) * 1_000_003) ~count:200 ~size:10 with
     | Tape_engine.Passed _ -> ()
@@ -29,7 +29,8 @@ let row ~name ~gen ~test =
         Hashtbl.update totals p ~f:(function None -> c | Some x -> x + c));
       let d, dd = Tape_engine.last_duplicate_stats () in
       dups := !dups + d;
-      distinct := !distinct + dd
+      distinct := !distinct + dd;
+      greedy := !greedy + Tape_engine.last_greedy_cost ()
   done;
   Stdio.printf "%s (%d failing runs)\n" name !runs;
   let n = Int.max 1 !runs in
@@ -37,6 +38,8 @@ let row ~name ~gen ~test =
   |> List.sort ~compare:(fun (_, a) (_, b) -> Int.compare b a)
   |> List.iter ~f:(fun (p, c) ->
     Stdio.printf "  %-20s %6d avg attempts\n" p (c / n));
+  Stdio.printf "  %-20s %6d avg (of which greedy-repeat loop; rest is the s/i/k/j scan)\n"
+    "  ^ lower_and_delete" (!greedy / n);
   Stdio.printf "  %-20s %6d avg (%.0f%% of proposals were exact repeats)\n"
     "duplicates" (!dups / n)
     (100. *. Float.of_int !dups /. Float.of_int (Int.max 1 (!dups + !distinct)));

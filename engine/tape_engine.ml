@@ -303,10 +303,12 @@ let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
    ../tapecheck-hypothesis-baseline/README.md). *)
 let pass_names = [| "lower_and_delete"; "delete_streams"; "redistribute_pairs"; "minimize_choices"; "pre-loop" |]
 let pass_costs = Array.create ~len:5 0
+let greedy_cost = ref 0
 let duplicate_proposals = ref 0
 let distinct_proposals = ref 0
 let last_pass_costs () = Array.to_list (Array.mapi pass_costs ~f:(fun i c -> (pass_names.(i), c)))
 let last_duplicate_stats () = (!duplicate_proposals, !distinct_proposals)
+let last_greedy_cost () = !greedy_cost
 
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~budget ~(max_seconds : float option)
@@ -384,6 +386,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   Array.fill pass_costs ~pos:0 ~len:(Array.length pass_costs) 0;
   duplicate_proposals := 0;
   distinct_proposals := 0;
+  greedy_cost := 0;
   let seen_proposals = Hashtbl.Poly.create () in
   let shrinks = ref 0 in
   let attempts_at_last_shrink = ref 0 in
@@ -571,6 +574,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                    that actually succeeded (the batch may have accepted
                    a later candidate than !j). *)
                 let jj = !j + offset in
+                let greedy_start = !attempts in
                 let again = ref true in
                 while !again && budget_ok () do
                   let arr = seg_get !best !s in
@@ -593,7 +597,8 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                               (with_choice arr !i lowered)
                               ~pos:jj ~len:!k))
                   | _ -> again := false
-                done
+                done;
+                greedy_cost := !greedy_cost + (!attempts - greedy_start)
               | None -> j := !j + max 1 (domains * 4))
             done;
             Int.incr k

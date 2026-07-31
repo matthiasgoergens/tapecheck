@@ -1,0 +1,77 @@
+diff --git a/engine/tape_engine.ml b/engine/tape_engine.ml
+index 634e5a4..63ae173 100644
+--- a/engine/tape_engine.ml
++++ b/engine/tape_engine.ml
+@@ -571,6 +571,28 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
+                    that actually succeeded (the batch may have accepted
+                    a later candidate than !j). *)
+                 let jj = !j + offset in
++                (* Galloping descent. This used to step the value by ONE
++                   per attempt, which costs O(value) attempts to drive an
++                   element to its target -- 100 attempts for a value of
++                   100, per element. Measured, that made this the single
++                   dominant cost in the engine: 612 of 641 attempts on
++                   "int list, fail iff length >= 3", where Hypothesis
++                   completes the whole property in 27 calls, and 0
++                   attempts on scalar properties where the pass never
++                   fires. See ../tapecheck-hypothesis-baseline/README.md.
++
++                   Now: try the entire remaining distance first, and halve
++                   the jump on failure. One attempt when the full jump
++                   lands, O(log range) when it does not. This is the same
++                   shape as [minimize_choices]'s existing binary search
++                   below, and the same idea as Hypothesis's find_integer.
++
++                   Distances are held as UNSIGNED int64, mirroring the
++                   existing binary search's use of [unsigned_compare] and
++                   [shift_right_logical]: for a full-range span the signed
++                   difference overflows, but its bit pattern is the
++                   correct magnitude, so unsigned ops give the right
++                   answer where signed ones would silently stall. *)
+                 let again = ref true in
+                 while !again && budget_ok () do
+                   let arr = seg_get !best !s in
+@@ -580,18 +602,35 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
+                   | Some (Tape.Integer { value; lo; hi })
+                     when Int64.(value <> clamp64 0L ~lo ~hi)
+                          && jj <= Array.length arr - !k ->
+-                    let step =
+-                      if Int64.(value > clamp64 0L ~lo ~hi) then
+-                        Int64.( - ) value 1L
+-                      else Int64.( + ) value 1L
+-                    in
+-                    let lowered = Tape.Integer { value = step; lo; hi } in
+-                    again :=
++                    let target = clamp64 0L ~lo ~hi in
++                    let above = Int64.(value > target) in
++                    let try_value v =
+                       attempt
+                         (seg_set !best !s
+                            (with_deleted_block
+-                              (with_choice arr !i lowered)
++                              (with_choice arr !i
++                                 (Tape.Integer { value = v; lo; hi }))
+                               ~pos:jj ~len:!k))
++                    in
++                    let gap =
++                      ref
++                        (if above then Int64.( - ) value target
++                         else Int64.( - ) target value)
++                    in
++                    let moved = ref false in
++                    while
++                      (not !moved)
++                      && Stdlib.Int64.unsigned_compare !gap 0L > 0
++                      && budget_ok ()
++                    do
++                      let v =
++                        if above then Int64.( - ) value !gap
++                        else Int64.( + ) value !gap
++                      in
++                      if try_value v then moved := true
++                      else gap := Stdlib.Int64.shift_right_logical !gap 1
++                    done;
++                    again := !moved
+                   | _ -> again := false
+                 done
+               | None -> j := !j + max 1 (domains * 4))
