@@ -191,6 +191,35 @@ the element values account for 19 of them. Roughly 85% of the tape is
 size-budget bookkeeping: the `for _ = 1 to remaining` loop draws once per
 unit of budget, then a permutation pass draws again per element.
 
+**CORRECTED by profiling realistic shapes** (`diag2/probe_realshapes.ml`).
+"~85% bookkeeping" was measured on `G.list` alone and generalised too
+far. Per unit of actual data, at `~size = 10`:
+
+| shape | choices/unit |
+|---|---|
+| record, 4 scalar fields | **1.00** |
+| Blang-like recursive tree (hand-written bind) | **1.20** |
+| int list | 4.72 |
+| string | 5.00 |
+| assoc map (int -> int) | 5.72 |
+| option list | 5.22 |
+| **list of lists** | **15.46** |
+
+The overhead is not a property of the tape or of base_quickcheck
+generally. It is **specifically `G.list`'s `sizes` machinery, and it
+COMPOUNDS with nesting** — a list of lists pays it at both levels.
+Hand-written recursive generators and plain records are essentially
+optimal at 1.0-1.2.
+
+(Shapes are reconstructions of types carrying `[@@deriving quickcheck]`
+in `janestreet/core`, notably `Blang.t`. core's own generators are not
+reachable because `core/test` does not build outside Jane Street.)
+
+That makes the upstream case *better*, not worse: the cost is localised
+to one combinator, so changing `list` — or adding a shrink-friendly
+alternative beside it — captures nearly all of the benefit without
+touching the rest of the library.
+
 Two consequences, one general and one ours:
 
 - **General**: generation spends O(size) PRNG draws to decide how to
