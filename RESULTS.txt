@@ -1,0 +1,12 @@
+int uniform in [0, 1_000_000], fail iff v >= 123_457 -- 100 seeds
+  hypothesis found 100/100, fully minimal 100/100, avg    55 calls (gen+shrink), worst: -
+pair in [0,1000]^2, fail iff a + b >= 100 -- 100 seeds
+  hypothesis found 100/100, fully minimal 100/100, avg    35 calls (gen+shrink), worst: -
+int list, fail iff length >= 3 -- 100 seeds
+  hypothesis found 100/100, fully minimal 100/100, avg    27 calls (gen+shrink), worst: -
+int list, fail iff sum >= 100 -- 100 seeds
+  hypothesis found 100/100, fully minimal 100/100, avg    28 calls (gen+shrink), worst: -
+filtered even ints, fail iff v >= 100 -- 100 seeds
+  hypothesis found 100/100, fully minimal 100/100, avg    27 calls (gen+shrink), worst: -
+bind: len in [1,64], list_with_length, fail iff sum >= 100 -- 100 seeds
+  hypothesis found 100/100, fully minimal 100/100, avg    47 calls (gen+shrink), worst: -
