@@ -7,6 +7,12 @@
 open! Base
 module Config = Base_quickcheck.Test.Config
 
+(* Raised when a failure was observed but its minimal example no longer
+   reproduces. Distinct from an ordinary test failure: the run is
+   neither a pass nor a clean failure, and silently choosing either
+   would be wrong. See [report_failure]. *)
+exception Flaky_test of string
+
 let default_config = Base_quickcheck.Test.default_config
 
 let seed_int (seed : Config.Seed.t) =
@@ -206,11 +212,27 @@ let report_failure (type a e) ~(f : a -> (unit, e) Result.t)
   in
   match f minimal with
   | Ok () ->
-    (* The shrunken value no longer fails deterministically; report it
-       with no error payload path available, so rerun is the caller's
-       problem. This mirrors flaky-test behavior in Base_quickcheck,
-       which would also report confusingly here. Treat as passed. *)
-    Ok ()
+    (* FLAKY. The engine observed a genuine failure, shrank it, and the
+       result no longer reproduces.
+
+       This used to return [Ok ()] -- "treat as passed" -- which is a
+       FALSE NEGATIVE and the most damaging kind of bug a testing
+       library can have: a real failure was seen and the run reported
+       success. Flagged in review, and rightly the highest priority
+       finding, because everything else in that review costs shrink
+       quality whereas this costs correctness.
+
+       Hypothesis raises rather than swallowing, and so do we now. The
+       tape is included because it is the whole point of the model: a
+       flaky failure is still exactly reproducible from its recording
+       even when the value is not. *)
+    let hex = Regressions.hex_of_string (Tape.serialize_image image) in
+    raise
+      (Flaky_test
+         (Printf.sprintf
+            "tapecheck: FLAKY TEST. A failure was found and shrunk, but the              minimal example no longer fails when re-run.\n            \  This run is NOT a pass: a real failure was observed.\n            \  Likely causes: the test depends on external state (a clock, a              global, an unsynchronised resource),\n            \  or the generator is non-deterministic (see              Tape_engine.check_generator_determinism).\n            \  Minimal value: %s\n            \  Tape (resume with Tape_test.resume_run_exn): %s"
+            (Sexp.to_string (sexp_of minimal))
+            hex))
   | Error e ->
     Option.iter regressions ~f:(fun path ->
       Regressions.append path ~image ~size ~comment:(Sexp.to_string (sexp_of minimal)));

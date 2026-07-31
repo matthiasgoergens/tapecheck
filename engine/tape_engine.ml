@@ -1251,65 +1251,70 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
   let stats = match stats with Some s -> s | None -> no_stats () in
   let tape = Tape.create () in
   let pool = if domains > 1 then Some (Pool.create domains) else None in
-  (* Find the first failing case. With a pool, generate and test cases
-     in parallel batches; taking the lowest failing index in the batch
-     preserves the sequential engine's choice of failure exactly. *)
-  let first_failure =
-    match pool with
-    | None ->
-      let found = ref None in
-      let case = ref 0 in
-      while Option.is_none !found && !case < count do
-        Tape.start_recording tape;
-        let value, tested, out =
-          run_and_test ~tape ~gen ~size ~seed:(seed + !case) ~test
-        in
-        (match tested with
-         | Some false -> found := Some (out.Tape.image, value)
-         | _ -> ());
-        Int.incr case
-      done;
-      !found
-    | Some pool ->
-      let found = ref None in
-      let batch_start = ref 0 in
-      let width = domains * 2 in
-      while Option.is_none !found && !batch_start < count do
-        let n = min width (count - !batch_start) in
-        let results =
-          Pool.run_batch pool
-            (List.init n ~f:(fun d () ->
-               let tape = Tape.create () in
-               Tape.start_recording tape;
-               let value, tested, out =
-                 run_and_test ~tape ~gen ~size
-                   ~seed:(seed + !batch_start + d) ~test
-               in
-               match tested with
-               | Some false -> Some (out.Tape.image, value)
-               | _ -> None))
-        in
-        (* run_batch preserves task order, so the first Some is the
-           lowest failing case index. *)
-        found := List.find_map results ~f:Fn.id;
-        batch_start := !batch_start + n
-      done;
-      !found
-  in
-  (* The reported minimal is regenerated from the winning image on a
-     tape left in replay mode, so a counterexample containing functions
-     keeps its observed behaviour after the engine returns (a function
-     backed by a finished tape would silently fall back to fresh
-     randomness on the very calls the report is about). *)
-  (* Shut the pool down on EVERY exit, not just the normal one. A test
-     or generator that raises under [~domains > 1] previously left the
-     worker domains blocked forever, so a caller that catches the
-     exception and retries accumulates leaked domains until the process
-     dies. Found in review of 061923e. *)
+  (* Protection must start HERE, immediately after the pool exists, not
+     after the failure search. The search itself runs batches on the pool,
+     so a generator or test raising during GENERATION skipped the
+     finalizer entirely and leaked every worker. An earlier fix wrapped
+     only the shrink phase and missed exactly that. *)
   Exn.protect
     ~finally:(fun () -> Option.iter pool ~f:Pool.shutdown)
     ~f:(fun () ->
-      match first_failure with
+    (* Find the first failing case. With a pool, generate and test cases
+       in parallel batches; taking the lowest failing index in the batch
+       preserves the sequential engine's choice of failure exactly. *)
+    let first_failure =
+      match pool with
+      | None ->
+        let found = ref None in
+        let case = ref 0 in
+        while Option.is_none !found && !case < count do
+          Tape.start_recording tape;
+          let value, tested, out =
+            run_and_test ~tape ~gen ~size ~seed:(seed + !case) ~test
+          in
+          (match tested with
+           | Some false -> found := Some (out.Tape.image, value)
+           | _ -> ());
+          Int.incr case
+        done;
+        !found
+      | Some pool ->
+        let found = ref None in
+        let batch_start = ref 0 in
+        let width = domains * 2 in
+        while Option.is_none !found && !batch_start < count do
+          let n = min width (count - !batch_start) in
+          let results =
+            Pool.run_batch pool
+              (List.init n ~f:(fun d () ->
+                 let tape = Tape.create () in
+                 Tape.start_recording tape;
+                 let value, tested, out =
+                   run_and_test ~tape ~gen ~size
+                     ~seed:(seed + !batch_start + d) ~test
+                 in
+                 match tested with
+                 | Some false -> Some (out.Tape.image, value)
+                 | _ -> None))
+          in
+          (* run_batch preserves task order, so the first Some is the
+             lowest failing case index. *)
+          found := List.find_map results ~f:Fn.id;
+          batch_start := !batch_start + n
+        done;
+        !found
+    in
+    (* The reported minimal is regenerated from the winning image on a
+       tape left in replay mode, so a counterexample containing functions
+       keeps its observed behaviour after the engine returns (a function
+       backed by a finished tape would silently fall back to fresh
+       randomness on the very calls the report is about). *)
+    (* Shut the pool down on EVERY exit, not just the normal one. A test
+       or generator that raises under [~domains > 1] previously left the
+       worker domains blocked forever, so a caller that catches the
+       exception and retries accumulates leaked domains until the process
+       dies. Found in review of 061923e. *)
+    match first_failure with
       | None -> Passed { cases = count }
       | Some (image0, value) ->
         finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
@@ -1339,15 +1344,17 @@ let resume (type a) ?(size = 10) ?(budget = 2000)
   let stats = match stats with Some s -> s | None -> no_stats () in
   let tape = Tape.create () in
   let pool = if domains > 1 then Some (Pool.create domains) else None in
-  let value, tested, out =
-    let replay_tape = Tape.create () in
-    Tape.start_replay_image replay_tape image;
-    run_and_test ~tape:replay_tape ~gen ~size ~seed:replay_fresh_seed ~test
-  in
-  (* Same leak, same fix, on the resume path. *)
+  (* Same correction as in [run]: the confirmation replay below can
+     raise, and it ran OUTSIDE the protection before, leaking the idle
+     workers. Everything after pool creation belongs inside. *)
   Exn.protect
     ~finally:(fun () -> Option.iter pool ~f:Pool.shutdown)
     ~f:(fun () ->
+      let value, tested, out =
+        let replay_tape = Tape.create () in
+        Tape.start_replay_image replay_tape image;
+        run_and_test ~tape:replay_tape ~gen ~size ~seed:replay_fresh_seed ~test
+      in
       match tested with
       | Some false when not out.Tape.overrun ->
         finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds

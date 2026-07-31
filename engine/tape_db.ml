@@ -96,12 +96,23 @@ let report_write_error t ~key (e : exn) =
 (* Keys are caller-supplied test names. Sanitised because they end up as
    filenames and a test name is arbitrary text. *)
 let key_to_filename (key : string) : string =
-  (* Sanitise for the filesystem, then append a digest of the ORIGINAL
-     key. Without the digest the sanitiser collides: "a/b" and "a?b"
-     both became "a_b", so one property could replay, overwrite or
-     delete another property's failure tape. Found in review of
-     061923e. The readable prefix is kept so the directory stays
-     browsable; the digest is what makes it correct. *)
+  (* Readable prefix for browsability, plus a digest of the ORIGINAL key
+     for correctness. The sanitiser alone collides -- "a/b" and "a?b"
+     both reduce to "a_b" -- which let one property replay, overwrite or
+     delete another's failure tape.
+
+     The digest is [Digest] (MD5, 128 bits, stdlib, no dependency), NOT
+     [Hashtbl.hash]. A first attempt used [Hashtbl.hash key land
+     0xFFFFFFF]: 28 bits, where a birthday collision among
+     similarly-prefixed keys becomes likely around ~19k keys, and
+     deliberate collisions are easy. That version reduced the collision
+     probability without eliminating it, and its comment claimed to have
+     made it correct, which was overclaiming. Flagged in review.
+
+     MD5 is broken for adversarial use; test names are not an adversarial
+     input, and 128 bits makes accidental collision not a practical
+     concern. If that assumption ever stops holding, swap in SHA-256 --
+     the shape of the code does not change. *)
   let readable =
     String.map key ~f:(fun c ->
       if Char.is_alphanum c || Char.equal c '-' || Char.equal c '_' then c
@@ -110,7 +121,7 @@ let key_to_filename (key : string) : string =
   let readable =
     if String.length readable > 80 then String.prefix readable 80 else readable
   in
-  Printf.sprintf "%s-%08x" readable (Hashtbl.hash key land 0xFFFFFFF)
+  Printf.sprintf "%s-%s" readable (Stdlib.Digest.to_hex (Stdlib.Digest.string key))
 
 let path t ~key = Stdlib.Filename.concat t.dir (key_to_filename key)
 

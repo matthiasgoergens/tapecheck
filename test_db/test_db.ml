@@ -123,6 +123,20 @@ let () =
      found within a handful of generated cases so there is barely any
      search to skip. The saving is proportional to how hard the bug is to
      FIND, which is exactly when you care. Repeat on a rare one. *)
+  (* Keys that the sanitiser alone would conflate must not share a file.
+     Flagged in review: the first fix used a 28-bit Hashtbl.hash, which
+     only made collisions unlikely. *)
+  let collide_a = Tape_db.key_to_filename "a/b" in
+  let collide_b = Tape_db.key_to_filename "a?b" in
+  let collide_c = Tape_db.key_to_filename "a b" in
+  let distinct =
+    (not (String.equal collide_a collide_b))
+    && (not (String.equal collide_a collide_c))
+    && not (String.equal collide_b collide_c)
+  in
+  Stdio.printf "  keys \"a/b\", \"a?b\", \"a b\" stay distinct:   %b\n" distinct;
+  if not distinct then Stdlib.exit 1;
+
   Stdio.printf "\n--- same measurement on a hard-to-find bug ---\n";
   let hard_gen =
     G.both (G.int_uniform_inclusive 0 300) (G.int_uniform_inclusive 0 300)
