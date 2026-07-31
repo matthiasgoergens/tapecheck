@@ -7,11 +7,21 @@ module G = Base_quickcheck.Generator
 
 let trials = 500
 
+(* Seed offset from argv, so a replication can use a DISJOINT seed set.
+   Comparing t in [0,500) against t in [0,100) is not a replication --
+   the smaller set is contained in the larger, so agreement is partly
+   guaranteed. Different seeds also matter because generation hits
+   different large examples first, which means the shrinker gets
+   genuinely different inputs, not just more of the same ones. *)
+let seed_offset =
+  if Array.length (Stdlib.Sys.argv) > 1 then Int.of_string Stdlib.Sys.argv.(1)
+  else 0
+
 let row ~name ~gen ~test =
   let totals = Hashtbl.Poly.create () in
   let dups = ref 0 and distinct = ref 0 and runs = ref 0 in
   for t = 0 to trials - 1 do
-    match Tape_engine.run gen ~test ~seed:(t * 1_000_003) ~count:200 ~size:10 with
+    match Tape_engine.run gen ~test ~seed:((t + seed_offset) * 1_000_003) ~count:200 ~size:10 with
     | Tape_engine.Passed _ -> ()
     | Tape_engine.Failed _ ->
       Int.incr runs;
