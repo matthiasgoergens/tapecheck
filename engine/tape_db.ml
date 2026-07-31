@@ -16,10 +16,25 @@
    nothing thereafter. Both halves matter -- a database that only ever
    grows would slow runs down instead.
 
+   On the size of the win, which is easy to understate. Measured here:
+
+     easy bug   (sum >= 100)   107 -> 84 calls   1.3x
+     harder bug (|m - n| = 1)   41 ->  2 calls  20.5x
+
+   Neither ratio is the real number, because the ratio is not a
+   constant. Replay is O(1) -- two calls, regardless -- while the search
+   it replaces costs however long the bug took to find. The 20.5x came
+   from a bug found in 41 calls, which is not a hard bug at all; a bug
+   that surfaces after ten thousand cases gives thousands of times. So
+   this is the unusual optimisation that pays MORE the worse your
+   situation is, and the honest way to describe it is not a speedup
+   factor but "you stop paying for the search you already did".
+
    tapecheck already had every piece except the plumbing: Tape has a
    versioned [serialize_image] / [deserialize_image], and the engine has
    [resume] taking an image. What was missing was doing it without the
    user pasting a tape by hand. *)
+
 
 open! Base
 
