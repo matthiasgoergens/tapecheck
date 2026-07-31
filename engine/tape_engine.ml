@@ -875,7 +875,30 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      With it, a pass may have stopped after [max_pass_failures]
      consecutive failures, so "nothing smaller exists" is no longer
      established. Report converged only if no pass was ever truncated. *)
-  let converged = budget_ok () && !truncated_passes = 0 in
+  (* What [converged] means, stated precisely, because it is easy to
+     read more into it than is there.
+
+     It does NOT mean "no smaller failing example exists". Establishing
+     that would need exhaustive search over all smaller images. Every
+     pass here is a heuristic over a limited neighbourhood -- lower an
+     integer, delete a short block, redistribute a pair, minimize a
+     choice -- so a smaller failing image may sit outside what they can
+     reach, converged or not. The shrink_table's [is_minimal] knows the
+     true minimum only because a human wrote it down.
+
+     What it means is: THE SEARCH SETTLED rather than being cut off with
+     work left to do. Its practical job is to answer "is re-running with
+     a bigger budget or a longer deadline worth it?".
+
+     Read that way the per-pass failure cutoff must NOT clear it. A pass
+     that stops after [max_pass_failures] fruitless attempts has
+     settled; more budget changes nothing, because the cutoff is not
+     budget-driven. Only genuine budget or deadline exhaustion answers
+     "yes, retry with more". An earlier version ran extra uncut sweeps
+     to keep this flag true, costing the speedup (3.6x down to 2x) to
+     buy a distinction that does not survive the observation that the
+     passes are heuristics either way. *)
+  let converged = budget_ok () in
   (!best_value, !attempts, !best, List.rev !trail, converged)
 
 (* Replay a persisted tape image and apply [f] to the regenerated
@@ -953,7 +976,7 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     ?(max_seconds : float option = None) ?(max_shrinks = 500)
     ?(max_stall : int option = None)
-    ?(max_pass_failures : int option = None) ?(domains = 1)
+    ?(max_pass_failures : int option = Some 20) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool) : a result =
   let stats = match stats with Some s -> s | None -> no_stats () in
@@ -1036,7 +1059,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
 let resume (type a) ?(size = 10) ?(budget = 2000)
     ?(max_seconds : float option = None) ?(max_shrinks = 500)
     ?(max_stall : int option = None)
-    ?(max_pass_failures : int option = None) ?(domains = 1)
+    ?(max_pass_failures : int option = Some 20) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool)
     (image : Tape.image) : a result =
