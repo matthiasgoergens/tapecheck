@@ -1,5 +1,5 @@
 (* Head-to-head: tapecheck's choice-tape Bisim engine versus
-   qcheck-stm, same bug, same seeds, same argument ranges, same
+   qcheck-stm, same bug, same argument ranges, same
    per-trial generation budget. This is the number the whole task is
    about; everything else is scaffolding around it.
 
@@ -49,6 +49,17 @@ open Stdio
 
 let max_steps = 60
 let cases_per_trial = 200
+(* On seeds: both arms are handed the same integer, but they feed it to
+   different PRNGs (Tape_engine.run ~seed vs Stdlib.Random.State.make),
+   so the generated sequences differ. Sharing the integer is COSMETIC --
+   it buys no pairing and should not be described as running both
+   engines on identical inputs. The comparison rests on averaging over
+   [trials] seeds, not on matched pairs. A genuinely paired design would
+   generate each counterexample once and hand BOTH shrinkers the same
+   starting point; that would cut variance substantially and is the
+   right shape if these numbers ever need tightening. As it stands the
+   effect is far larger than the noise: 300/300 vs 232/300 is a 95% CI
+   of [0.726, 0.821] against a rule-of-three lower bound of 0.99. *)
 let trials = 300
 
 (* ---------- Arm 1: tapecheck (Bisim) ---------- *)
