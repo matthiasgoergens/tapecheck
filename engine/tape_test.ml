@@ -306,7 +306,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     ?(max_shrinks = default_max_shrinks)
     ?(max_shrink_seconds = default_max_shrink_seconds)
     ?(report : report_level = `Summary) ?(suppress_health_check = [])
-    ?stats (module M : Base_quickcheck.Test.S with type t = a) :
+    ?db ?db_key ?stats (module M : Base_quickcheck.Test.S with type t = a) :
     (unit, a * e) Result.t =
   (* RO6: [stats]/[health] are shared across every [Tape_engine.run]
      call in the fresh-generation loop below (one call per size value,
@@ -395,6 +395,42 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     let case = ref 0 in
     warn_if_shrink_count_set config;
     let sizes = Array.of_list sizes in
+    (* Failure database (parity review #6: Tape_db existed but was not
+       reachable from here, so the feature was unusable from the normal
+       entry point). Replay a stored tape FIRST: a bug that is still
+       present reproduces immediately instead of after a search, and a
+       fixed one has its entry deleted so it costs nothing again.
+       Requires BOTH ?db and ?db_key -- a database with no key would
+       collide across every test in a suite. *)
+    let db_entry =
+      match (db, db_key) with
+      | Some d, Some k -> Some (d, k)
+      | Some _, None | None, Some _ | None, None -> None
+    in
+    (match db_entry with
+     | None -> ()
+     | Some (d, k) -> (
+       match Tape_db.load d ~key:k with
+       | None -> ()
+       | Some img -> (
+         match
+           Tape_engine.resume M.quickcheck_generator ~test ~realign
+             ~size:sizes.(0) ~budget:max_shrinks
+             ~max_seconds:max_shrink_seconds ~stats img
+         with
+         | Tape_engine.Passed _ ->
+           (* Stale: the bug is fixed. Drop it, or the database only
+              grows and re-runs get slower rather than faster. *)
+           Tape_db.remove d ~key:k
+         | Tape_engine.Failed engine_failure -> (
+           match
+             report_failure ~f ~sexp_of:M.sexp_of_t
+               ~gen:M.quickcheck_generator ~regressions ~explain
+               ~explain_budget ~max_shrinks ~max_shrink_seconds
+               ~size:sizes.(0) engine_failure
+           with
+           | Error _ as e -> failure := Some e
+           | Ok () -> ()))));
     while Option.is_none !failure && !case < Array.length sizes do
       (match
          Tape_engine.run M.quickcheck_generator ~test ~realign
@@ -416,7 +452,12 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
             ~regressions ~explain ~explain_budget ~max_shrinks
             ~max_shrink_seconds ~size:sizes.(!case) engine_failure
         with
-        | Error _ as e -> failure := Some e
+        | Error _ as e ->
+          failure := Some e;
+          (match db_entry with
+           | None -> ()
+           | Some (d, k) ->
+             Tape_db.save d ~key:k engine_failure.Tape_engine.image)
         | Ok () -> ()));
       Int.incr case
     done;
@@ -446,12 +487,13 @@ let try_with_preserving_assume f =
   | exception exn -> Or_error.of_exn exn
 
 let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
-    ?realign ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?stats
+    ?realign ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?db ?db_key ?stats
     (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
   let f v = try_with_join_preserving_assume (fun () -> f v) in
   match
     result ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
-      ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?stats (module M)
+      ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?db
+      ?db_key ?stats (module M)
   with
   | Ok () -> Ok ()
   | Error (input, error) ->
@@ -462,12 +504,12 @@ let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
           (error : Error.t)]
 
 let run_exn (type a) ~(f : a -> unit) ?config ?examples ?regressions ?realign
-    ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?stats
+    ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?db ?db_key ?stats
     (module M : Base_quickcheck.Test.S with type t = a) : unit =
   let f v = try_with_preserving_assume (fun () -> f v) in
   run ~f ?config ?examples ?regressions ?realign ?explain ?explain_budget
-    ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?stats
-    (module M)
+    ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?db
+    ?db_key ?stats (module M)
   |> Or_error.ok_exn
 
 (* Resumable shrinking: continue from a tape printed by
