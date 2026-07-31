@@ -19,18 +19,27 @@ let seed_offset =
 
 let row ~name ~gen ~test =
   let totals = Hashtbl.Poly.create () in
-  let dups = ref 0 and distinct = ref 0 and runs = ref 0 and greedy = ref 0 in
+  let dups = ref 0 and distinct = ref 0 and runs = ref 0 and greedy = ref 0 and accs = ref 0
+  and sw = ref 0 and ic = ref 0 and fc = ref 0 and iv = ref 0 and jk = ref 0 and nonconv = ref 0 in
   for t = 0 to trials - 1 do
     match Tape_engine.run gen ~test ~seed:((t + seed_offset) * 1_000_003) ~count:200 ~size:10 with
     | Tape_engine.Passed _ -> ()
-    | Tape_engine.Failed _ ->
+    | Tape_engine.Failed { converged; _ } ->
       Int.incr runs;
+      if not converged then Int.incr nonconv;
       List.iter (Tape_engine.last_pass_costs ()) ~f:(fun (p, c) ->
         Hashtbl.update totals p ~f:(function None -> c | Some x -> x + c));
       let d, dd = Tape_engine.last_duplicate_stats () in
       dups := !dups + d;
       distinct := !distinct + dd;
-      greedy := !greedy + Tape_engine.last_greedy_cost ()
+      greedy := !greedy + Tape_engine.last_greedy_cost ();
+      let a, b, c, d, e, f = Tape_engine.last_shape () in
+      sw := !sw + a;
+      ic := !ic + b;
+      fc := !fc + c;
+      iv := !iv + d;
+      jk := !jk + e;
+      accs := !accs + f;
   done;
   Stdio.printf "%s (%d failing runs)\n" name !runs;
   let n = Int.max 1 !runs in
@@ -40,6 +49,11 @@ let row ~name ~gen ~test =
     Stdio.printf "  %-20s %6d avg attempts\n" p (c / n));
   Stdio.printf "  %-20s %6d avg (of which greedy-repeat loop; rest is the s/i/k/j scan)\n"
     "  ^ lower_and_delete" (!greedy / n);
+  Stdio.printf "  %-20s %6d avg accepted shrinks (each restarts the scan at i:=0)\n"
+    "  ^ acceptances" (!accs / n);
+  Stdio.printf
+    "  non-converged: %d/%d\n  shape: %d sweeps, %d -> %d choices, %d i-visits, %d (j,k) visits, %d SUCCESSES in lower_and_delete\n"
+    !nonconv !runs (!sw / n) (!ic / n) (!fc / n) (!iv / n) (!jk / n) (!accs / n);
   Stdio.printf "  %-20s %6d avg (%.0f%% of proposals were exact repeats)\n"
     "duplicates" (!dups / n)
     (100. *. Float.of_int !dups /. Float.of_int (Int.max 1 (!dups + !distinct)));

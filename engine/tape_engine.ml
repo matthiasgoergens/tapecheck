@@ -309,10 +309,22 @@ let distinct_proposals = ref 0
 let last_pass_costs () = Array.to_list (Array.mapi pass_costs ~f:(fun i c -> (pass_names.(i), c)))
 let last_duplicate_stats () = (!duplicate_proposals, !distinct_proposals)
 let last_greedy_cost () = !greedy_cost
+let accepted_shrinks = ref 0
+let sweeps = ref 0
+let initial_choices = ref 0
+let final_choices = ref 0
+let scan_i_visits = ref 0
+let scan_jk_visits = ref 0
+let lad_successes = ref 0
+let truncated_passes = ref 0
+let last_shape () =
+  ( !sweeps, !initial_choices, !final_choices, !scan_i_visits, !scan_jk_visits
+  , !lad_successes )
 
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~budget ~(max_seconds : float option)
-    ~(max_shrinks : int) ~(max_stall : int option) ~domains ~pool
+    ~(max_shrinks : int) ~(max_stall : int option)
+    ~(max_pass_failures : int option) ~domains ~pool
     ~(realign : realign) ~(stats : stats) ~(initial_tape : Tape.image)
     ~(initial_value : a) : a * int * Tape.image * Tape.image list * bool =
   let best = ref initial_tape in
@@ -387,6 +399,17 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   duplicate_proposals := 0;
   distinct_proposals := 0;
   greedy_cost := 0;
+  accepted_shrinks := 0;
+  sweeps := 0;
+  scan_i_visits := 0;
+  scan_jk_visits := 0;
+  lad_successes := 0;
+  truncated_passes := 0;
+  final_choices := 0;
+  initial_choices :=
+    Array.length initial_tape.Tape.main
+    + Array.fold initial_tape.Tape.streams ~init:0 ~f:(fun a (_, c) ->
+        a + Array.length c);
   let seen_proposals = Hashtbl.Poly.create () in
   let shrinks = ref 0 in
   let attempts_at_last_shrink = ref 0 in
@@ -404,6 +427,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      find. *)
   let note_shrink () =
     Int.incr shrinks;
+    Int.incr accepted_shrinks;
     max_stall := Int.max !max_stall ((!attempts - !attempts_at_last_shrink) * 2);
     attempts_at_last_shrink := !attempts
   in
@@ -521,11 +545,32 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      neither edit works alone. *)
   let lower_and_delete () =
     let improved = ref false in
+    (* Per-pass consecutive-failure cutoff, Hypothesis's max_failures =
+       20 (shrinker.py, the [while failures < max_failures] loop inside
+       fixate_shrink_passes; their note: "this implicitly boosts shrink
+       passes that are more likely to work").
+
+       Measured justification: on both list properties this pass scores
+       ZERO successes while spending 612 and 427 attempts, 96% of the
+       whole shrink. On bind it succeeds on its 3rd (j,k) visit, so a
+       20-failure cutoff never fires there. See
+       ../tapecheck-hypothesis-baseline/README.md.
+
+       [live] is checked alongside budget_ok in this pass's loops.
+       Truncation is recorded, because a pass cut short cannot support a
+       claim of convergence. *)
+    let consecutive_failures = ref 0 in
+    let live () =
+      match max_pass_failures with
+      | None -> true
+      | Some n -> !consecutive_failures < n
+    in
     let s = ref 0 in
-    while !s < seg_count !best && budget_ok () do
+    while !s < seg_count !best && budget_ok () && live () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && budget_ok () do
+      while !i < Array.length (seg_get !best !s) && budget_ok () && live () do
         let arr = seg_get !best !s in
+        Int.incr scan_i_visits;
         (match arr.(!i) with
         | Tape.Integer { value; lo; hi }
           when Int64.(value <> clamp64 0L ~lo ~hi) ->
@@ -546,14 +591,16 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
              next deletable block usually sits exactly there. *)
           let accepted = ref false in
           let k = ref 1 in
-          while (not !accepted) && !k <= 4 && budget_ok () do
+          while (not !accepted) && !k <= 4 && budget_ok () && live () do
             let j = ref (!i + 1) in
             while
               (not !accepted)
               && !j <= Array.length (seg_get !best !s) - !k
               && budget_ok ()
+              && live ()
             do
               let arr = seg_get !best !s in
+              Int.incr scan_jk_visits;
               let batch =
                 List.filter_map
                   (List.init (max 1 (domains * 4)) ~f:(fun d -> !j + d))
@@ -568,6 +615,8 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
               in
               (match attempt_batch batch with
               | Some offset ->
+                Int.incr lad_successes;
+                consecutive_failures := 0;
                 accepted := true;
                 improved := true;
                 (* Greedily repeat the same edit shape at the position
@@ -599,12 +648,15 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                   | _ -> again := false
                 done;
                 greedy_cost := !greedy_cost + (!attempts - greedy_start)
-              | None -> j := !j + max 1 (domains * 4))
+              | None ->
+                Int.incr consecutive_failures;
+                j := !j + max 1 (domains * 4))
             done;
             Int.incr k
           done;
           if !accepted then i := 0 else Int.incr i
         | _ -> Int.incr i);
+        if not (live ()) then Int.incr truncated_passes;
         (* An acceptance may change the stream layout; keep s valid. *)
         if !s >= seg_count !best then s := seg_count !best
       done;
@@ -640,6 +692,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       let i = ref 0 in
       while !i < Array.length (seg_get !best !s) && budget_ok () do
         let arr = seg_get !best !s in
+        Int.incr scan_i_visits;
         (match arr.(!i) with
         | Tape.Integer { value = vi; lo = lo_i; hi = hi_i }
           when Int64.(vi <> clamp64 0L ~lo:lo_i ~hi:hi_i) -> (
@@ -789,6 +842,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let continue_ = ref true in
   pass_costs.(4) <- !attempts;
   while !continue_ && budget_ok () do
+    Int.incr sweeps;
     let a0 = !attempts in
     let improved = lower_and_delete () in
     pass_costs.(0) <- pass_costs.(0) + (!attempts - a0);
@@ -811,7 +865,17 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      share the same [budget_ok ()]), so [continue_] being false in that
      case proves nothing; report truncated rather than risk a false
      "converged". *)
-  let converged = budget_ok () in
+  final_choices :=
+    Array.length (!best).Tape.main
+    + Array.fold (!best).Tape.streams ~init:0 ~f:(fun a (_, c) ->
+        a + Array.length c);
+  (* [converged] must account for the per-pass failure cutoff. Without
+     the cutoff, exiting the sweep loop with budget to spare meant every
+     pass ran to completion and found nothing -- a genuine fixpoint.
+     With it, a pass may have stopped after [max_pass_failures]
+     consecutive failures, so "nothing smaller exists" is no longer
+     established. Report converged only if no pass was ever truncated. *)
+  let converged = budget_ok () && !truncated_passes = 0 in
   (!best_value, !attempts, !best, List.rev !trail, converged)
 
 (* Replay a persisted tape image and apply [f] to the regenerated
@@ -852,7 +916,8 @@ let replay (type a) (gen : a Base_quickcheck.Generator.t) ?size
    local minimum from a best-effort one. *)
 let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
     ~size ~(test : a -> bool) ~budget ~(max_seconds : float option)
-    ~(max_shrinks : int) ~(max_stall : int option) ~domains
+    ~(max_shrinks : int) ~(max_stall : int option)
+    ~(max_pass_failures : int option) ~domains
     ~pool ~(realign : realign) ~(stats : stats) ~(image0 : Tape.image)
     ~(value : a) : a result =
   let live_value image =
@@ -871,7 +936,7 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
   else begin
     let _minimal, attempts, image, trail, converged =
       shrink ~tape ~gen ~size ~test ~budget ~max_seconds ~max_shrinks
-        ~max_stall ~domains ~pool ~realign ~stats
+        ~max_stall ~max_pass_failures ~domains ~pool ~realign ~stats
         ~initial_tape:image0 ~initial_value:value
     in
     Failed
@@ -887,7 +952,8 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
 
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     ?(max_seconds : float option = None) ?(max_shrinks = 500)
-    ?(max_stall : int option = None) ?(domains = 1)
+    ?(max_stall : int option = None)
+    ?(max_pass_failures : int option = None) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool) : a result =
   let stats = match stats with Some s -> s | None -> no_stats () in
@@ -948,7 +1014,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     | None -> Passed { cases = count }
     | Some (image0, value) ->
       finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
-        ~max_shrinks ~max_stall ~domains
+        ~max_shrinks ~max_stall ~max_pass_failures ~domains
         ~pool ~realign ~stats ~image0 ~value
   in
   Option.iter pool ~f:Pool.shutdown;
@@ -969,7 +1035,8 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
    stale-regression-entry handling. *)
 let resume (type a) ?(size = 10) ?(budget = 2000)
     ?(max_seconds : float option = None) ?(max_shrinks = 500)
-    ?(max_stall : int option = None) ?(domains = 1)
+    ?(max_stall : int option = None)
+    ?(max_pass_failures : int option = None) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool)
     (image : Tape.image) : a result =
@@ -985,7 +1052,7 @@ let resume (type a) ?(size = 10) ?(budget = 2000)
     match tested with
     | Some false when not out.Tape.overrun ->
       finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
-        ~max_shrinks ~max_stall ~domains
+        ~max_shrinks ~max_stall ~max_pass_failures ~domains
         ~pool ~realign ~stats ~image0:image ~value
     | _ -> Passed { cases = 0 }
   in
