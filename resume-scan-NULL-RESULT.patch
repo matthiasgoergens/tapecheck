@@ -1,0 +1,63 @@
+diff --git a/engine/tape_engine.ml b/engine/tape_engine.ml
+index 5315a50..15c8fee 100644
+--- a/engine/tape_engine.ml
++++ b/engine/tape_engine.ml
+@@ -309,6 +309,8 @@ let distinct_proposals = ref 0
+ let last_pass_costs () = Array.to_list (Array.mapi pass_costs ~f:(fun i c -> (pass_names.(i), c)))
+ let last_duplicate_stats () = (!duplicate_proposals, !distinct_proposals)
+ let last_greedy_cost () = !greedy_cost
++let accepted_shrinks = ref 0
++let last_shrink_count () = !accepted_shrinks
+ 
+ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
+     ~(test : a -> bool) ~budget ~(max_seconds : float option)
+@@ -387,6 +389,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
+   duplicate_proposals := 0;
+   distinct_proposals := 0;
+   greedy_cost := 0;
++  accepted_shrinks := 0;
+   let seen_proposals = Hashtbl.Poly.create () in
+   let shrinks = ref 0 in
+   let attempts_at_last_shrink = ref 0 in
+@@ -404,6 +407,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
+      find. *)
+   let note_shrink () =
+     Int.incr shrinks;
++    Int.incr accepted_shrinks;
+     max_stall := Int.max !max_stall ((!attempts - !attempts_at_last_shrink) * 2);
+     attempts_at_last_shrink := !attempts
+   in
+@@ -603,7 +607,15 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
+             done;
+             Int.incr k
+           done;
+-          if !accepted then i := 0 else Int.incr i
++          (* EXPERIMENT: resume rather than restart. Was [i := 0],
++             which re-walks the whole prefix after every acceptance;
++             measured at 16 acceptances x ~40 attempts/scan = ~640 on
++             "int list, length >= 3" against 612 observed. Hypothesis's
++             prefix_selection_order resumes from the last successful
++             choice instead. Completeness is preserved by the outer
++             [while !continue_] sweep, which re-runs the whole pass
++             whenever anything improved. *)
++          if !accepted then () else Int.incr i
+         | _ -> Int.incr i);
+         (* An acceptance may change the stream layout; keep s valid. *)
+         if !s >= seg_count !best then s := seg_count !best
+@@ -691,7 +703,15 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
+                 end
+                 else d := Int64.( / ) !d 2L
+               done;
+-              if !accepted then i := 0 else Int.incr i
++              (* EXPERIMENT: resume rather than restart. Was [i := 0],
++             which re-walks the whole prefix after every acceptance;
++             measured at 16 acceptances x ~40 attempts/scan = ~640 on
++             "int list, length >= 3" against 612 observed. Hypothesis's
++             prefix_selection_order resumes from the last successful
++             choice instead. Completeness is preserved by the outer
++             [while !continue_] sweep, which re-runs the whole pass
++             whenever anything improved. *)
++          if !accepted then () else Int.incr i
+             | _ -> Int.incr i)
+         | _ -> Int.incr i);
+         if !s >= seg_count !best then s := seg_count !best
