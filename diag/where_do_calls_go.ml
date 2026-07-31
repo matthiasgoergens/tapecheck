@@ -5,7 +5,7 @@
 open Base
 module G = Base_quickcheck.Generator
 
-let trials = 100
+let trials = 500
 
 let row ~name ~gen ~test =
   let totals = Hashtbl.Poly.create () in
@@ -39,6 +39,18 @@ let () =
   row ~name:"int list, fail iff sum >= 100"
     ~gen:(G.list (G.int_uniform_inclusive 0 1000))
     ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100);
+  row ~name:"filtered even ints, fail iff v >= 100"
+    ~gen:(G.filter (G.int_uniform_inclusive 0 100_000) ~f:(fun v -> v % 2 = 0))
+    ~test:(fun v -> v < 100);
+  row ~name:"bind: len in [1,64], list_with_length, fail iff sum >= 100"
+    ~gen:
+      (let open G.Let_syntax in
+       let%bind len = G.int_uniform_inclusive 1 64 in
+       G.list_with_length (G.int_uniform_inclusive 0 1000) ~length:len)
+    ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100);
+  row ~name:"pair in [0,1000]^2, fail iff a + b >= 100"
+    ~gen:(G.both (G.int_uniform_inclusive 0 1000) (G.int_uniform_inclusive 0 1000))
+    ~test:(fun (a, b) -> a + b < 100);
   row ~name:"int uniform (control: tapecheck already cheap here)"
     ~gen:(G.int_uniform_inclusive 0 1_000_000)
     ~test:(fun v -> v < 123_457)
