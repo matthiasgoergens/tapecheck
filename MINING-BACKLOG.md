@@ -3,6 +3,10 @@
 Survey of `hypothesis-python/src/hypothesis/`, 2026-07-31, after the
 shrinker pass. Ordered by value, with what has already been taken marked.
 
+**Read `HYPOTHESIS-VERSION.md` first.** Everything below was surveyed
+against a 6.80.1 checkout; current is 6.164.0, and names and passes
+changed substantially in the choice-sequence rework.
+
 ## Already mined
 
 - `shrinker.py` — pass list, `fixate_shrink_passes`, `max_failures`,
@@ -35,10 +39,17 @@ Tracks which choice-prefixes have been explored. Gives:
 
 Also `Killed` nodes: marking subtrees as not worth exploring.
 
-### 2. `shrinking/dfas.py` + `learned_dfas.py` + `dfa/lstar.py` — learned shrink passes
+### 2. ~~Learned shrink passes~~ — REMOVED FROM HYPOTHESIS, do not port
 
-The most novel thing in the codebase and completely unmined. Their own
-description:
+**Correction.** I ranked this second-most-valuable. It is not a parity
+gap at all: `dfas.py`, `learned_dfas.py` and `dfa/lstar.py` exist in the
+6.80.1 checkout I was reading and are **absent from 6.164.0**, along
+with any DFA replacement pass. Removed upstream between the two.
+Historical research, and I was about to spend real effort on it — see
+`HYPOTHESIS-VERSION.md`. Kept below only because the idea is still
+interesting to discuss.
+
+Their description, in the version that had it:
 
 > given a test function that sometimes shrinks to one thing and
 > sometimes another, this module is designed to help learn new

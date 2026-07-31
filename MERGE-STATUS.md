@@ -7,7 +7,7 @@ Updated 2026-07-31 after upstreaming.
 - **`budgets-and-resume`** (34 commits) — the shrinker investigation and
   everything that came out of it: the per-pass failure cutoff,
   `find_integer`, `lower_together` (the zig-zag defence), the failure
-  database (`tape_db.ml`), non-deterministic generator detection, the
+  database (`tape_db.ml`), non-deterministic generator detection (**available but NOT wired into `run`/`resume`/`Tape_test` — only diagnostic tests call it**), the
   `~domains` clamp, the regression guard, all the diagnostic probes, and
   the write-ups.
 - **`stateful-testing`** (10 commits) — `Stateful`, `Bisim`, the
