@@ -1758,12 +1758,32 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     (* Find the first failing case. With a pool, generate and test cases
        in parallel batches; taking the lowest failing index in the batch
        preserves the sequential engine's choice of failure exactly. *)
+    (* Exhaustion detection: the practical half of Hypothesis's
+       DataTree. They track explored choice-prefixes exactly and know
+       when a finite space is finished; this approximates it by noticing
+       that generation has stopped producing anything NEW.
+
+       Worth having because the alternative is silently wasteful: a
+       generator over a small space (a bool, an enum, a narrow int
+       range) re-draws the same handful of inputs for the rest of
+       [count], testing nothing. Approximate rather than exact -- a big
+       space can throw a run of coincidental repeats -- so the threshold
+       is set where a false positive is cheap: it only ever stops a run
+       that was already finding nothing new. *)
+    let seen_generated = Hashtbl.Poly.create () in
+    let consecutive_repeats = ref 0 in
+    let exhausted_after = ref None in
+    let repeats_before_giving_up = 64 in
     let first_failure =
       match pool with
       | None ->
         let found = ref None in
         let case = ref 0 in
-        while Option.is_none !found && !case < count do
+        while
+          Option.is_none !found
+          && !case < count
+          && !consecutive_repeats < repeats_before_giving_up
+        do
           Tape.start_recording tape;
           (* Only pay for per-case timing (three Sys.time() calls,
              measured to be the dominant added cost -- see
@@ -1814,8 +1834,30 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                  ~status:(if is_valid then `Valid else `Invalid) ~choices
                  ~generate_time:gen_dt
              end);
+          (if Hashtbl.mem seen_generated out.Tape.image then
+             Int.incr consecutive_repeats
+           else begin
+             Hashtbl.set seen_generated ~key:out.Tape.image ~data:();
+             consecutive_repeats := 0
+           end);
+          if !consecutive_repeats >= repeats_before_giving_up then
+            exhausted_after := Some (!case + 1);
           Int.incr case
         done;
+        (match !exhausted_after with
+         | Some n when Option.is_none !found ->
+           Stdlib.prerr_endline
+             (Printf.sprintf
+                "tapecheck: generation appears EXHAUSTED after %d of %d cases \
+                 (%d distinct inputs, then %d consecutive repeats). The \
+                 remaining cases would only re-test inputs already tried. If \
+                 the space really is that small, lower ~count; if not, the \
+                 generator may be narrower than intended."
+                n count
+                (Hashtbl.length seen_generated)
+                repeats_before_giving_up);
+           Stdlib.flush Stdlib.stderr
+         | _ -> ());
         stats.warnings <- health.Tape_health.fired;
         !found
       | Some pool ->
