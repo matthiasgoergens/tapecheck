@@ -12,7 +12,13 @@ let default_config = Base_quickcheck.Test.default_config
 let seed_int (seed : Config.Seed.t) =
   match seed with
   | Deterministic s -> Hashtbl.hash s
-  | Nondeterministic -> Random.bits ()
+  | Nondeterministic ->
+    (* Must NOT use [Random.bits ()], which reads the process-global
+       state and is deterministic unless something else happened to
+       self-init it -- so "nondeterministic" silently gave the same seed
+       every run. base_quickcheck itself uses [make_self_init]. Found in
+       review of 061923e. *)
+    Random.State.bits (Random.State.make_self_init ())
 
 (* Regression files: one lowercase-hex serialized tape per line,
    optional trailing "# comment". Replaying a tape regenerates the
@@ -117,6 +123,37 @@ end
    usage, so it is reused here rather than inventing a fresh number. *)
 let default_max_shrinks = 2000
 let default_max_shrink_seconds : float option = Some 300.
+
+(* [Config.shrink_count] is NOT used, and that needs saying out loud
+   rather than being discovered.
+
+   This module aliases [Base_quickcheck.Test.Config] so that switching a
+   test over is a one-word change, which makes it fair to assume every
+   Config field is honoured. [shrink_count] is not, for two reasons.
+   It counts base_quickcheck's own rose-tree shrink attempts, a
+   different mechanism from the tape budget; and its default of 10_000
+   is five times [default_max_shrinks], so adopting it would silently
+   loosen the budget and discard the reasoning above.
+
+   Silently ignoring it is still wrong -- a caller setting
+   [shrink_count = 0] expecting no shrinking would get up to 2000 tape
+   attempts and no indication why. So: warn once, name the knob that
+   does work, and carry on. Found in review of 061923e. *)
+let warned_shrink_count = ref false
+
+let warn_if_shrink_count_set (config : Config.t) =
+  if
+    (not !warned_shrink_count)
+    && config.shrink_count <> default_config.shrink_count
+  then begin
+    warned_shrink_count := true;
+    Stdlib.prerr_endline
+      (Printf.sprintf
+         "tapecheck: Config.shrink_count = %d is ignored. It counts           base_quickcheck's rose-tree shrink attempts, which this engine does           not use. Pass ?max_shrinks (total tape attempts, default %d) or           ?max_shrink_seconds instead."
+         config.shrink_count default_max_shrinks);
+    Stdlib.flush Stdlib.stderr
+  end
+
 
 (* Printed when shrinking stops because it ran out of budget rather
    than because it converged -- the distinction Hypothesis itself
@@ -281,6 +318,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
             ~sizes_available:(List.length sizes : int)];
     let failure = ref None in
     let case = ref 0 in
+    warn_if_shrink_count_set config;
     let sizes = Array.of_list sizes in
     while Option.is_none !failure && !case < Array.length sizes do
       (match

@@ -96,9 +96,21 @@ let report_write_error t ~key (e : exn) =
 (* Keys are caller-supplied test names. Sanitised because they end up as
    filenames and a test name is arbitrary text. *)
 let key_to_filename (key : string) : string =
-  String.map key ~f:(fun c ->
-    if Char.is_alphanum c || Char.equal c '-' || Char.equal c '_' then c
-    else '_')
+  (* Sanitise for the filesystem, then append a digest of the ORIGINAL
+     key. Without the digest the sanitiser collides: "a/b" and "a?b"
+     both became "a_b", so one property could replay, overwrite or
+     delete another property's failure tape. Found in review of
+     061923e. The readable prefix is kept so the directory stays
+     browsable; the digest is what makes it correct. *)
+  let readable =
+    String.map key ~f:(fun c ->
+      if Char.is_alphanum c || Char.equal c '-' || Char.equal c '_' then c
+      else '_')
+  in
+  let readable =
+    if String.length readable > 80 then String.prefix readable 80 else readable
+  in
+  Printf.sprintf "%s-%08x" readable (Hashtbl.hash key land 0xFFFFFFF)
 
 let path t ~key = Stdlib.Filename.concat t.dir (key_to_filename key)
 

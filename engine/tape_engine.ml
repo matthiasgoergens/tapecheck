@@ -1301,16 +1301,20 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
      keeps its observed behaviour after the engine returns (a function
      backed by a finished tape would silently fall back to fresh
      randomness on the very calls the report is about). *)
-  let outcome =
-    match first_failure with
-    | None -> Passed { cases = count }
-    | Some (image0, value) ->
-      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
-        ~max_shrinks ~max_stall ~max_pass_failures ~domains
-        ~pool ~realign ~stats ~image0 ~value
-  in
-  Option.iter pool ~f:Pool.shutdown;
-  outcome
+  (* Shut the pool down on EVERY exit, not just the normal one. A test
+     or generator that raises under [~domains > 1] previously left the
+     worker domains blocked forever, so a caller that catches the
+     exception and retries accumulates leaked domains until the process
+     dies. Found in review of 061923e. *)
+  Exn.protect
+    ~finally:(fun () -> Option.iter pool ~f:Pool.shutdown)
+    ~f:(fun () ->
+      match first_failure with
+      | None -> Passed { cases = count }
+      | Some (image0, value) ->
+        finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
+          ~max_shrinks ~max_stall ~max_pass_failures ~domains ~pool ~realign
+          ~stats ~image0 ~value)
 
 (* Resumable shrinking: continue from a tape saved earlier (typically
    printed on a previous run that hit its budget -- see [Tape_test]'s
@@ -1340,13 +1344,13 @@ let resume (type a) ?(size = 10) ?(budget = 2000)
     Tape.start_replay_image replay_tape image;
     run_and_test ~tape:replay_tape ~gen ~size ~seed:replay_fresh_seed ~test
   in
-  let outcome =
-    match tested with
-    | Some false when not out.Tape.overrun ->
-      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
-        ~max_shrinks ~max_stall ~max_pass_failures ~domains
-        ~pool ~realign ~stats ~image0:image ~value
-    | _ -> Passed { cases = 0 }
-  in
-  Option.iter pool ~f:Pool.shutdown;
-  outcome
+  (* Same leak, same fix, on the resume path. *)
+  Exn.protect
+    ~finally:(fun () -> Option.iter pool ~f:Pool.shutdown)
+    ~f:(fun () ->
+      match tested with
+      | Some false when not out.Tape.overrun ->
+        finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
+          ~max_shrinks ~max_stall ~max_pass_failures ~domains ~pool ~realign
+          ~stats ~image0:image ~value
+      | _ -> Passed { cases = 0 })
