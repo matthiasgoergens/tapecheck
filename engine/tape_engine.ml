@@ -297,7 +297,8 @@ type stats =
 let no_stats () = { replays = 0; tests = 0; misaligns = 0 }
 
 let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
-    ~(test : a -> bool) ~budget ~(max_seconds : float option) ~domains ~pool
+    ~(test : a -> bool) ~budget ~(max_seconds : float option)
+    ~(max_shrinks : int) ~(max_stall : int option) ~domains ~pool
     ~(realign : realign) ~(stats : stats) ~(initial_tape : Tape.image)
     ~(initial_value : a) : a * int * Tape.image * Tape.image list * bool =
   let best = ref initial_tape in
@@ -308,23 +309,84 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      asks for if it is cheap. *)
   let trail = ref [] in
   let attempts = ref 0 in
-  (* Two independent stopping conditions, exactly Hypothesis's own
-     MAX_SHRINKS / MAX_SHRINKING_SECONDS shape (engine_hypothesis.py):
-     a count (attempts here, since this engine's passes already meter
-     themselves by total replay attempts rather than accepted
-     improvements -- see the write-up for why tapecheck does not reuse
-     Hypothesis's literal "500", which counts something different) and
-     a wall-clock deadline, checked independently so either can fire
-     first. [max_seconds = None] disables the wall-clock side only;
-     the attempt count always applies. *)
+  (* Hypothesis's actual accounting, ported rather than approximated.
+     An earlier version of this engine charged every proposal against
+     one flat [budget], which penalises a property equally for work that
+     is paying off and work that is not. Hypothesis separates the two
+     (hypothesis/internal/conjecture/{engine,shrinker}.py):
+
+     - MAX_SHRINKS = 500 counts ACCEPTED improvements only
+       (engine.py:45, incremented at engine.py:257 under
+       [sort_key(new) < sort_key(old)]). Failed attempts never touch it.
+     - max_stall = 200 (shrinker.py:292) bounds only the CURRENT dry
+       spell: [calls - calls_at_last_shrink >= max_stall] stops
+       shrinking (shrinker.py:414), and [calls_at_last_shrink] is reset
+       on every success (shrinker.py:972). A success therefore refunds
+       the stall allowance completely.
+     - The stall allowance also ADAPTS upward on success
+       (shrinker.py:969-971):
+         max_stall = max(max_stall, (calls - calls_at_last_shrink) * 2)
+       so a shrink that took 500 calls to find raises tolerance to 1000.
+       Their comment: "whenever we shrink successfully we give ourselves
+       a bit of breathing room to make sure we would find a shrink that
+       took that long to find the next time."
+     - A wall-clock deadline is the backstop for the steady-progress
+       case (engine.py:903).
+
+     [budget] is kept as a hard ceiling on total attempts so a
+     pathological property cannot run forever even while succeeding.
+     [max_seconds = None] disables the wall-clock side only.
+
+     [max_stall] defaults to OFF, and that is a deliberate deviation
+     from Hypothesis, measured rather than assumed. Porting it at
+     Hypothesis's 200 destroyed shrink quality here: demo/shrink_table
+     went from 100/100 fully-minimal to 1/100 on "int list, fail iff
+     length >= 3" and 26/100 on "sum >= 100". The cause is that this
+     port omitted the fourth of Hypothesis's four mechanisms, the floor
+     at shrinker.py:705-708 that widens max_stall enough to complete one
+     whole iteration of fixate_shrink_passes -- whose comment predicts
+     exactly this: "if we're unlucky and the shrink passes are in a bad
+     order where only the ones at the end are useful, if we're not
+     careful this heuristic might stop us before we've tried
+     everything."
+
+     But porting that floor turns out not to be worth it either, for a
+     structural reason. Hypothesis needs max_stall because one of its
+     passes can burn unbounded calls; this engine's outer loop is
+       while !continue_ && budget_ok () do ...; continue_ := improved done
+     which already halts on the first fully unproductive sweep, and its
+     passes are individually bounded by segment counts. A sweep-granular
+     stall is therefore inert, and a finer-grained one needs per-pass
+     metering that does not exist yet. Making passes first class is the
+     real prerequisite -- and it is the same prerequisite as
+     Hypothesis's productivity-based pass reordering (shrinker.py:742),
+     which is the mechanism that would actually address the ~5.5x
+     shrink-cost overhead measured in head_to_head/VERIFICATION.md.
+
+     So: [max_shrinks] is ported and on, [max_stall] is available but
+     off, and the cost work is deferred to a change that makes passes
+     first class. See SHRINK-BUDGET-DESIGN.md. *)
   let deadline =
     Option.map max_seconds ~f:(fun s -> Unix.gettimeofday () +. s)
   in
+  let shrinks = ref 0 in
+  let attempts_at_last_shrink = ref 0 in
+  let max_stall = ref (Option.value max_stall ~default:Int.max_value) in
   let budget_ok () =
     !attempts < budget
+    && !shrinks < max_shrinks
+    && !attempts - !attempts_at_last_shrink < !max_stall
     && (match deadline with
         | None -> true
         | Some d -> Float.( < ) (Unix.gettimeofday ()) d)
+  in
+  (* Called on every accepted improvement: bank the success, refund the
+     stall allowance, and widen it to twice what this shrink cost to
+     find. *)
+  let note_shrink () =
+    Int.incr shrinks;
+    max_stall := Int.max !max_stall ((!attempts - !attempts_at_last_shrink) * 2);
+    attempts_at_last_shrink := !attempts
   in
 
   (* One replay under [policy]; count it, and return a candidate
@@ -375,6 +437,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
         best := image;
         best_value := value;
         trail := image :: !trail;
+        note_shrink ();
         true
       | _ -> false
     end
@@ -419,6 +482,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
          best := image;
          best_value := value;
          trail := image :: !trail;
+         note_shrink ();
          Some i
        | None -> None)
   in
@@ -752,7 +816,8 @@ let replay (type a) (gen : a Base_quickcheck.Generator.t) ?size
    converged/truncated distinction that lets a caller tell a genuine
    local minimum from a best-effort one. *)
 let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
-    ~size ~(test : a -> bool) ~budget ~(max_seconds : float option) ~domains
+    ~size ~(test : a -> bool) ~budget ~(max_seconds : float option)
+    ~(max_shrinks : int) ~(max_stall : int option) ~domains
     ~pool ~(realign : realign) ~(stats : stats) ~(image0 : Tape.image)
     ~(value : a) : a result =
   let live_value image =
@@ -770,8 +835,9 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
       }
   else begin
     let _minimal, attempts, image, trail, converged =
-      shrink ~tape ~gen ~size ~test ~budget ~max_seconds ~domains ~pool
-        ~realign ~stats ~initial_tape:image0 ~initial_value:value
+      shrink ~tape ~gen ~size ~test ~budget ~max_seconds ~max_shrinks
+        ~max_stall ~domains ~pool ~realign ~stats
+        ~initial_tape:image0 ~initial_value:value
     in
     Failed
       { minimal = live_value image
@@ -785,7 +851,8 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
   end
 
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
-    ?(max_seconds : float option = None) ?(domains = 1)
+    ?(max_seconds : float option = None) ?(max_shrinks = 500)
+    ?(max_stall : int option = None) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool) : a result =
   let stats = match stats with Some s -> s | None -> no_stats () in
@@ -845,7 +912,8 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     match first_failure with
     | None -> Passed { cases = count }
     | Some (image0, value) ->
-      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds ~domains
+      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
+        ~max_shrinks ~max_stall ~domains
         ~pool ~realign ~stats ~image0 ~value
   in
   Option.iter pool ~f:Pool.shutdown;
@@ -865,7 +933,8 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
    rather than guessing, exactly as loudly as [Tape_test]'s existing
    stale-regression-entry handling. *)
 let resume (type a) ?(size = 10) ?(budget = 2000)
-    ?(max_seconds : float option = None) ?(domains = 1)
+    ?(max_seconds : float option = None) ?(max_shrinks = 500)
+    ?(max_stall : int option = None) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats
     (gen : a Base_quickcheck.Generator.t) ~(test : a -> bool)
     (image : Tape.image) : a result =
@@ -880,7 +949,8 @@ let resume (type a) ?(size = 10) ?(budget = 2000)
   let outcome =
     match tested with
     | Some false when not out.Tape.overrun ->
-      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds ~domains
+      finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
+        ~max_shrinks ~max_stall ~domains
         ~pool ~realign ~stats ~image0:image ~value
     | _ -> Passed { cases = 0 }
   in
