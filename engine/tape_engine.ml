@@ -188,7 +188,33 @@ module Pool = struct
       Stdlib.Mutex.unlock t.mutex;
       worker_loop t
 
+  (* Clamp to the core count. OxCaml's [do_not_spawn_domains] alert
+     spells out why: "spawning more than [recommended_domain_count]
+     domains (the CPU core count) will significantly degrade GC
+     performance." That is a real footgun independent of OxCaml --
+     nothing previously stopped [~domains:64] on an 8-core box from
+     getting exactly that degradation -- so this is a fix rather than a
+     lint appeasement. Warn once, because silently ignoring what the
+     caller asked for is its own kind of surprise. *)
+  let warned_about_domains = ref false
+
+  let clamp_domains n =
+    let recommended = Stdlib.Domain.recommended_domain_count () in
+    if n > recommended then begin
+      if not !warned_about_domains then begin
+        warned_about_domains := true;
+        Stdlib.prerr_endline
+          (Printf.sprintf
+             "tapecheck: ~domains:%d exceeds the %d recommended for this machine; using %d. More domains than cores degrades GC performance rather than helping."
+             n recommended recommended);
+        Stdlib.flush Stdlib.stderr
+      end;
+      recommended
+    end
+    else n
+
   let create n =
+    let n = clamp_domains n in
     let t =
       { mutex = Stdlib.Mutex.create ()
       ; nonempty = Stdlib.Condition.create ()
