@@ -104,17 +104,28 @@ work with, and the structural question is open".
 ## The question worth asking, rather than answering alone
 
 Can span structure be recovered at the PRNG layer, or is it inherently
-lost? Options, none obviously right:
+lost? Three options were considered; one is now eliminated by
+measurement, leaving two.
 
 - **Give up nothing, gain nothing.** Accept that span-dependent passes
   are out of reach and compete on the passes that are not.
 - **Own the combinators.** A tapecheck-provided `list`, `filter` etc.
   that bracket their draws. Exact, but forfeits the drop-in property for
   anything that opts in — the same trade as `DISCARD-TRACKING.md`.
-- **Infer spans from splittable_random topology.** `Split` keys already
-  record where the generator branched. Whether that is a usable proxy
-  for example nesting is an open empirical question and the most
-  interesting one, because it would get structure without cooperation.
+- ~~**Infer spans from splittable_random topology.**~~ **TESTED AND
+  DEAD.** This was the attractive option, because it would get structure
+  without any cooperation from generator authors. It does not work, and
+  the reason is decisive rather than a matter of tuning:
+  `Splittable_random.split` appears **exactly once in all of
+  base_quickcheck's `generator.ml`** (line 87), inside `fn` — the
+  FUNCTION generator — where it gives a function's body an independent
+  stream so that repeated calls with the same argument stay
+  deterministic. `perturb` serves the same purpose for arguments.
+  Lists, tuples and binds never split. So `Split`/`Salt` keys record
+  PRNG topology for function generation and carry no information
+  whatsoever about data structure. `diag2/probe_selflen.ml` shows this
+  directly: a 2-element list puts all 21 choices in `main` with zero
+  streams. There is nothing to infer from.
 
 ### On changing base_quickcheck's list generator
 
