@@ -72,9 +72,21 @@ let () =
   let st = Tape_engine.no_stats () in
   let result = Tape_engine.run gen ~test:f ~seed:7 ~count:200 ~size:10 ~stats:st in
   let gen_calls = Option.value_exn !ff in
-  check "run: tests = total - generation" ~engine:st.Tape_engine.tests
-    ~actual:(!n - gen_calls);
-  Stdio.printf "       (%d total, %d spent finding the failure)\n" !n gen_calls;
+  (* Three categories now, not two. Wiring the determinism check into the
+     failure path added 8 replays per failing run: they exercise the test
+     function but are NOT shrink work, so [tests] correctly excludes
+     them. This assertion failed the moment the check was wired in --
+     which is the test earning its place, since nothing else would have
+     noticed the engine's shrink cost apparently dropping by 8. *)
+  let determinism_replays = 8 in
+  check "run: tests = total - generation - determinism"
+    ~engine:st.Tape_engine.tests
+    ~actual:(!n - gen_calls - determinism_replays);
+  Stdio.printf
+    "       (%d total: %d finding the failure, %d determinism replays, %d \
+     shrinking)\n"
+    !n gen_calls determinism_replays
+    (!n - gen_calls - determinism_replays);
 
   (* 3. resume: generation is one confirmation replay, then shrinking. *)
   (match result with

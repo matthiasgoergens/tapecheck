@@ -1520,6 +1520,22 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     match first_failure with
       | None -> Passed { cases = count }
       | Some (image0, value) ->
+        (* Check determinism ONCE, on the failure path, before shrinking.
+           This existed but nothing outside diagnostic tests called it --
+           flagged in review, and fair: an unreachable check is not a
+           feature. The failure path is the right place. It costs nothing
+           on a passing run, and a generator that is not a pure function
+           of the tape makes everything downstream meaningless: a saved
+           failure that will not reproduce, a shrinker chasing a moving
+           target, a reported minimal example that may not fail at all.
+
+           WARNS rather than raising. The failure is real and worth
+           reporting even when the generator is impure; refusing to
+           shrink would replace a useful-but-caveated answer with none. *)
+        if not (check_generator_determinism ~gen ~size ~test image0) then begin
+          Stdlib.prerr_endline nondeterminism_warning;
+          Stdlib.flush Stdlib.stderr
+        end;
         finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
           ~max_shrinks ~max_stall ~max_pass_failures ~domains ~pool ~realign
           ~stats ~image0 ~value)

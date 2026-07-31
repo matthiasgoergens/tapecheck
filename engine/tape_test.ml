@@ -253,12 +253,25 @@ let report_failure (type a e) ~(f : a -> (unit, e) Result.t)
        flaky failure is still exactly reproducible from its recording
        even when the value is not. *)
     let hex = Regressions.hex_of_string (Tape.serialize_image image) in
-    raise
-      (Flaky_test
-         (Printf.sprintf
-            "tapecheck: FLAKY TEST. A failure was found and shrunk, but the              minimal example no longer fails when re-run.\n            \  This run is NOT a pass: a real failure was observed.\n            \  Likely causes: the test depends on external state (a clock, a              global, an unsynchronised resource),\n            \  or the generator is non-deterministic (see              Tape_engine.check_generator_determinism).\n            \  Minimal value: %s\n            \  Tape (resume with Tape_test.resume_run_exn): %s"
-            (Sexp.to_string (sexp_of minimal))
-            hex))
+    let msg =
+      String.concat ~sep:"\n"
+        [ "tapecheck: FLAKY TEST."
+        ; "  A failure was found and shrunk, but the minimal example no \
+           longer fails when re-run."
+        ; "  This run is NOT a pass: a real failure was observed."
+        ; ""
+        ; "  Likely causes: the test depends on external state (a clock, a \
+           global, an"
+        ; "  unsynchronised resource), or the generator is not a pure \
+           function of the tape"
+        ; "  (check with Tape_engine.check_generator_determinism)."
+        ; ""
+        ; "  Minimal value: " ^ Sexp.to_string (sexp_of minimal)
+        ; "  Resume from this tape with Tape_test.resume_run_exn ~tape:"
+          ^ hex
+        ]
+    in
+    raise (Flaky_test msg)
   | Error e ->
     Option.iter regressions ~f:(fun path ->
       Regressions.append path ~image ~size ~comment:(Sexp.to_string (sexp_of minimal)));
