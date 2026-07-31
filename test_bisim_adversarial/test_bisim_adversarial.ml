@@ -205,13 +205,13 @@ let report_of name ?op_label ?expected_raising run =
 
 let () =
   Stdio.printf "=== A: legitimate exception agreement ===\n";
-  let _ =
+  let a =
     report_of "A, default" (fun ~report ?op_label ?expected_raising () ->
       B_legit.with_health ~report ?op_label ?expected_raising
         (drive ~gen:(B_legit.gen_cmds ~max_steps:40 ())
            ~sexp_of_cmd:Legit_spec.sexp_of_cmd ~count:300))
   in
-  let _ =
+  let _a2 =
     report_of "A, with ~expected_raising:[Pop_empty]"
       ~expected_raising:[ "Pop_empty" ]
       (fun ~report ?op_label ?expected_raising () ->
@@ -220,13 +220,13 @@ let () =
               ~sexp_of_cmd:Legit_spec.sexp_of_cmd ~count:300))
   in
   Stdio.printf "=== B: label collapse (`type cmd = Op of int * int`) ===\n";
-  let _ =
+  let b =
     report_of "B, default" (fun ~report ?op_label ?expected_raising () ->
       B_collapsed.with_health ~report ?op_label ?expected_raising
         (drive ~gen:(B_collapsed.gen_cmds ~max_steps:40 ())
            ~sexp_of_cmd:Collapsed_spec.sexp_of_cmd ~count:300))
   in
-  let _ =
+  let b_labelled =
     report_of "B, with ~op_label naming each opcode"
       ~op_label:(fun (Collapsed_spec.Op (op, _)) -> Printf.sprintf "Op%02d" op)
       (fun ~report ?op_label ?expected_raising () ->
@@ -235,10 +235,36 @@ let () =
               ~sexp_of_cmd:Collapsed_spec.sexp_of_cmd ~count:300))
   in
   Stdio.printf "=== C: rare broken operation (1 step in 400) ===\n";
-  let _ =
+  let c =
     report_of "C, default" (fun ~report ?op_label ?expected_raising () ->
       B_rare.with_health ~report ?op_label ?expected_raising
         (drive ~gen:(B_rare.gen_cmds ~max_steps:40 ())
            ~sexp_of_cmd:Rare_spec.sexp_of_cmd ~count:300))
   in
-  ()
+  (* Assertions, so the three fixes cannot silently rot. Each was a real
+     failure of the first implementation, found by trying to break it
+     rather than by testing that it worked. *)
+  let flagged ?expected_raising st =
+    List.map (Bisim.ops_agreeing_only_by_raising ?expected_raising st)
+      ~f:(fun w -> w.Bisim.op)
+    |> Set.of_list (module String)
+  in
+  let checks =
+    [ ( "A: legitimate exception agreement is flagged by default"
+      , Set.equal (flagged a) (Set.of_list (module String) [ "Pop_empty" ]) )
+    ; ( "A: ~expected_raising silences it"
+      , Set.is_empty (flagged ~expected_raising:[ "Pop_empty" ] a) )
+    ; ( "B: label collapse is DETECTED and announced, not silently useless"
+      , Bisim.label_resolution_is_degenerate b )
+    ; ( "B: with ~op_label the same defect is caught (5 operations)"
+      , Set.length (flagged b_labelled) = 5 )
+    ; ( "C: a rare broken op is surfaced as undersampled, not dropped"
+      , not (List.is_empty (Bisim.ops_undersampled c)) )
+    ]
+  in
+  Stdio.printf "=== ASSERTIONS ===\n";
+  let bad = ref 0 in
+  List.iter checks ~f:(fun (name, ok) ->
+    if not ok then Int.incr bad;
+    Stdio.printf "  %-4s %s\n" (if ok then "ok" else "FAIL") name);
+  if !bad > 0 then Stdlib.exit 1

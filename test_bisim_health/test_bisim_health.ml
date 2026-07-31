@@ -150,4 +150,27 @@ let () =
   Stdio.printf "healthy: no operations flagged (no false positive): %b\n"
     (List.is_empty (Bisim.ops_agreeing_only_by_raising stats_h));
   Stdio.printf "healthy: stayed quiet (no report emitted):          %b\n"
-    (List.is_empty !captured_h)
+    (List.is_empty !captured_h);
+  (* Assert, do not merely print. These four properties are the whole
+     point of the per-operation health check, and each was arrived at by
+     a measurement that contradicted an earlier design:
+       - per-operation, because the AGGREGATE ratio is 0.144 here and a
+         0.5 threshold stays silent on the very bug it was written for
+       - default-on, because an opt-in statistic is how janestreet/core
+         #182 survived six years
+       - no false positive on a healthy spec, because "flags 5 of 36" is
+         also what a check that flags everything would report *)
+  let ok =
+    Set.equal flagged expected
+    && not (Bisim.most_steps_agreed_only_by_raising stats)
+    && (not (List.is_empty !captured))
+    && List.is_empty (Bisim.ops_agreeing_only_by_raising stats_h)
+    && List.is_empty !captured_h
+  in
+  if not ok then begin
+    Stdio.printf "\nFAIL: bisim health check regressed. See\n\
+                 \  coordinate-work/open-items.md (janestreet/core#182) for why\n\
+                 \  each of these assertions exists.\n";
+    Stdlib.exit 1
+  end
+  else Stdio.printf "\nall bisim health assertions passed\n"
