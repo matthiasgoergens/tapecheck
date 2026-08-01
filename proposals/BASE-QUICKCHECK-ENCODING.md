@@ -77,13 +77,20 @@ the branches lo / general / hi:
 
 ```ocaml
 let non_uniform f lo hi =
+  let general = f lo hi in
   let selector =
     create (fun ~size:_ ~random -> Splittable_random.float random ~lo:0. ~hi:1.)
   in
   bind selector ~f:(fun p ->
-    map (f lo hi) ~f:(fun v ->
+    map general ~f:(fun v ->
       if Float.( < ) p 0.05 then lo else if Float.( < ) p 0.95 then v else hi))
 ```
+
+`f lo hi` is hoisted out of the continuation deliberately: building a
+generator is pure, so the recorded draws are identical either way
+(verified -- the distribution table and every challenge number below are
+unchanged by the hoist), but it keeps the closure capturing a value
+rather than the function, which matters on the mode-annotated branch.
 
 Both properties are needed, and neither alone suffices:
 
@@ -152,11 +159,45 @@ would alter which values are cheap in a way that is more visibly a
 design choice than a bug, and the payoff is smaller. Recorded so it is
 not rediscovered from scratch.
 
-## Status
+## Two patches, because upstream keeps two lineages
 
-The patch is in `proposals/base_quickcheck-non_uniform.patch`. It is
-**not** applied to `vendor/`, which is kept byte-identical to upstream
-so that vendoring stays a pure name-resolution device — apply it to
-reproduce the numbers above, then revert.
+`base_quickcheck` does not use conditional compilation to span stock
+OCaml and OxCaml. `master` and the `oxcaml` branch carry the same
+mode-annotated source (their `non_uniform` is byte-identical); the stock
+releases are separate branches. `src/generator.ml` differs by 783 lines
+between `master` and `v0.17`.
 
-Offering it upstream is an outward-facing action and is not done.
+So there are two patches:
+
+- `base_quickcheck-non_uniform-OXCAML.patch` — against `master`, using
+  `(create [@mode portable])`, `(bind [@mode portable])` and
+  `(map [@mode portable])` to match the surrounding style. **This is the
+  one to offer**, since it is the live development lineage.
+- `base_quickcheck-non_uniform.patch` — the same change without mode
+  annotations, against the stock lineage, which is what tapecheck
+  vendors.
+
+### Verification status, stated exactly
+
+- **Stock variant: compiled.** Applied to a clean checkout of upstream
+  `v0.17.1` and built with OCaml 5.3.0 — `dune build src/` clean,
+  `base_quickcheck__Generator.cmi` produced.
+- **OxCaml variant: NOT compiled.** `master` requires a newer OxCaml
+  than the public `5.2.0+ox` opam overlay publishes — the overlay has
+  `v0.18~preview.130.91+190`, `master` is `.100+614`, and `oxcaml` is
+  `.106+341`. Building `src/` there fails in `with_basic_types.ml`
+  (`or_null` kinds), `shrinker.ml` (contended/uncontended) and
+  `generator.mli` (`value_or_null mod maybe_null`) — all pre-existing,
+  none from this change, but they mean the change cannot be
+  compile-checked locally. An early "the error set is unchanged" reading
+  was weak evidence: dune was stopping before reaching most of them.
+
+That gap is the same one described in
+[splittable_random#2](https://github.com/janestreet/splittable_random/pull/2):
+the public overlay lags the mirror. It should be said plainly in any PR
+rather than implied away.
+
+Neither patch is applied to `vendor/`, which stays byte-identical to
+upstream so that vendoring remains a pure name-resolution device.
+
+Offering either upstream is an outward-facing action and is not done.
