@@ -495,6 +495,16 @@ let distinct_proposals = ref 0
 let last_pass_costs () = Array.to_list (Array.mapi pass_costs ~f:(fun i c -> (pass_names.(i), c)))
 let last_duplicate_stats () = (!duplicate_proposals, !distinct_proposals)
 let last_greedy_cost () = !greedy_cost
+(* Instrumentation for the length repair in [minimize_integer] below.
+   A mechanism that never fires is indistinguishable from one that is
+   absent, so count attempts and successes rather than inferring from
+   headline numbers -- that distinction is exactly what showed the
+   repair to be inert under the current pass order (one firing in 100
+   lengthlist trials). *)
+let length_repair_tries = ref 0
+let length_repair_hits = ref 0
+let last_length_repair () = (!length_repair_tries, !length_repair_hits)
+
 let accepted_shrinks = ref 0
 let sweeps = ref 0
 let initial_choices = ref 0
@@ -549,6 +559,18 @@ type 'a search =
   ; s_attempts_at_last_shrink : int ref
   ; s_max_stall : int ref
   ; s_seen : (Tape.image, unit) Hashtbl.t
+  ; s_last_recorded : Tape.image option ref
+        (* What the last SEQUENTIAL replay actually consumed, retained
+           even when the proposal was uninteresting. A proposal that
+           stops failing is useless as a candidate, but the number of
+           choices it consumed is precisely the signal the length repair
+           in [minimize_integer] needs: it sizes its deletion as given
+           length minus consumed length instead of searching for it.
+
+           Only the sequential path writes this, so the repair uses
+           [attempt] and never [attempt_batch]: pooled proposals are
+           evaluated in worker domains via [eval_proposal], which has no
+           access to [st]. *)
   ; s_interesting : Tape_stats.verdict -> bool
         (* Which verdicts count as a candidate at all. Shrinking wants
            only [Case_failed] -- a proposal that stops failing is no
@@ -589,6 +611,12 @@ let search_candidate (type a) (st : a search) ~policy proposal =
   st.s_stats.replays <- st.s_stats.replays + 1;
   if out.Tape.misaligned then
     st.s_stats.misaligns <- st.s_stats.misaligns + 1;
+  (* Record what was consumed BEFORE the interesting/overrun filtering
+     below discards the image. An overrun replay wanted MORE than it was
+     given and so carries no short-read signal; leave the field empty
+     rather than reporting a length a caller would act on. *)
+  st.s_last_recorded
+    := (if out.Tape.overrun then None else Some out.Tape.image);
   match tested with
   | None -> (out.Tape.misaligned, None)
   | Some verdict ->
@@ -732,6 +760,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let seen_proposals = Hashtbl.Poly.create () in
   let shrinks = ref 0 in
   let attempts_at_last_shrink = ref 0 in
+  let last_recorded = ref None in
   let max_stall = ref (Option.value max_stall ~default:Int.max_value) in
   (* Build the shared search state over the SAME ref cells this
      function's passes already use, then alias the proposal machinery to
@@ -759,6 +788,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ; s_attempts_at_last_shrink = attempts_at_last_shrink
     ; s_max_stall = max_stall
     ; s_seen = seen_proposals
+    ; s_last_recorded = last_recorded
     ; (* Shrinking: only a still-failing proposal is a candidate, and it
          is accepted only if strictly shortlex-smaller. *)
       s_interesting =
@@ -1297,10 +1327,84 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      overflow. *)
   let minimize_integer s i value lo hi =
     let target = clamp64 0L ~lo ~hi in
+    (* LENGTH REPAIR, folded into the lowering attempt. This is
+       Hypothesis's try_shrinking_nodes (shrinker.py:1146): lower the
+       choice at [i] to [v]; if the replay is not interesting but
+       consumed L FEWER choices than it was handed, retry with exactly
+       those L choices deleted immediately after [i]. The deletion size
+       is COMPUTED, never searched, which is what lower_and_delete
+       cannot do -- that pass steps the value down by one and hunts for
+       a block of at most 4 to drop.
+
+       An ablation of Hypothesis over seeds 0..99 put the weight here:
+       with minimize_individual_choices (this move's only caller)
+       disabled it solves lengthlist 14/100, and with just this retry
+       removed 51/100, the failures all shaped [0,...,0,900] -- elements
+       zeroed, length never coming down. With reorder_spans,
+       pass_to_descendant, minimize_duplicated_choices,
+       lower_integers_together and reduce_each_alternative ALL disabled
+       it still scores 100/100 at 90.6 evaluations against 87.2 stock.
+       Spans are not load-bearing for this problem.
+
+       IT IS CURRENTLY INERT HERE, AND THE REASON IS PASS ORDER, NOT THE
+       MOVE. [minimize_integer] skips a choice already at its target,
+       and by the time the sweep reaches minimize_choices,
+       lower_and_delete has ground the length prefix down one step at a
+       time. Measured: this fires ONCE across 100 lengthlist trials, and
+       lengthlist is unmoved at 74/100 against a 73/100 baseline.
+
+       Hoisting the lowering earlier DOES close lengthlist -- 100/100 at
+       135 calls against 256 -- and costs test_poison, which drops from
+       10/34 to 6/34. That drop is not caused by this repair: with the
+       repair switched off and only the order changed, poison is the
+       same 6/34 while lengthlist collapses to 7/100. A dedicated
+       integers-only pass in the same early slot measured identically,
+       and a variant that probes without accepting bare lowerings was
+       worse on every axis (76/100, 373 calls, and the poison base tree
+       drifted from 34 positions to 36). So the mechanism is kept and
+       correct, the reordering is not shipped, and lengthlist stays a
+       recorded frontier. See LENGTH-REPAIR.md for the full 2x2.
+
+       Right-truncation is already free and is not what this adds: an
+       accepted candidate is [out.Tape.image], what the replay actually
+       consumed, so surplus trailing choices vanish by construction.
+       What this adds is deletion from the FRONT of the element region,
+       which is what walks a late failing element leftward. *)
     let try_value v =
-      attempt
-        (seg_set !best s
-           (with_choice (seg_get !best s) i (Tape.Integer { value = v; lo; hi })))
+      let arr = seg_get !best s in
+      if i >= Array.length arr then false
+      else begin
+        let lowered =
+          with_choice arr i (Tape.Integer { value = v; lo; hi })
+        in
+        (* Clear FIRST. [attempt] returns false both for "replayed, not
+           interesting" and for "already seen, never replayed", and only
+           the former leaves a consumed length describing THIS proposal.
+           Reading the field without clearing it would size the deletion
+           from whatever unrelated replay happened to run last. *)
+        last_recorded := None;
+        if attempt (seg_set !best s lowered) then true
+        else
+          match !last_recorded with
+          | None -> false
+          | Some rec_img ->
+            if s >= seg_count rec_img then false
+            else begin
+              let consumed = Array.length (seg_get rec_img s) in
+              let l = Array.length lowered - consumed in
+              if l > 0 && i + 1 + l <= Array.length lowered then begin
+                Int.incr length_repair_tries;
+                let ok =
+                  attempt
+                    (seg_set !best s
+                       (with_deleted_block lowered ~pos:(i + 1) ~len:l))
+                in
+                if ok then Int.incr length_repair_hits;
+                ok
+              end
+              else false
+            end
+      end
     in
     if Int64.(value <> target) && not (try_value target) then begin
       let above = Int64.(value > target) in
@@ -1923,6 +2027,7 @@ let run_target (type a) ?(seed = 0) ?(size = 10) ?(max_improvements = 100)
     ; s_attempts_at_last_shrink = alast
     ; s_max_stall = mstall
     ; s_seen = Hashtbl.Poly.create ()
+    ; s_last_recorded = ref None
     ; (* Any VALID case is a candidate -- we are maximising over passing
          inputs, not chasing a failure. *)
       s_interesting =

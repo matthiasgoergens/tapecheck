@@ -298,7 +298,14 @@ let () =
   check
     { name = "lengthlist: bind len, max >= 900  [frontier: not 100/100]"
     ; min_found = 100
-    ; min_minimal = 60 (* measured 73 with earned patience, 70 flat *)
+    ; min_minimal = 60
+        (* measured 73 with earned patience, 70 flat; 74 once the length
+           repair landed, i.e. unchanged within noise because the repair
+           is inert under the current pass order -- it fires ONCE in 100
+           trials. 100/100 at 135 calls IS reachable by running
+           minimize_choices before lower_and_delete, but that costs
+           test_poison 10/34 -> 6/34 and is not shipped. Full 2x2 in
+           LENGTH-REPAIR.md; do not re-derive it. *)
     ; max_avg_calls = 400 (* measured 256 with earned patience, 279 flat *)
     ; max_non_converged = 40 (* measured 27 flat; earned patience similar *)
     ; catches =
