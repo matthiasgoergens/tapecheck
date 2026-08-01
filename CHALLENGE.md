@@ -40,12 +40,12 @@ change to `base_quickcheck` described in
 
 | challenge | Hypothesis 6.164.0 | tapecheck | tapecheck +patch |
 |---|---|---|---|
-| reverse | **100/100**, 17.6 | 0/100, 297.8 | 50/100, 278.8 |
-| distinct | **100/100**, 48.5 | 0/100, 424.6 | 12/100, 417.7 |
-| large_union_list | **100/100**, 208.2 | 0/100, 1437.1 | 0/100, 1256.7 |
-| calculator | **100/100**, 191.2 | 4/100, 852.4 | 4/100, — |
+| reverse | **100/100**, 17.6 | 0/100, 294.0 | 50/100, 278.8 |
+| distinct | **100/100**, 48.5 | 0/100, 418.5 | 12/100, 417.7 |
+| large_union_list | **100/100**, 208.2 | 0/100, 1317.7 | 0/100, 1256.7 |
+| calculator | **100/100**, 191.2 | 3/100, 880.5 | 4/100, — |
 | bound5 | **100/100**, 157.4 | 17/100, 267.7 | 17/100, — |
-| lengthlist | 100/100, 87.7 | 100/100, 144.3 | 100/100, 144.3 |
+| lengthlist | **100/100**, 87.7 | 64/100, 298.8 | 64/100, 298.8 |
 | difference_must_not_be_zero | 100/100, 40.6 | 100/100, 93.9 | 100/100, 93.9 |
 | difference_must_not_be_small | 100/100, 726.8 | 100/100, **92.8** | 100/100, **92.8** |
 | difference_must_not_be_one | 100/100, 883.4 | 100/100, **94.5** | 100/100, **94.5** |
@@ -58,7 +58,7 @@ Cells are `normalised / mean evaluations`.
 headline and it is not close. It is also better than their own 2020
 report, so it is current work rather than legacy.
 
-**tapecheck reaches 100/100 on four of nine.**
+**tapecheck reaches 100/100 on three of nine.**
 
 **Where we lose, one cause dominates and it is not the shrinker.**
 reverse, distinct and large_union_list are the three built on
@@ -79,10 +79,24 @@ promote to the root. That is `pass_to_descendant`, the same thing
 divisors become `('/', 0, -1)` instead of `('/', 0, max_int)`, and the
 inert chains remain, so the score does not move.
 
-**lengthlist was ours and is now fixed.** It sat at 64/100 until the
-per-pass failure cutoff was made proportional to tape length rather than
-a flat 20; it is now 100/100 at 144 evaluations, down from 299. See the
-tenth entry in `test_regression/regression_guard.ml`.
+**lengthlist is ours, and the obvious fix was tried and reverted.** Its
+misses all stop with `converged = false` and the global budget
+untouched, so it is a cap rather than a capability gap: the per-pass
+failure cutoff is a flat 20, which is a very different fraction of a
+200-choice tape than of a 20-choice one. Making it proportional
+(`max 20 (len/3)`) takes this to 100/100 at *half* the cost and leaves
+the nine other guarded properties untouched — and breaks `test_poison`,
+whose size-2 base tree then stops shrinking at 50 leaves instead of 2.
+The floor grants long-tape patience to unproductive passes too, paid for
+out of the global budget, which is what the flat cutoff exists to
+prevent. Measured at divisors 3, 4, 6, 8: at 3 it binds and poison
+breaks; at 4 and above it never binds and nothing changes. No window.
+
+The real fix is *earned* patience — a pass's allowance scaled by its own
+success rate, in the spirit of `fixate_shrink_passes` — which is a
+design change rather than a constant, and is not done. lengthlist is
+recorded as a frontier in `test_regression/regression_guard.ml` so it
+cannot silently get worse, and an improvement is flagged too.
 
 **Where we win, we win on what the suite calls hardest.** The
 `difference` family requires holding a dependency between two
