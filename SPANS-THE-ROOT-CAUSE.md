@@ -341,3 +341,58 @@ Splicing is likewise encoding-agnostic — `Integer {value; lo; hi}`
 becomes `Integer {value = hi; lo; hi}`, "set this draw to its maximum",
 with no need to know how `int_uniform_inclusive` maps onto the PRNG.
 A typed tape is worth something even where a flat one has spans.
+
+## A span-free approximation of `reorder_spans`, not yet built
+
+`bound5` sharpened the question of whether sibling ordering is even
+canonical. It is, and Hypothesis says so explicitly. `sort_key` is
+shortlex over choices — "x is simpler than y if x is shorter, or the
+same length and lower per-choice index" — and `reorder_spans` sorts a
+span's children that share a label using `Ordering.shrink` with that
+key. Their docstring gives the motivating case:
+
+> `@given(st.text(), st.text())` with `assert x != y` — "Without the
+> ability to reorder x and y this could fail either with `x=""`,
+> `y="0"`, or the other way around. With reordering it will reliably
+> fail with `x=""`, `y="0"`."
+
+So the canonical answer is the *sorted* arrangement, and counting any
+permutation as equally minimal would discard the property being
+measured. Reliably reporting the same counterexample is the benefit.
+
+We cannot do this the way they do: their pass needs span boundaries to
+know where a child starts and ends, and labels to know which children
+are comparable.
+
+**But we already use a stand-in for "comparable" elsewhere.**
+`correlate_image` treats two integer choices with identical bounds as
+the same kind of thing, on the grounds that equal bounds means the
+generator drew them from the same range. That heuristic lifts from
+single choices to segments: two tape subsequences with an identical
+signature — the same sequence of `(kind, lo, hi)` — are plausibly
+sibling draws of the same generator, and can be ordered with the
+existing `compare_shortlex`.
+
+Sketch of the pass:
+
+1. Scan the main stream for maximal runs of repeated signature. On
+   bound5 the five slots share a signature, so the run is found without
+   any span information.
+2. Sort those segments by `compare_shortlex` and propose the result.
+3. Accept on the usual condition: still fails, and the re-recorded tape
+   is shortlex-smaller.
+
+What it would and would not reach. It should handle `bound5`, where the
+siblings are fixed-shape and adjacent. It will miss variable-length
+siblings, whose signatures differ precisely because the contents differ
+— which is most list elements, and probably `large_union_list`. So this
+is a partial recovery, not a replacement, and it should be measured
+against both before being believed.
+
+Worth stating the risk plainly: signature equality is a guess about
+structure. Two unrelated draws with coincidentally identical bounds
+would be reordered against each other. That is safe for correctness --
+every proposal is still validated by re-running the test -- but it costs
+attempts, and the per-pass cutoff already showed that a pass which
+scores no successes is expensive. Any implementation needs the
+regression guard's cost bounds watching it.
