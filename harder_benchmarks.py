@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["hypothesis==6.164.0"]
+# ///
 """Harder shrinking benchmarks, to find where tapecheck and Hypothesis
 actually differ.
 

@@ -5,7 +5,14 @@ the reference. `shrink_table_hypothesis.py` runs the six properties from
 tapecheck's `demo/shrink_table.ml` against Hypothesis itself, same
 generators, predicates, minimality criteria and 100 seeds.
 
-Run: `uv run python shrink_table_hypothesis.py`
+Run: `uv run shrink_table_hypothesis.py`
+
+Each script carries [PEP 723](https://peps.python.org/pep-0723/) inline
+dependency metadata, so `uv run <script>` provisions Hypothesis (and
+numpy, for the `bound5` challenge) by itself. Note `uv run <script>`,
+not `uv run python <script>` -- the latter bypasses the metadata and
+fails with `ModuleNotFoundError`, which is what the old instruction
+did.
 
 ## Result
 

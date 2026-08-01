@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["hypothesis==6.164.0", "numpy"]
+# ///
 """Shrinking Challenge measurement for current Hypothesis.
 
 Adapted from jlink/shrinking-challenge's own

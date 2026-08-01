@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["hypothesis==6.164.0"]
+# ///
 """Hypothesis run of demo/shrink_table.ml's six properties.
 
 tapecheck is a port of Hypothesis's Conjecture engine, so Hypothesis is
