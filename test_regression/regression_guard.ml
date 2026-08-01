@@ -52,14 +52,19 @@ type outcome =
   ; non_converged : int
   }
 
-let measure (type a) ~(gen : a G.t) ~(test : a -> bool)
-      ~(is_minimal : a -> bool) : outcome =
+(* [size] is a parameter because one property is specifically about
+   LONG tapes: the per-pass cutoff is now proportional to tape length,
+   and at the default size:10 the lengthlist tapes are too short for the
+   proportional term to matter, so the guard would barely register a
+   revert to a flat cutoff. Everything else keeps the original 10. *)
+let measure (type a) ?(size = 10) ~(gen : a G.t) ~(test : a -> bool)
+      ~(is_minimal : a -> bool) () : outcome =
   let found = ref 0 and minimal = ref 0 and calls = ref 0 in
   let non_converged = ref 0 in
   for t = 0 to trials - 1 do
     match
       Tape_engine.run gen ~test ~seed:(t * 1_000_003) ~count:cases_per_trial
-        ~size:10
+        ~size
     with
     | Tape_engine.Passed _ -> ()
     | Tape_engine.Failed { minimal = m; attempts; converged; _ } ->
@@ -128,7 +133,7 @@ let () =
     (measure
        ~gen:(G.int_uniform_inclusive 0 1_000_000)
        ~test:(fun v -> v < 123_457)
-       ~is_minimal:(fun v -> v = 123_457));
+       ~is_minimal:(fun v -> v = 123_457) ());
 
   check
     { name = "pair, fail iff a + b >= 100"
@@ -141,7 +146,7 @@ let () =
        ~gen:(G.both (G.int_uniform_inclusive 0 1000)
                (G.int_uniform_inclusive 0 1000))
        ~test:(fun (a, b) -> a + b < 100)
-       ~is_minimal:(fun (a, b) -> a = 0 && b = 100));
+       ~is_minimal:(fun (a, b) -> a = 0 && b = 100) ());
 
   check
     { name = "int list, fail iff length >= 3"
@@ -157,7 +162,7 @@ let () =
     (measure
        ~gen:(G.list (G.int_uniform_inclusive 0 100))
        ~test:(fun l -> List.length l < 3)
-       ~is_minimal:(fun l -> List.equal Int.equal l [ 0; 0; 0 ]));
+       ~is_minimal:(fun l -> List.equal Int.equal l [ 0; 0; 0 ]) ());
 
   check
     { name = "int list, fail iff sum >= 100"
@@ -171,7 +176,7 @@ let () =
     (measure
        ~gen:(G.list (G.int_uniform_inclusive 0 1000))
        ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100)
-       ~is_minimal:(fun l -> List.equal Int.equal l [ 100 ]));
+       ~is_minimal:(fun l -> List.equal Int.equal l [ 100 ]) ());
 
   check
     { name = "filtered even ints, fail iff v >= 100"
@@ -187,7 +192,7 @@ let () =
     (measure
        ~gen:(G.filter (G.int_uniform_inclusive 0 100_000) ~f:(fun v -> v % 2 = 0))
        ~test:(fun v -> v < 100)
-       ~is_minimal:(fun v -> v = 100));
+       ~is_minimal:(fun v -> v = 100) ());
 
   check
     { name = "bind, fail iff sum >= 100 (no stock shrinker)"
@@ -208,7 +213,7 @@ let () =
           let%bind len = G.int_uniform_inclusive 1 64 in
           G.list_with_length (G.int_uniform_inclusive 0 1000) ~length:len)
        ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100)
-       ~is_minimal:(fun l -> List.equal Int.equal l [ 100 ]));
+       ~is_minimal:(fun l -> List.equal Int.equal l [ 100 ]) ());
 
   (* Ported from Hypothesis tests/quality/test_zig_zagging.py. Two
      values must stay exactly 1 apart, so lowering either alone works by
@@ -228,7 +233,7 @@ let () =
        ~gen:(G.both (G.int_uniform_inclusive 0 300)
                (G.int_uniform_inclusive 0 300))
        ~test:(fun (m, n) -> abs (m - n) <> 1)
-       ~is_minimal:(fun (m, n) -> (m = 0 && n = 1) || (m = 1 && n = 0)));
+       ~is_minimal:(fun (m, n) -> (m = 0 && n = 1) || (m = 1 && n = 0)) ());
 
   (* Guards the per-pass cutoff CONSTANT, not just its presence. With
      max_pass_failures at 20 this matches no-cutoff exactly (100/100);
@@ -252,7 +257,50 @@ let () =
           let%bind len = G.int_uniform_inclusive 1 200 in
           G.list_with_length (G.int_uniform_inclusive 0 1000) ~length:len)
        ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 500)
-       ~is_minimal:(fun l -> List.equal Int.equal l [ 500 ]));
+       ~is_minimal:(fun l -> List.equal Int.equal l [ 500 ]) ());
+
+  (* Guards the length-PROPORTIONAL form of the cutoff, which the flat
+     constant cannot satisfy. Same bind-then-fixed-length shape as the
+     property above, but the predicate is max rather than sum, and that
+     changes everything: with sum, almost any element reduction is a
+     productive move, whereas with max only one element matters and the
+     length reduction that isolates it takes many failed attempts to
+     land. Measured (diag2/probe_cutoff_sweep.ml, 50 runs):
+
+       flat 20   34/50 minimal, 280 calls
+       flat 40   50/50 minimal, 137 calls -- but 'len >= 3' goes 182 -> 300
+       floor     50/50 minimal, 137 calls, everything else unchanged
+
+     (those are the probe's protocol -- count 1e6, size 30, budget 200k.
+     Under this file's smaller protocol the numbers differ but the
+     direction is the same; see [catches].)
+
+     So this catches BOTH reverting to a flat cutoff and lowering the
+     len/3 divisor. It is the lengthlist challenge from
+     jlink/shrinking-challenge; see CHALLENGE.md. *)
+  check
+    { name = "lengthlist: bind len in [1,100], max >= 900"
+    ; min_found = 100
+    ; min_minimal = 95 (* measured 100; 70 with a flat cutoff of 20 *)
+    ; max_avg_calls = 200 (* measured 147; 279 with a flat cutoff of 20 *)
+    ; catches =
+        "reverting the per-pass cutoff to a flat constant, or raising \
+         the len/3 divisor. VALIDATED: reverting to flat trips all \
+         three criteria at once -- non-converged 27/100, 279 calls, and \
+         70/100 fully minimal. Note this needs ~size:30; at the default \
+         size:10 the tapes are too short for the proportional term to \
+         bind and the same revert shows only 3/100 non-converged."
+    }
+    (measure
+       ~gen:
+         (G.bind (G.int_uniform_inclusive 1 100) ~f:(fun n ->
+            G.list_with_length (G.int_uniform_inclusive 0 1000) ~length:n))
+       ~test:(fun l ->
+         match List.max_elt l ~compare:Int.compare with
+         | None -> true
+         | Some m -> m < 900)
+       ~is_minimal:(fun l -> List.equal Int.equal l [ 900 ])
+       ~size:30 ());
 
   (* Deliberately NOT at 100/100: this is the open frontier case, where
      both engines are far from optimal (tape 47, Hypothesis 53). The
@@ -273,7 +321,7 @@ let () =
        ~gen:(G.list (G.int_uniform_inclusive 0 50))
        ~test:(fun l ->
          not (match l with [] -> false | h :: _ -> h = List.length l))
-       ~is_minimal:(fun l -> List.equal Int.equal l [ 1 ]));
+       ~is_minimal:(fun l -> List.equal Int.equal l [ 1 ]) ());
 
   Stdio.printf "\n";
   if !failures > 0 then begin
