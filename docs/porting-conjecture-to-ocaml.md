@@ -28,15 +28,26 @@ design; the measurement is the port's.
 
 | The paper asks for | Hypothesis already has | Ported, and measured |
 |---|---|---|
-| Better reduction — counterexamples people can actually read | Internal reduction over the choice sequence | Stock `base_quickcheck` shrinkers reach the true minimum 0/100 on six benchmarks; the tape engine 100/100 |
+| Better reduction — counterexamples people can actually read | Internal reduction over the choice sequence | On six benchmarks the tape engine reaches the true minimum 100/100 and stock `base_quickcheck` 0/100 — but see the caveat below, because most of that gap is definitional |
 | Reduction that explains *which parts matter* | The `explain` phase, free-variation analysis | Ported. On the paper's own `(0, 0)` example it reports the first component load-bearing and the second free, in 5–12 replays |
 | Generators that find the interesting inputs | Edge-case-biased generation | Ported. A divisibility property goes from a 0.013% hit rate to 5.0%; end-to-end, 2/100 found-and-minimised to 100/100 |
 | Visibility into what testing actually did | Statistics and health checks | All four Hypothesis health checks ported. They found two real bugs *in tapecheck* — `assume`'s exception being swallowed, and one check made unreachable by double-counting |
 | Tests that fit a developer's time budget | — | Engine overhead 8.9 µs per call against Hypothesis's 609 µs, though see the caveat below |
 | Steering the search toward hard-to-reach states | Targeted PBT (`target()`) | Ported from `optimiser.py` |
 
-The time-budget row deserves its caveat immediately, because the number
-flatters us and someone will otherwise do the arithmetic: a 69× overhead
+The reduction row deserves its caveat immediately. On scalar properties
+the stock column is 0/100 at a cost of *zero test calls*, because
+`Base_quickcheck.Shrinker.int` is `atomic` — literally
+`fun _ -> Sequence.empty` — as are `bool`, `char`, `int32`, `int63` and
+`int64`. base_quickcheck shrinks structure, not scalars, by design. So
+0/100 there is not a shrinker being beaten; it is a shrinker that never
+runs, and quoting it as a win would be dishonest. The rows where the
+stock shrinker genuinely works are the list properties, where it still
+reaches 0/100 — and `self_len`, where it reaches **46/100 against the
+tape engine's 47/100**, which is a tie.
+
+The time-budget row deserves its caveat too, because the number flatters
+us and someone will otherwise do the arithmetic: a 69× overhead
 gap only matters if the property itself is nearly free. A property doing
 10 ms of real work sees 609 µs as 6%, not as a factor of 69. Where it
 does bite is cheap properties run many times — data-structure laws,
