@@ -58,6 +58,18 @@ opt-in engine. Everything here (the results table, the drop-in
 wrapper, the vendored-unmodified proof) exists to make that a small,
 well-evidenced proposal rather than a leap of faith.
 
+## Write-up
+
+[**Porting Hypothesis's shrinker to OCaml, and measuring what it
+cost**](docs/porting-conjecture-to-ocaml.md) — what the port delivers
+against the recommendations in *Property-Based Testing in Practice*,
+what it scores on the cross-language [Shrinking
+Challenge](https://github.com/jlink/shrinking-challenge) (Hypothesis
+9/9, tapecheck 3/9), and a diagnosis of each loss: one defect in
+`base_quickcheck`'s integer encoding, one structural gap from recording
+below the strategy layer, and one of my own that I fixed and then had to
+revert.
+
 ## Results
 
 Six properties, 100 seeds each, identical failing examples handed to
