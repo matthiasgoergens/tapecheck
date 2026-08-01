@@ -104,3 +104,38 @@ quality drop I measured is avoidable. Also their paper/blogpost
 `Control.Selective` — selective functors appear in the cabal deps of
 every component, which suggests the generator applicative is doing
 something deliberate about which branches are observable.
+
+
+## A scar of theirs that does NOT transfer, and why that is interesting
+
+`Internal/Search.hs` documents a parity bias:
+
+> standard binary search is not very good at allowing search to flip
+> between even and odd. For example, if we start with `maxBound`,
+> *every* possible shrunk value computed by `binarySearch` is even.
+
+They ship `binarySearchNoParityBias` to counter it, pairing each
+candidate with its opposite-parity neighbour.
+
+tapecheck's `minimize_integer` is also a halving search, so the bias
+looked likely. Measured (`diag2/probe_parity.ml`, thresholds of each
+parity, 40 seeds each): **240/240 exact on even thresholds, 240/240 on
+odd**. No bias at all.
+
+The reason is the thing worth keeping. falsify's `binarySearch` returns
+a LIST OF CANDIDATE VALUES, computed up front — and that list is what
+carries the bias. It has to be a list, because falsify's generators emit
+their shrink candidates before any of them is tried
+(`Gen a = SampleTree -> (a, [SampleTree])`). An engine-driven shrinker
+has no such constraint: tapecheck's binary search is ADAPTIVE, narrowing
+on the actual test outcome until it converges on the true boundary,
+whatever its parity.
+
+So generator-driven shrinking pays a price that is easy to miss:
+candidates must be enumerated in advance, so the search cannot react to
+what it learns. The parity bias is a symptom of that, not of binary
+search.
+
+This is the first case found where tapecheck's zero-cooperation position
+is not merely cheaper but *better*. Worth stating in the email, because
+the rest of the letter is honest about where the design costs us.
