@@ -113,6 +113,48 @@ let () =
      Stdio.printf "       (%d replays made, none counted as shrink work)\n" !n3
    | Tape_engine.Passed _ -> ());
 
+  (* Issue #1: the summary line must never contradict the return value.
+     stats.cases_failed was incremented at ONE of four discovery sites,
+     so a failure first found by the correlated-value mutation was
+     counted in neither bucket -- "12 cases (12 valid, 0 discarded, 0
+     failing)" on a run that returned a counterexample, with the failing
+     case missing from the total too.
+
+     The property below is the sweep from the issue, asserted rather
+     than printed: two properties of identical rarity (1 in 36), one
+     failing only when two draws are EQUAL -- which is exactly what the
+     mutation constructs -- and one when they are unequal. Before the
+     fix the equal one reported "0 failing" on 30 of 50 seeds and the
+     unequal one on none. *)
+  Stdio.printf "\n  issue #1: a returned failure is never reported as 0 failing\n";
+  let sweep name ~test =
+    let disagreed = ref 0 and found = ref 0 in
+    for i = 1 to 50 do
+      let st = Tape_engine.no_stats () in
+      match
+        Tape_engine.run
+          (G.both (G.int_inclusive 0 5) (G.int_inclusive 0 5))
+          ~test ~seed:i ~count:300 ~size:10 ~stats:st
+      with
+      | Tape_engine.Passed _ -> ()
+      | Tape_engine.Failed _ ->
+        Int.incr found;
+        if
+          String.is_substring
+            (Tape_engine.stats_summary_line st)
+            ~substring:"0 failing"
+        then Int.incr disagreed
+    done;
+    let ok = !disagreed = 0 in
+    if not ok then Int.incr failures;
+    Stdio.printf "    %-4s %-38s %d/%d said \"0 failing\"\n"
+      (if ok then "ok" else "FAIL") name !disagreed !found
+  in
+  sweep "fails on EQUAL draws (a=5 && b=5)" ~test:(fun (a, b) ->
+    not (a = 5 && b = 5));
+  sweep "fails on UNEQUAL draws (a=5 && b=0)" ~test:(fun (a, b) ->
+    not (a = 5 && b = 0));
+
   Stdio.printf "\n";
   if !failures > 0 then begin
     Stdio.printf

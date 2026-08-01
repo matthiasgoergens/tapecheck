@@ -1509,6 +1509,22 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
     ~(max_pass_failures : int option) ~domains
     ~pool ~(realign : realign) ~(stats : stats) ~(image0 : Tape.image)
     ~(value : a) : a result =
+  (* The single point at which the engine commits to a failing image.
+     Every discovery path reaches here -- ordinary generation, the
+     correlated-value mutation, the pooled batch, and [resume]'s replay
+     -- so counting here cannot miss one, and a fifth path added later
+     cannot silently reintroduce the gap.
+
+     It used to be counted at the generate-phase discovery site only, so
+     a failure first found by the mutation was counted in NEITHER
+     bucket: the summary line read "12 cases (12 valid, 0 discarded, 0
+     failing)" on a run that returned a counterexample, and the total is
+     derived from the three buckets so the failing case went missing
+     from that too. Reported as issue #1, with a reproducer showing
+     30/50 runs affected when the property needs two draws to be equal
+     (which is what the mutation constructs) against 0/50 when it does
+     not. *)
+  stats.cases_failed <- stats.cases_failed + 1;
   let live_value image =
     fst (replay_image_and_apply gen ~size image ~f:(fun _ -> ()))
   in
@@ -2059,7 +2075,10 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                 run_and_test's comment). *)
              ()
            | Some Tape_stats.Case_failed ->
-             stats.cases_failed <- stats.cases_failed + 1;
+             (* Counted in [finish_from_failure], not here: this is only
+                ONE of four ways a failure is discovered, and counting at
+                the discovery sites meant the correlated-value mutation's
+                failures were never counted at all. *)
              found := Some (out.Tape.image, value)
            | Some ((Tape_stats.Case_passed | Tape_stats.Case_invalid) as verdict)
              ->
