@@ -1,0 +1,46 @@
+--- vendor/base_quickcheck/generator.ml	2026-08-01 11:30:43.462783304 +0800
++++ /home/matthias/prog/tapecheck-notes/generator-PATCHED.ml	2026-08-01 11:30:43.460783290 +0800
+@@ -365,17 +365,42 @@
+     create (fun ~size:_ ~random -> Integer.uniform random ~lo ~hi)
+   ;;
+ 
+   let log_uniform_inclusive lo hi =
+     create (fun ~size:_ ~random -> Integer.log_uniform random ~lo ~hi)
+   ;;
+ 
+   let non_uniform f lo hi =
+-    weighted_union [ 0.05, return lo; 0.05, return hi; 0.9, f lo hi ]
++    (* EXPERIMENT (tapecheck): tape-friendly reformulation of
++         weighted_union [ 0.05, return lo; 0.05, return hi; 0.9, f lo hi ]
++       with an IDENTICAL distribution.
++
++       Two things were wrong with the original for a tape shrinker, and
++       only fixing both helps:
++
++       1. [return lo] and [return hi] consume no choices, so max_value
++          was a 2-entry tape while 1 was a 4-entry tape. Shortlex is
++          length-first, so max_value ranked BELOW 1 and shrinking
++          settled on it. Reordering the branches does nothing about
++          this -- length dominates. Here every path draws the selector
++          and [f lo hi], so all three have the same length.
++
++       2. Given equal length, position 0 decides. The selector is drawn
++          FIRST and ordered lo < general < hi, so the value order the
++          shrinker sees is 0 < 1 < max_value, which is the intended one.
++
++       Cost to a non-tape user: [f lo hi] is now always evaluated, i.e.
++       two extra PRNG calls in the 10% of cases that take a shortcut. *)
++    let selector =
++      create (fun ~size:_ ~random -> Splittable_random.float random ~lo:0. ~hi:1.)
++    in
++    bind selector ~f:(fun p ->
++      map (f lo hi) ~f:(fun v ->
++        if Float.( < ) p 0.05 then lo else if Float.( < ) p 0.95 then v else hi))
+   ;;
+ 
+   let inclusive = non_uniform uniform_inclusive
+   let log_inclusive = non_uniform log_uniform_inclusive
+   let uniform_all = uniform_inclusive Integer.min_value Integer.max_value
+ 
+   let all =
+     [%map
