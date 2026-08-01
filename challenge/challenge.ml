@@ -29,7 +29,7 @@ type outcome =
   }
 
 let bench (type a) ~name ~(gen : a Base_quickcheck.Generator.t)
-    ~(test : a -> bool) ~(render : a -> string) ~expected ?(count = 500)
+    ~(test : a -> bool) ~(render : a -> string) ~expected ?(count = 1_000_000)
     ?(budget = 20_000) () =
   let outcomes = ref [] in
   let not_found = ref 0 in
