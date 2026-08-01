@@ -202,15 +202,36 @@ So there are two patches:
 - **Stock variant: compiled.** Applied to a clean checkout of upstream
   `v0.17.1` and built with OCaml 5.3.0 — `dune build src/` clean,
   `base_quickcheck__Generator.cmi` produced.
-- **OxCaml variant: NOT compiled.** `master` requires a newer OxCaml
-  than the public `5.2.0+ox` opam overlay publishes — the overlay has
-  `v0.18~preview.130.91+190`, `master` is `.100+614`, and `oxcaml` is
-  `.106+341`. Building `src/` there fails in `with_basic_types.ml`
-  (`or_null` kinds), `shrinker.ml` (contended/uncontended) and
-  `generator.mli` (`value_or_null mod maybe_null`) — all pre-existing,
-  none from this change, but they mean the change cannot be
-  compile-checked locally. An early "the error set is unchanged" reading
-  was weak evidence: dune was stopping before reaching most of them.
+- **OxCaml variant: NOT compiled, and it cannot be from outside.** This
+  was chased properly rather than assumed, and the conclusion is a
+  pincer:
+
+  - With the **`5.2.0+ox`** switch, the compiler is too old for master's
+    source. `src/` fails in `with_basic_types.ml` (`or_null` kinds),
+    `shrinker.ml` (contended/uncontended) and `generator.mli`
+    (`value_or_null mod maybe_null`) — all pre-existing, none from this
+    change. It is not a question of master having moved ahead: checking
+    out `e20523d`, master at *exactly* the version the overlay ships
+    (`.91+190`), fails identically. The compiler is the limit, not the
+    source.
+  - So I built a **`5.4.0+ox`** switch. The compiler works. But the ox
+    overlay's *library set* is built for 5.2: `ppxlib_jane` resolves to
+    `.91+190`, which requires `ppxlib_ast`, which caps at
+    `ocaml < 5.3.0`. base_quickcheck's dependencies therefore cannot be
+    installed alongside a 5.4 compiler at all.
+    (`oxcaml-compiler.5.4.0-ox2` is separately broken — its
+    `ignore-opam.patch` does not apply to the tarball it fetches;
+    `5.4.0-ox1` builds.)
+
+  There is no configuration of the public OxCaml overlay that both
+  compiles master's source and can install its dependencies. Logs in
+  `../tapecheck-notes/ox-*.log`.
+
+  An early "the error set is unchanged before and after my change"
+  reading was weak evidence and should not have been offered: dune was
+  stopping before it reached most of the errors, and the file I assumed
+  depended on `Generator` (`with_basic_types.ml`) is a pure signature
+  file that does not.
 
 That gap is the same one described in
 [splittable_random#2](https://github.com/janestreet/splittable_random/pull/2):
