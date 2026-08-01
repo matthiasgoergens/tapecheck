@@ -8,3 +8,4 @@ vendor-study/
 _opam/
 .opam-switch/
 outreach/
+*.install
