@@ -1652,11 +1652,21 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
         compare_origin o o' <> 0
     in
     let shrink_tape = Tape.create () in
-    let minimal, attempts, image, _trail, _converged =
+    let _minimal, attempts, image, _trail, _converged =
       shrink ~tape:shrink_tape ~gen ~size ~test:same_origin_only ~budget
         ~max_seconds:None ~max_shrinks:500 ~max_stall:None
         ~max_pass_failures:(Some 20) ~domains:1 ~pool:None ~realign ~stats
         ~initial_tape:img ~initial_value:v
+    in
+    (* Rebuild from [image] rather than returning shrink's own value,
+       exactly as [finish_from_failure] does and for the same reason:
+       shrink's value was built on a tape that [Tape.finish] has since
+       reset, and a value CONTAINING a generated function keeps drawing
+       from that tape when called. Returning it directly reported a
+       stale, non-minimal function -- measured, [f 0 = 298] where the
+       minimal tape gives 101. *)
+    let minimal =
+      fst (replay_image_and_apply gen ~size image ~f:(fun _ -> ()))
     in
     { fr_origin = o; fr_minimal = minimal; fr_image = image;
       fr_attempts = attempts }
