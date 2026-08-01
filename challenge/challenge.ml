@@ -21,7 +21,37 @@
 open Base
 module G = Base_quickcheck.Generator
 
-let runs = 100
+(* Run count is configurable because 100 is too thin for the rates this
+   suite produces. A 17/100 has a 95% Wilson interval of roughly
+   [11, 26], so the stock-vs-patch bound5 comparison (17 vs 7) sits at
+   about two sigma -- suggestive, not settled. Set TAPECHECK_RUNS to
+   widen it. Seeds are spread by an odd multiplier well away from any
+   power of two rather than by a small stride. *)
+let runs =
+  match Stdlib.Sys.getenv_opt "TAPECHECK_RUNS" with
+  | Some s -> (try Int.of_string s with _ -> 100)
+  | None -> 100
+
+let seed_of t = (t * 2_654_435_761) land 0x3FFF_FFFF
+
+(* Wilson score interval for a binomial proportion: behaves sanely at
+   0 and at n, which the normal approximation does not, and this suite
+   has plenty of both. *)
+let wilson ~hits ~n =
+  if n = 0 then (0., 0.)
+  else begin
+    let n' = Float.of_int n and x = Float.of_int hits in
+    let z = 1.96 in
+    let p = x /. n' in
+    let denom = 1. +. (z *. z /. n') in
+    let centre = (p +. (z *. z /. (2. *. n'))) /. denom in
+    let half =
+      z
+      *. Float.sqrt ((p *. (1. -. p) /. n') +. (z *. z /. (4. *. n' *. n')))
+      /. denom
+    in
+    (Float.max 0. ((centre -. half) *. 100.), Float.min 100. ((centre +. half) *. 100.))
+  end
 
 type outcome =
   { normal : string        (* rendered minimal example *)
@@ -35,7 +65,7 @@ let bench (type a) ~name ~(gen : a Base_quickcheck.Generator.t)
   let not_found = ref 0 in
   for t = 0 to runs - 1 do
     match
-      Tape_engine.run gen ~test ~seed:(t * 7919) ~count ~size ~budget
+      Tape_engine.run gen ~test ~seed:(seed_of t) ~count ~size ~budget
     with
     | Tape_engine.Passed _ -> Int.incr not_found
     | Tape_engine.Failed { minimal; attempts; _ } ->
@@ -56,7 +86,11 @@ let bench (type a) ~name ~(gen : a Base_quickcheck.Generator.t)
   let hi = List.max_elt attempts ~compare:Int.compare |> Option.value ~default:0 in
   Stdio.printf "## %s\n\n%!" name;
   Stdio.printf "  expected      %s\n" expected;
-  Stdio.printf "  normalised    %d/%d runs (%d distinct answers)\n" hits n distinct;
+  let lo_ci, hi_ci = wilson ~hits ~n in
+  Stdio.printf "  normalised    %d/%d runs = %.1f%% [95%% CI %.1f-%.1f] (%d distinct)\n"
+    hits n
+    (100. *. Float.of_int hits /. Float.of_int (Int.max 1 n))
+    lo_ci hi_ci distinct;
   if !not_found > 0 then
     Stdio.printf "  NOT FOUND     %d/%d runs failed to find any counterexample\n"
       !not_found runs;
@@ -239,7 +273,7 @@ let () =
     ]
   in
   Stdio.printf "## Summary\n\n";
-  Stdio.printf "| challenge | normalised | mean evaluations |\n";
-  Stdio.printf "|---|---|---|\n";
+  Stdio.printf "| challenge | normalised | 95%% CI | mean evaluations |\n";
+  Stdio.printf "|---|---|---|---|\n";
   List.iter results ~f:(fun (name, hits, n, mean) ->
     Stdio.printf "| %s | %d/%d | %.1f |\n" name hits n mean)
