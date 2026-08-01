@@ -117,6 +117,31 @@ something deliberate about which branches are observable.
 They ship `binarySearchNoParityBias` to counter it, pairing each
 candidate with its opposite-parity neighbour.
 
+Their *explanation* of the bias does not survive checking, though the
+bias itself does. The comment says "halving an even number results in
+another even number, and halving an odd number also results in an even
+number" — which is simply false (10/2 = 5, 7/2 = 3). Matthias caught
+this when I repeated it.
+
+The actual mechanism is the accumulation, not the halving.
+`binarySearch` walks partial sums of `deltas`, and `deltas` is a chain
+of successive halvings:
+
+```
+deltas 128 = [64, 32, 16, 8, 4, 2, 1, 1]
+binarySearch 128 = [0, 64, 96, 112, 120, 124, 126, 127]
+binarySearch 127 = [0, 64, 96, 112, 120, 124, 126]      <- no odd candidate at all
+```
+
+Those deltas are even for most of the sequence, so each partial sum
+keeps the parity of the last and the whole list stays even until the
+final `+1`. It is worst near powers of two; `binarySearch 10 =
+[0, 5, 8, 9]` has two odd candidates, because 10's deltas are
+`[5, 3, 2, 1]`.
+
+So the documented phenomenon is real and their own doctests prove it —
+the stated reason for it is not the reason.
+
 tapecheck's `minimize_integer` is also a halving search, so the bias
 looked likely. Measured (`diag2/probe_parity.ml`, thresholds of each
 parity, 40 seeds each): **240/240 exact on even thresholds, 240/240 on
