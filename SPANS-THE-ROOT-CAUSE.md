@@ -273,3 +273,71 @@ property against another, rather than dominating. Which is a better
 thing to put to base_quickcheck's maintainers than "yours is worse":
 the question is which class matters more in their tests, and that is
 theirs to answer, not mine.
+
+## Measured: what the missing spans cost, in a number
+
+Everything above argues the gap from the design. Hypothesis's
+`tests/quality/test_poisoned_trees.py` measures it, and it turns out to
+be the sharpest instrument in their suite for exactly this.
+
+The setup: a binary tree of leaves, each leaf a 32-bit value drawn as
+two 16-bit halves. A leaf is *poisoned* iff both halves are at maximum —
+probability 2^-32, so fresh generation never produces one. Build a
+minimal tree of `size` leaves, then artificially splice poison into one
+leaf position and ask the shrinker to reduce to that single leaf. Repeat
+for **every** leaf position. The shrinker cannot re-find the poison; it
+can only preserve it.
+
+Three details of theirs are load-bearing and worth keeping when porting:
+
+- **Two 16-bit halves, not one 32-bit draw.** Their comment says a
+  single block would let block-move heuristics fire "which would then
+  allow us to shrink it more easily". They deliberately closed the easy
+  route so the test measures the hard one.
+- **A marker must survive.** Otherwise truncating the tape after the
+  poisoned leaf is a valid shrink, and the test passes for a reason
+  unrelated to descending into a subtree. This is the anti-vacuity
+  device, and without it the whole thing is decorative.
+- **Every position, not just one.** First and last are the easy cases.
+
+Ported to `test_poison/`. Same three sizes (2, 5, 10) and two seeds as
+theirs, hence the same 34 leaf positions. Measured 2026-08-01:
+
+| | positions fully reduced |
+|---|---|
+| Hypothesis 6.152.9 (their own test) | 34/34 |
+| tapecheck | 10/34 |
+
+The failure has a shape, which is what makes it evidence rather than a
+score. Positions 0 and 1 reduce fully; from position 2 onward the
+surviving tree grows monotonically with how deep the poison sits in the
+tape. For the 10-leaf tree: 4, 5, 6, 8, 10, 10, 10, 10 leaves left.
+
+The mechanism is legible. Poison early in the tape can be isolated by
+deleting what *follows* it, and suffix deletion is a pass we have.
+Poison late requires deleting what *precedes* it — which shifts the
+poison's own two draws into the position where a branch coin is read.
+They get re-parsed as structure, the tree changes shape, and the poison
+is destroyed. Span boundaries are precisely what would let the subtree
+be relocated intact, which is all `pass_to_descendant` is.
+
+So the cost of PRNG-level recording, on the one benchmark built to
+measure it, is 24 of 34 positions. That is a bigger number than the
+prose above implied, and it is the honest one to quote.
+
+### Two notes from porting it
+
+The engine's own `large_base_example` health check caught a modelling
+error on the first run: with the branch coin written so that the
+*minimal* choice means "branch", the minimal tape is a full tree of
+depth 12. Inverting the comparison so the minimal choice terminates
+fixed it. Worth recording because the health check was written for
+user generators and caught a bug in our own test instead.
+
+Finding the leaf positions needed no span metadata on our side. Their
+version reads them off `data.blocks`; our choice tape is typed, so a
+leaf draw is identifiable by its own recorded bounds (`hi = 65535`).
+Splicing is likewise encoding-agnostic — `Integer {value; lo; hi}`
+becomes `Integer {value = hi; lo; hi}`, "set this draw to its maximum",
+with no need to know how `int_uniform_inclusive` maps onto the PRNG.
+A typed tape is worth something even where a flat one has spans.
