@@ -940,46 +940,40 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        Truncation is recorded, because a pass cut short cannot support a
        claim of convergence. *)
     let consecutive_failures = ref 0 in
-    (* The cutoff is a FLOOR, scaled by tape length, not a flat count.
-       A budget of 20 covers a very different fraction of a 20-choice
-       tape than of a 200-choice one, and the flat version was tuned on
-       the short ones. Measured across four properties
-       (diag2/probe_cutoff_sweep.ml, 50 runs each):
+    (* A FLAT count, deliberately, after trying to make it proportional
+       to tape length and measuring the result.
 
-         property                     flat 20        floor max(20,len/3)
-         list, len >= 3               50/50, 182     50/50, 182
-         deep bind, sum >= 500        50/50, 148     50/50, 149
-         lengthlist, max >= 900       34/50, 280     50/50, 137
-         zig-zag, |m-n| <> 1          50/50,  34     50/50,  34
+       The motivation was real: lengthlist from the Shrinking Challenge
+       sat at 64/100 because a budget of 20 is a very different fraction
+       of a 200-choice tape than of a 20-choice one, and every miss
+       stopped with converged=false and the global budget untouched.
+       A floor of max(n, len/3) took it to 50/50 at HALF the cost, left
+       the other nine guarded properties untouched, and looked like a
+       free win.
 
-       Strictly better: the two short-tape properties are untouched
-       because len/3 never reaches 20 there, and lengthlist gains full
-       quality at HALF the cost. Raising the flat constant to 40 also
-       fixes lengthlist but costs the first property 182 -> 300, which
-       is what the proportional form avoids.
+       It is not. test_poison's base-tree construction regressed badly
+       under it: the size-2 base tree stopped shrinking at 50 leaves
+       instead of 2, turning 34 testable positions into 130. The reason
+       is that the floor grants long-tape patience to UNPRODUCTIVE
+       passes as well as useful ones, which is precisely what the flat
+       cutoff exists to prevent -- lower_and_delete scoring zero
+       successes while consuming 96% of the shrink. Per-pass persistence
+       is paid for out of the global budget.
 
-       [cached_limit] exists because [live] is a loop condition: the sum
-       is recomputed only when [best] is replaced, which is exactly when
-       it can change. *)
-    let cached_for = ref None in
-    let cached_limit = ref 0 in
-    let limit n =
-      let b = !best in
-      (match !cached_for with
-       | Some prev when phys_equal prev b -> ()
-       | _ ->
-         let c = ref 0 in
-         for si = 0 to seg_count b - 1 do
-           c := !c + Array.length (seg_get b si)
-         done;
-         cached_for := Some b;
-         cached_limit := Int.max n (!c / 3));
-      !cached_limit
-    in
+       No divisor satisfies both. Measured at 3, 4, 6, 8: at 3 the floor
+       binds and poison breaks; at 4 and above it never binds on
+       lengthlist's tapes and nothing changes. There is no window.
+
+       The right fix is to make patience EARNED rather than granted --
+       scale a pass's allowance by its own success rate in this shrink,
+       which is the spirit of Hypothesis's fixate_shrink_passes -- and
+       that is a design change rather than a constant. Recorded here so
+       the proportional version is not re-attempted from scratch;
+       lengthlist stays a known frontier in the regression guard. *)
     let live () =
       match max_pass_failures with
       | None -> true
-      | Some n -> !consecutive_failures < limit n
+      | Some n -> !consecutive_failures < n
     in
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () && live () do

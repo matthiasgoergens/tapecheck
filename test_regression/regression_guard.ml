@@ -42,6 +42,10 @@ type expectation =
   ; min_found : int
   ; min_minimal : int
   ; max_avg_calls : int
+  ; max_non_converged : int
+      (* Normally 0: the per-pass cutoff must not clear [converged].
+         Non-zero only for a recorded FRONTIER, where a property is
+         known not to settle and the number is what it currently is. *)
   ; catches : string
   }
 
@@ -98,9 +102,10 @@ let check (e : expectation) (o : outcome) =
      not budget-driven. An engine change that makes runs report
      not-converged is either a real budget problem or a reintroduction of
      the verification-sweep confusion. *)
-  if o.non_converged > 0 then
+  if o.non_converged > e.max_non_converged then
     problems :=
-      Printf.sprintf "non-converged %d/%d (expected 0)" o.non_converged trials
+      Printf.sprintf "non-converged %d/%d (allowed %d)" o.non_converged trials
+        e.max_non_converged
       :: !problems;
   match !problems with
   | [] ->
@@ -126,6 +131,7 @@ let () =
     ; min_found = 100
     ; min_minimal = 100
     ; max_avg_calls = 50 (* measured 34 after duplicate-skipping *)
+    ; max_non_converged = 0
     ; catches =
         "scalar shrinking via minimize_choices' binary search; if this \
          regresses to linear descent the cost explodes"
@@ -140,6 +146,7 @@ let () =
     ; min_found = 100
     ; min_minimal = 100
     ; max_avg_calls = 26 (* measured 18 after duplicate-skipping *)
+    ; max_non_converged = 0
     ; catches = "multi-choice coordination on the cheapest possible case"
     }
     (measure
@@ -153,6 +160,7 @@ let () =
     ; min_found = 100
     ; min_minimal = 100
     ; max_avg_calls = 205 (* measured 147; 178 before duplicate-skipping, 641 before the cutoff *)
+    ; max_non_converged = 0
     ; catches =
         "REMOVING the per-pass failure cutoff (?max_pass_failures). \
          lower_and_delete scores ZERO successes here while spending 96% \
@@ -169,6 +177,7 @@ let () =
     ; min_found = 100
     ; min_minimal = 100
     ; max_avg_calls = 130 (* measured 90; 173 before duplicate-skipping, 456 before the cutoff *)
+    ; max_non_converged = 0
     ; catches =
         "as above; also the max_stall port, which took this property to \
          26/100 fully minimal by cutting passes off before they ran"
@@ -183,6 +192,7 @@ let () =
     ; min_found = 100
     ; min_minimal = 100
     ; max_avg_calls = 112 (* measured 79 after duplicate-skipping *)
+    ; max_non_converged = 0
     ; catches =
         "filtered-generator overhead. Rejected draws stay on the tape and \
          get minimised: 90 here vs 37 for the same shape unfiltered. If \
@@ -199,6 +209,7 @@ let () =
     ; min_found = 100
     ; min_minimal = 100
     ; max_avg_calls = 74 (* measured 52 after duplicate-skipping *)
+    ; max_non_converged = 0
     ; catches =
         "THE GALLOPING DESCENT REGRESSION. bind is the only \
          greedy-dominated property (30 of 40 attempts). Replacing \
@@ -226,6 +237,7 @@ let () =
     ; min_found = 75
     ; min_minimal = 75 (* measured 83 of 83 found *)
     ; max_avg_calls = 44 (* measured 28; 2929 without lower_together *)
+    ; max_non_converged = 0
     ; catches =
         "removing or breaking lower_together, the port of Hypothesis's          lower_blocks_together. Also catches reverting find_integer to a          halve-from-the-top gallop: the linear scan over 1..4 first is          what stops small steps costing log(range) failures each."
     }
@@ -246,6 +258,7 @@ let () =
     ; min_found = 95
     ; min_minimal = 95 (* measured 100; 47 with the cutoff at 3 *)
     ; max_avg_calls = 210 (* measured 149; 250 with no cutoff at all *)
+    ; max_non_converged = 0
     ; catches =
         "lowering max_pass_failures below 20. Measured: 20 matches \
          no-cutoff exactly, 3 gives 47/100 fully minimal. The seven other \
@@ -259,37 +272,39 @@ let () =
        ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 500)
        ~is_minimal:(fun l -> List.equal Int.equal l [ 500 ]) ());
 
-  (* Guards the length-PROPORTIONAL form of the cutoff, which the flat
-     constant cannot satisfy. Same bind-then-fixed-length shape as the
-     property above, but the predicate is max rather than sum, and that
-     changes everything: with sum, almost any element reduction is a
-     productive move, whereas with max only one element matters and the
-     length reduction that isolates it takes many failed attempts to
-     land. Measured (diag2/probe_cutoff_sweep.ml, 50 runs):
+  (* FRONTIER, like self_len below: recorded rather than satisfied.
 
-       flat 20   34/50 minimal, 280 calls
-       flat 40   50/50 minimal, 137 calls -- but 'len >= 3' goes 182 -> 300
-       floor     50/50 minimal, 137 calls, everything else unchanged
+     This is lengthlist from jlink/shrinking-challenge (CHALLENGE.md).
+     It is the same bind-then-fixed-length shape as the property above,
+     but with max rather than sum as the predicate, and that changes
+     everything: with sum almost any element reduction is productive,
+     whereas with max only one element matters and the length reduction
+     that isolates it takes many failed attempts to land. Hypothesis
+     normalises it 100/100 at 88 evaluations; we do not.
 
-     (those are the probe's protocol -- count 1e6, size 30, budget 200k.
-     Under this file's smaller protocol the numbers differ but the
-     direction is the same; see [catches].)
+     The cause is known and the obvious fix was tried and reverted. A
+     flat per-pass failure cutoff of 20 is a very different fraction of
+     this property's tapes than of a short one, and making it
+     proportional (max 20 (len/3)) takes this to 100/100 at half the
+     cost with the other nine properties untouched. It also breaks
+     test_poison's base-tree construction, because the same patience is
+     granted to unproductive passes and is paid for out of the global
+     budget. No divisor satisfies both -- see the comment on [live] in
+     tape_engine.ml. Earned patience, scaled by a pass's own success
+     rate, is the real fix and is not done.
 
-     So this catches BOTH reverting to a flat cutoff and lowering the
-     len/3 divisor. It is the lengthlist challenge from
-     jlink/shrinking-challenge; see CHALLENGE.md. *)
+     ~size:30 because this property is about LONG tapes; at the default
+     size:10 the tapes are too short to exercise the interaction. *)
   check
-    { name = "lengthlist: bind len in [1,100], max >= 900"
+    { name = "lengthlist: bind len, max >= 900  [frontier: not 100/100]"
     ; min_found = 100
-    ; min_minimal = 95 (* measured 100; 70 with a flat cutoff of 20 *)
-    ; max_avg_calls = 200 (* measured 147; 279 with a flat cutoff of 20 *)
+    ; min_minimal = 60 (* measured 70; 100 with a proportional cutoff *)
+    ; max_avg_calls = 400 (* measured 279; 147 with a proportional cutoff *)
+    ; max_non_converged = 40 (* measured 27; 0 with a proportional cutoff *)
     ; catches =
-        "reverting the per-pass cutoff to a flat constant, or raising \
-         the len/3 divisor. VALIDATED: reverting to flat trips all \
-         three criteria at once -- non-converged 27/100, 279 calls, and \
-         70/100 fully minimal. Note this needs ~size:30; at the default \
-         size:10 the tapes are too short for the proportional term to \
-         bind and the same revert shows only 3/100 non-converged."
+        "a drop below the recorded 70/100, and equally an unnoticed \
+         IMPROVEMENT -- if this reaches 100 the frontier has moved and \
+         both this bound and CHALLENGE.md should be updated."
     }
     (measure
        ~gen:
@@ -312,6 +327,7 @@ let () =
     ; min_found = 90
     ; min_minimal = 40 (* measured 47; Hypothesis gets 53 *)
     ; max_avg_calls = 180 (* measured 127 after duplicate-skipping *)
+    ; max_non_converged = 0
     ; catches =
         "the long-range-dependency frontier. Both engines get trapped on \
          a list of n zeros headed by n. If min_minimal ever exceeds 53 \
