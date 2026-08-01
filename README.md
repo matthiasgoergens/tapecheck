@@ -72,65 +72,45 @@ revert.
 
 ## Results
 
-Six properties, 100 seeds each, identical failing examples handed to
-both shrinkers ("stock" is base_quickcheck's own greedy loop, exactly
-as `Test.run` performs it). Full output:
+Eight properties, 100 seeds each. **One generation phase per seed:** the
+tape engine finds the failure, and the *same* original value it found is
+handed to base_quickcheck's own greedy shrink loop, exactly as
+`Test.run` performs it. Full output:
 [design/shrink-table-results.txt](design/shrink-table-results.txt).
 
-| property (each links to its definition) | stock minimal | tape minimal | tape avg calls |
-|---|---|---|---|
-| [int uniform, fail iff >= 123457](demo/shrink_table.ml#L114) | 0/100 | 100/100 | 38 |
-| [pair, fail iff a + b >= 100](demo/shrink_table.ml#L121) | 0/100 | 100/100 | 22 |
-| [list, fail iff length >= 3](demo/shrink_table.ml#L128) | 0/100 | 100/100 | 641 |
-| [list, fail iff sum >= 100](demo/shrink_table.ml#L135) | 0/100 | 100/100 | 98 → 456 |
-| [filtered evens, fail iff >= 100](demo/shrink_table.ml#L142) | 0/100 | 100/100 | 90 |
-| [bind: length-prefixed list, sum >= 100](demo/shrink_table.ml#L149) | 0/100 | 100/100 | 59 |
+| property (each links to its definition) | stock minimal | tape minimal | stock calls | tape calls |
+|---|---|---|---|---|
+| [int uniform, fail iff >= 123457](demo/shrink_table.ml#L114) | 0/100 | 100/100 | 0 | 34 |
+| [pair, fail iff a + b >= 100](demo/shrink_table.ml#L121) | 0/100 | 100/100 | 0 | 18 |
+| [list, fail iff length >= 3](demo/shrink_table.ml#L128) | 0/100 | 100/100 | 6 | 147 |
+| [list, fail iff sum >= 100](demo/shrink_table.ml#L135) | 0/100 | 100/100 | 4 | 90 |
+| [filtered evens, fail iff >= 100](demo/shrink_table.ml#L142) | 0/100 | 100/100 | 0 | 79 |
+| [bind: length-prefixed list, sum >= 100](demo/shrink_table.ml#L149) | 0/100 | 100/100 | 0 | 52 |
+| [zig-zag, fails iff \|m-n\| = 1](demo/shrink_table.ml#L156) | 11/100 | 83/100 | 0 | 34 |
+| [self_len, fails iff hd l = length l](demo/shrink_table.ml#L163) | 46/100 | 47/100 | 3 | 130 |
 
-The `100/100` fully-minimal column is unchanged by the edge-case-biased
-generation added since the numbers above were first measured (see
-`outreach/` and `tape/tape.ml`): every property still shrinks to its
-exact global minimum on every seed, on a fresh re-run. The average
-call counts shifted because biased generation finds a *different*
-first failing example per seed, and by how much splits cleanly along
-one line: the scalar-int rows (int uniform, pair, filtered evens) draw
-one or two `int_uniform_inclusive` values directly and landed within
-noise of their old figure (38, 22, 91→90); the three that draw a
-`base_quickcheck` list (list-length, list-sum, and the bind row's
-`list_with_length`) rose noticeably (466→641, 98→456, 49→59) because
-list length and per-element size budgeting go through
-`vendor/sr_real/sr_real.ml`'s `Log_uniform.int`, which itself makes
-*two* nested calls back into the same `int64` intercept our bias
-sits behind (one to pick a bit-count, one to sample uniformly within
-that bit-band) — so a single list draw touches many more biased
-integer choices than a single scalar draw does, and each one now has
-a 1-in-16 chance of landing on a boundary value instead of a plain
-uniform sample. More of the tape's early choices start away from
-their shrink target, so there is genuinely more to shrink, not a
-regression in what shrinking finds.
+**Two things this table does not say, and should not be read as
+saying.**
 
-The bind row deserves elaboration, because it is where the models
-genuinely differ. The generator draws a length first and then a list
-that depends on it, a monadic bind:
+First, on the scalar rows the stock column is `0/100` at a cost of *zero
+test calls*, and that is not a shrinker being beaten — it is a shrinker
+that never runs. `Base_quickcheck.Shrinker.int` is `atomic`, i.e.
+`fun _ -> Sequence.empty`, as are `bool`, `char`, `int32`, `int63` and
+`int64`. base_quickcheck deliberately shrinks structure rather than
+scalars. So `0/100` on those rows is definitional, not measured. The
+rows where the stock shrinker genuinely does work and still reaches
+`0/100` are the two list rows (6 and 4 calls) and, more interestingly,
+`self_len`, where it reaches **46/100 against the tape engine's 47/100** —
+essentially a tie.
 
-```ocaml
-let gen =
-  let%bind len = Generator.int_uniform_inclusive 1 64 in
-  Generator.list_with_length (Generator.int_uniform_inclusive 0 1000) ~length:len
-```
-
-The property fails whenever the list sums to at least 100, so the
-ideal counterexample is the one-element list `[100]`. For a
-`Shrinker.t` this generator is a dead end: shrinkers are derived from
-type structure, and an ad-hoc bind like this has no derivable
-shrinker at all, so `Test.run` reports whatever 64-element monster was
-generated. Even a hand-written list shrinker could not safely help,
-since it cannot know that the list's length was itself a generated
-value with its own constraints. The tape engine does not have the
-problem: the length is just the first recorded choice, so the engine
-lowers it while deleting one element's choices, replays the generator
-(which rebuilds a consistent, shorter list by construction), and
-repeats until nothing can be removed without the sum dropping below
-100, arriving at exactly `[100]`.
+Second, the comparison used to be worse than uncontrolled: until
+2026-08-01 the stock arm ran its own untaped generation schedule, on the
+assumption that it matched the engine's. It stopped matching once the
+engine gained edge-case-biased generation and the correlated-value
+mutation, and by then the two schedules produced *completely* different
+originals — measured 100 differing out of 100, on every property, zero
+overlap (`diag2/probe_identical.ml`). The table was comparing generators
+as well as reducers. It no longer does.
 
 ## Usage
 

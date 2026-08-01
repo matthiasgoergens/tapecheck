@@ -1,24 +1,32 @@
 int uniform in [0, 1_000_000], fail iff v >= 123_457 -- 100 seeds
-  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: 766135
-  tape      found 100/100, fully minimal 100/100, avg    38 test calls, worst: -
+  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: 1000000
+  tape      found 100/100, fully minimal 100/100, avg    34 test calls, worst: -
 
 pair in [0,1000]^2, fail iff a + b >= 100 -- 100 seeds
-  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: (481 781)
-  tape      found 100/100, fully minimal 100/100, avg    22 test calls, worst: -
+  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: (1000 316)
+  tape      found 100/100, fully minimal 100/100, avg    18 test calls, worst: -
 
 int list, fail iff length >= 3 -- 100 seeds
-  stock     found 100/100, fully minimal   0/100, avg     5 test calls, worst: (12 100 61)
-  tape      found 100/100, fully minimal 100/100, avg   641 test calls, worst: -
+  stock     found 100/100, fully minimal   0/100, avg     6 test calls, worst: (95 38 100)
+  tape      found 100/100, fully minimal 100/100, avg   147 test calls, worst: -
 
 int list, fail iff sum >= 100 -- 100 seeds
-  stock     found 100/100, fully minimal   0/100, avg     4 test calls, worst: (15 91)
-  tape      found 100/100, fully minimal 100/100, avg   456 test calls, worst: -
-
-filtered even ints, fail iff v >= 100 -- 100 seeds
-  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: 21150
+  stock     found 100/100, fully minimal   0/100, avg     4 test calls, worst: (1000)
   tape      found 100/100, fully minimal 100/100, avg    90 test calls, worst: -
 
+filtered even ints, fail iff v >= 100 -- 100 seeds
+  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: 100000
+  tape      found 100/100, fully minimal 100/100, avg    79 test calls, worst: -
+
+zig-zag: fails iff |m - n| = 1   [hypothesis asserts a cost bound] -- 100 seeds
+  stock     found  83/100, fully minimal  11/100, avg     0 test calls, worst: (299 298)
+  tape      found  83/100, fully minimal  83/100, avg    34 test calls, worst: -
+
+self_len: fails iff l <> [] && hd l = length l   [hypothesis: 53/100] -- 100 seeds
+  stock     found  98/100, fully minimal  46/100, avg     3 test calls, worst: (10 32 3 1 30 28 47 15 43 25)
+  tape      found  98/100, fully minimal  47/100, avg   130 test calls, worst: (10 0 0 0 0 0 0 0 0 0)
+
 bind: len in [1,64], list_with_length, fail iff sum >= 100 (no stock shrinker derivable) -- 100 seeds
-  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: (167 690 689 854 811 677 664 189 645 400 488 875 835 430 979 608 509 802 704 969 710 164 585 607 935 318 828 806 253 765 201 745 470 910 579 322 539 994 285 987 24 978 819 233 245 444 416 283 643 958 106 868 829 451 752 778 577 393 920 811 712 164 479 703)
-  tape      found 100/100, fully minimal 100/100, avg    59 test calls, worst: -
+  stock     found 100/100, fully minimal   0/100, avg     0 test calls, worst: (411 326 492 97 399 667 240 653 124 366 515 813 790 755 388 741 357 612 236 580 240 162 216 125 728 442 350 971 306 791 840 137 385 0 540 437 323 570 219 198 784 55 773 328 165 852 79 893 32 125 452 116 48 391 402 683 98 899 393 629 0 929 1000 195)
+  tape      found 100/100, fully minimal 100/100, avg    52 test calls, worst: -
 

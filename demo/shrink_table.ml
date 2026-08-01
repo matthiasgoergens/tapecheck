@@ -41,9 +41,24 @@ let stock_shrink shrinker v0 ~test =
   done;
   (!v, !calls)
 
-(* The same untaped generation schedule the tape engine uses, so both
-   arms shrink the identical original failing example. *)
-let find_failure gen ~test ~seed =
+(* An untaped generation schedule. It is NOT what the tape engine does
+   any more, and this used to claim otherwise.
+
+   When this file was written the engine generated exactly like this, so
+   running the schedule twice gave both arms the same original. Since
+   then the engine gained edge-case-biased generation and the
+   correlated-value mutation, and the two schedules diverged completely:
+   measured (diag2/probe_identical.ml) 100 differing originals out of
+   100, on every property, zero overlap. The table was silently
+   comparing "stock shrinking a uniformly-sampled failure" against "tape
+   shrinking an edge-biased failure", which conflates generation with
+   reduction -- exactly the thing it exists to separate.
+
+   [row] below no longer uses this. It takes the ORIGINAL the tape
+   engine actually found and hands that same value to the stock
+   shrinker, so the comparison is controlled. Kept only for
+   [probe_identical] to keep measuring the divergence. *)
+let _find_failure_untaped gen ~test ~seed =
   let rec go case =
     if case >= cases_per_trial then None
     else begin
@@ -85,24 +100,24 @@ let row (type a) ~name ~(gen : a G.t) ~(shrinker : a S.t option)
   let stock = new_stats () and tape = new_stats () in
   for trial = 0 to trials - 1 do
     let seed = trial * 1_000_003 in
-    (* Stock arm. *)
-    (match find_failure gen ~test ~seed with
-    | None -> ()
-    | Some original ->
-      let minimal, calls =
-        match shrinker with
-        | Some s -> stock_shrink s original ~test
-        | None -> (original, 0)
-      in
-      note stock ~is_minimal:(is_minimal minimal) ~calls
-        ~shown:(Sexp.to_string (sexp_of minimal)));
-    (* Tape arm. *)
+    (* One generation phase, one original, both arms reduce it. The
+       tape engine finds the failure; [original] is the value it found,
+       before any shrinking, and that exact value is what the stock
+       shrinker is given. Anything else compares generators as well as
+       reducers. *)
     match
       Tape_engine.run gen ~test ~seed ~count:cases_per_trial ~size
         ~budget:tape_budget
     with
     | Tape_engine.Passed _ -> ()
-    | Tape_engine.Failed { minimal; attempts; _ } ->
+    | Tape_engine.Failed { minimal; attempts; original; _ } ->
+      let stock_minimal, stock_calls =
+        match shrinker with
+        | Some s -> stock_shrink s original ~test
+        | None -> (original, 0)
+      in
+      note stock ~is_minimal:(is_minimal stock_minimal) ~calls:stock_calls
+        ~shown:(Sexp.to_string (sexp_of stock_minimal));
       note tape ~is_minimal:(is_minimal minimal) ~calls:attempts
         ~shown:(Sexp.to_string (sexp_of minimal))
   done;
