@@ -138,12 +138,15 @@ let load t ~key : Tape.image option =
   let file = path t ~key in
   if not (Stdlib.Sys.file_exists file) then None
   else begin
+    (* [with_open_bin] closes on the exceptional path too. The previous
+       form closed only on success, so a truncated file -- exactly the
+       case the [with _ -> None] below exists to tolerate -- leaked the
+       channel every time it happened. *)
     try
-      let ic = Stdlib.open_in_bin file in
-      let n = Stdlib.in_channel_length ic in
-      let s = Stdlib.really_input_string ic n in
-      Stdlib.close_in ic;
-      Tape.deserialize_image s
+      Stdlib.In_channel.with_open_bin file (fun ic ->
+        let n = Stdlib.in_channel_length ic in
+        let s = Stdlib.really_input_string ic n in
+        Tape.deserialize_image s)
     with _ -> None
   end
 
@@ -153,15 +156,25 @@ let load t ~key : Tape.image option =
 let save t ~key (img : Tape.image) : unit =
   if not t.record then ()
   else
+    let tmp_path = ref None in
     try
       ensure_dir t;
       let file = path t ~key in
       let tmp = file ^ ".tmp" in
-      let oc = Stdlib.open_out_bin tmp in
-      Stdlib.output_string oc (Tape.serialize_image img);
-      Stdlib.close_out oc;
-      Stdlib.Sys.rename tmp file
-    with e -> report_write_error t ~key e
+      tmp_path := Some tmp;
+      (* Same reason as [load]: a disk-full or quota error during
+         [output_string] or the implicit flush used to skip [close_out]
+         entirely, leaking the channel into the error path. *)
+      Stdlib.Out_channel.with_open_bin tmp (fun oc ->
+        Stdlib.Out_channel.output_string oc (Tape.serialize_image img));
+      Stdlib.Sys.rename tmp file;
+      tmp_path := None
+    with e ->
+      (* Do not leave the partial temporary behind either. *)
+      Option.iter !tmp_path ~f:(fun tmp ->
+        try if Stdlib.Sys.file_exists tmp then Stdlib.Sys.remove tmp
+        with _ -> ());
+      report_write_error t ~key e
 
 let remove t ~key : unit =
   if not t.record then ()

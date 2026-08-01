@@ -12,6 +12,13 @@
    up as a thread count that never comes back down. *)
 open Base
 
+(* /proc is Linux-only. Without this the whole advertised [dune test]
+   raises Sys_error on macOS, and CI (Ubuntu only) would never notice.
+   A missing /proc must ANNOUNCE that the check did not run: a
+   portability skip that reports success is a test that certifies what
+   it can no longer see. *)
+let have_proc = Stdlib.Sys.file_exists "/proc/self/status"
+
 let threads () =
   let ic = Stdlib.open_in "/proc/self/status" in
   let rec go () =
@@ -66,6 +73,13 @@ let run_and_raise ~where ~domains =
   | Boom -> true
 
 let () =
+  if not have_proc then begin
+    Stdio.printf
+      "SKIPPED: /proc/self/status is unavailable on this platform, so the \n\
+      \         thread-count observation this test is built on cannot be \n\
+      \         made. The pool-leak protection is NOT verified here.\n";
+    Stdlib.exit 0
+  end;
   let baseline = threads () in
   Stdio.printf "baseline threads: %d\n" baseline;
   let failures = ref 0 in

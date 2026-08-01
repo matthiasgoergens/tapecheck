@@ -27,7 +27,10 @@ homepage: "https://github.com/matthiasgoergens/tapecheck"
 bug-reports: "https://github.com/matthiasgoergens/tapecheck/issues"
 dev-repo: "git+https://github.com/matthiasgoergens/tapecheck.git"
 depends: [
-  "ocaml" {>= "5.1.0"}
+  # 5.3 only. CI recorded that 5.1 and 5.2 cannot compile the vendored
+  # ppx_quickcheck against the ppxlib they resolve to, and only 5.3 is
+  # tested; the previous >= 5.1.0 advertised support that does not exist.
+  "ocaml" {>= "5.3.0"}
   "dune" {>= "3.9"}
   "base"
   "stdio"
