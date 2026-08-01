@@ -55,6 +55,9 @@ jobs:
       # resume_run_exn -- 73 lines of one side against 1 of the other,
       # and the rule took the wrong side. A test happened to call one of
       # them; nothing structural would have noticed.
+      # Check-only: the script no longer rewrites the baseline, so a
+      # drift here is a real signal rather than something CI absorbs
+      # into a checkout it then throws away.
       - run: ./scripts/check_api_surface.sh
 
   # Shrink quality is deterministic given the seeds, so a drift in the
