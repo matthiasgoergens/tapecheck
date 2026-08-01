@@ -1970,10 +1970,21 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
 
              Only when the fresh case passed -- if it already failed we
              are done searching -- and only every other case, so the
-             generation budget is not halved. *)
+             generation budget is not halved.
+
+             "Every other case" is keyed on [seed + case], NOT on [case]
+             alone. [case] is local to one [run] call, and the main
+             public entry point -- [Tape_test.result] -- calls [run]
+             once per size with ~count:1, so [case] was always 0 and
+             [0 % 2 = 1] never held. The mutation was therefore
+             unreachable through the whole Tape_test API: it worked only
+             for callers driving [Tape_engine.run] directly with a large
+             ~count, which is exactly what its own benchmark and guard
+             test do. [seed] varies per call there ([base_seed + case]),
+             so this alternates across calls as well as within one. *)
           (if
              Option.is_none !found
-             && !case % 2 = 1
+             && (seed + !case) % 2 = 1
              && Option.is_none !first_correlated_failure
            then
              match correlate_image out.Tape.image ~pick:!case with

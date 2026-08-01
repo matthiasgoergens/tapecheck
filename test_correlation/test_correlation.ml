@@ -35,4 +35,40 @@ let () =
     ~gen:(G.both wide wide)
     ~test:(fun (a, _) -> a = a)
     ();
+  (* Through the PUBLIC api, not Tape_engine.run directly.
+
+     The two checks above drive the engine themselves with ~count:200,
+     which is what the mutation's own benchmark does. Tape_test.result
+     -- the entry point real users go through -- calls run once per size
+     with ~count:1, and the mutation used to be gated on a per-call case
+     index that is therefore always 0. It never fired for anyone. A
+     capability tested only via the interface its implementation
+     happens to use is not tested. *)
+  let found = ref 0 in
+  let runs = 30 in
+  for t = 0 to runs - 1 do
+    let module Pair = struct
+      type t = int * int [@@deriving sexp_of]
+
+      let quickcheck_generator = G.both wide wide
+      let quickcheck_shrinker = Base_quickcheck.Shrinker.atomic
+    end in
+    let r =
+      Tape_test.run
+        ~f:(fun (a, b) ->
+          if a = b then Or_error.error_string "coincidence" else Ok ())
+        ~config:
+          { Base_quickcheck.Test.default_config with
+            test_count = 400
+          ; seed =
+              Base_quickcheck.Test.Config.Seed.Deterministic
+                (Int.to_string (t * 7919))
+          }
+        (module Pair)
+    in
+    if Result.is_error r then Int.incr found
+  done;
+  Test_support.report "correlation reachable through Tape_test"
+    (!found * 100 / runs >= 80)
+    (Printf.sprintf "found %d/%d (need 80%%)" !found runs);
   Test_support.finish ()
