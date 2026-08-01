@@ -1,4 +1,4 @@
 (test
- (name test_correlation)
+ (name test_support_selftest)
  (libraries base stdio base_quickcheck splittable_random tape tape_engine
    test_support))
