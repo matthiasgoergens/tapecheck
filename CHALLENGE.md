@@ -95,9 +95,10 @@ cost** and near-deterministically: 94..95 evaluations against their
 ported after `test_zig_zagging.py` caught us) doing what it was ported
 to do.
 
-## Two measurement errors worth recording
+## Three measurement errors worth recording
 
-Both would have gone unnoticed and both distorted the comparison.
+The first two would have gone unnoticed, and both distorted the
+comparison in our favour.
 
 **Budget mismatch, flattering us.** First run gave tapecheck
 `count = 500` against their `max_examples = 10**6`, and the `difference`
