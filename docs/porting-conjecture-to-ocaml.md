@@ -107,7 +107,7 @@ substantially since (`reverse` went from mean 45.95 evaluations to
 | reverse | **100/100**, 17.6 | 0/100, 294.0 |
 | distinct | **100/100**, 48.5 | 0/100, 418.5 |
 | large_union_list | **100/100**, 208.2 | 0/100, 1317.7 |
-| calculator | **100/100**, 191.2 | 3/100, 880.5 |
+| calculator | **100/100**, 103.7 | 3/100, 880.5 |
 | bound5 | **100/100**, 157.4 | 17/100, 267.7 |
 | lengthlist | **100/100**, 87.7 | 64/100, 298.8 |
 | difference (= 0) | 100/100, 40.6 | 100/100, 93.9 |
@@ -363,10 +363,11 @@ even. The reason looks structural. Their candidates must be enumerated
 cannot react to what it learns. An engine-driven search can. Generator
 cooperation buys structure but costs adaptivity.
 
-## Three measurement errors
+## Four measurement errors
 
-Worth recording, because two of them flattered us and I would not have
-caught either from reading.
+Worth recording, because three of them flattered us and I would not have
+caught any from reading. All four were found by review or by building
+something specifically to embarrass the result.
 
 **Budget mismatch.** The first challenge run gave tapecheck `count =
 500` against their `max_examples = 10**6`. The `difference` rows read as
@@ -380,6 +381,14 @@ the challenge's stated answer scored it 0/100 while the values were
 identical. It is 100/100. A false negative against the tool you are
 comparing yourself to is the most comfortable kind of bug to have, and
 the easiest to leave in place.
+
+**Counting discards as counterexamples.** My Hypothesis harness decided
+"is this interesting?" by catching plain `Exception`, and
+`UnsatisfiedAssumption` is an `Exception`. On `calculator` — the one
+challenge here that calls `assume` — every discard was recorded as
+interesting, inflating the evaluation count with generation work. Their
+true cost is 103.7, not the 191.2 I first measured, so the error made
+Hypothesis look 1.8x more expensive than it is. Quality was unaffected.
 
 **An exponential generator.** `calculator`'s expression generator is
 `recursive_union` with two recursive branches out of three, so node
