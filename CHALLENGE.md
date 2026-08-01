@@ -12,7 +12,7 @@ that costs in **evaluations**. Quality and cost together.
 
 ## Protocol
 
-100 runs per challenge. "Evaluations" counts test executions from the
+1000 runs per challenge. "Evaluations" counts test executions from the
 first failing example onward — the cost of shrinking, not of finding.
 Their harness reports the same quantity, so the columns are comparable.
 
@@ -40,25 +40,27 @@ change to `base_quickcheck` described in
 
 | challenge | Hypothesis 6.164.0 | tapecheck | tapecheck +patch |
 |---|---|---|---|
-| reverse | **100/100**, 17.6 | 0/100, 294.0 | 50/100, 278.8 |
-| distinct | **100/100**, 48.5 | 0/100, 418.5 | 12/100, 417.7 |
-| large_union_list | **100/100**, 208.2 | 0/100, 1317.7 | 0/100, 1256.7 |
-| calculator | **100/100**, 103.7 | 3/100, 880.5 | 3/100, 839.6 |
-| bound5 | **100/100**, 157.4 | **17/100**, 267.7 | 7/100, 278.6 |
-| lengthlist | **100/100**, 87.7 | 64/100, 298.8 | 64/100, 298.8 |
-| difference_must_not_be_zero | 100/100, 40.6 | 100/100, 93.9 | 100/100, 93.9 |
-| difference_must_not_be_small | 100/100, 726.8 | 100/100, **92.8** | 100/100, **92.8** |
-| difference_must_not_be_one | 100/100, 883.4 | 100/100, **94.5** | 100/100, **94.5** |
+| reverse | **1000/1000**, 17.7 | 0/1000, 285.5 | 452/1000, 275.6 |
+| distinct | **1000/1000**, 49.1 | 0/1000, 424.4 | 116/1000, 421.6 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1295.6 | 0/1000, 1255.5 |
+| calculator | **1000/1000**, 103.3 | 17/1000, 886.1 | 15/1000, 874.9 |
+| bound5 | **1000/1000**, 154.8 | 159/1000, 266.9 | 52/1000, 281.9 |
+| lengthlist | **1000/1000**, 87.9 | 683/1000, 283.3 | 683/1000, 283.3 |
+| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, 94.0 | 1000/1000, 94.0 |
+| difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **93.5** | 1000/1000, **93.5** |
+| difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **94.6** | 1000/1000, **94.6** |
 
-Cells are `normalised / mean evaluations`.
+Cells are `normalised / mean evaluations`, **1000 runs each**. 95%
+Wilson intervals are in the raw output; the ones that matter are quoted
+inline below.
 
 ## Reading it
 
-**Hypothesis normalises everything, 100/100, on all nine.** That is the
+**Hypothesis normalises everything, 1000/1000, on all nine.** That is the
 headline and it is not close. It is also better than their own 2020
 report, so it is current work rather than legacy.
 
-**tapecheck reaches 100/100 on three of nine.**
+**tapecheck reaches full normalisation on three of nine** — the three `difference` variants.
 
 **bound5's score is not a shrink-quality result at all, in either
 column.** Measured directly over 1000 runs (`diag2/probe_bound5.ml`):

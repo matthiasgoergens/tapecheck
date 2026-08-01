@@ -96,7 +96,7 @@ challenge, what the shrinker *normalises* to (does it reach the same
 canonical answer regardless of where it started?) and what that costs in
 test evaluations. Quality and cost together.
 
-100 runs per challenge, their harness's protocol and budget. Their
+1000 runs per challenge, their harness's protocol and budget. Their
 published Hypothesis numbers are from 5.23.11 in 2020, so I re-measured
 against current Hypothesis rather than citing them — it has improved
 substantially since (`reverse` went from mean 45.95 evaluations to
@@ -104,19 +104,19 @@ substantially since (`reverse` went from mean 45.95 evaluations to
 
 | challenge | Hypothesis 6.164.0 | tapecheck |
 |---|---|---|
-| reverse | **100/100**, 17.6 | 0/100, 294.0 |
-| distinct | **100/100**, 48.5 | 0/100, 418.5 |
-| large_union_list | **100/100**, 208.2 | 0/100, 1317.7 |
-| calculator | **100/100**, 103.7 | 3/100, 880.5 |
-| bound5 | **100/100**, 157.4 | 17/100, 267.7 |
-| lengthlist | **100/100**, 87.7 | 64/100, 298.8 |
-| difference (= 0) | 100/100, 40.6 | 100/100, 93.9 |
-| difference (small) | 100/100, 726.8 | 100/100, **92.8** |
-| difference (= 1) | 100/100, 883.4 | 100/100, **94.5** |
+| reverse | **1000/1000**, 17.7 | 0/1000, 285.5 |
+| distinct | **1000/1000**, 49.1 | 0/1000, 424.4 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1295.6 |
+| calculator | **1000/1000**, 103.3 | 17/1000, 886.1 |
+| bound5 | **1000/1000**, 154.8 | 159/1000, 266.9 |
+| lengthlist | **1000/1000**, 87.9 | 683/1000, 283.3 |
+| difference (= 0) | 1000/1000, 40.5 | 1000/1000, 94.0 |
+| difference (small) | 1000/1000, 721.6 | 1000/1000, **93.5** |
+| difference (= 1) | 1000/1000, 885.2 | 1000/1000, **94.6** |
 
-Cells are `normalised / mean evaluations`.
+Cells are `normalised / mean evaluations`, 1000 runs each.
 
-Hypothesis normalises all nine at 100/100. tapecheck manages three. That
+Hypothesis normalises all nine at 1000/1000. tapecheck reaches full normalisation on three — the difference family. That
 is the headline and it is not close.
 
 The rest of this post is what happened when I went through the losses
