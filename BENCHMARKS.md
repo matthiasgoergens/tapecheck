@@ -20,7 +20,7 @@ parity. Tagged as opportunities rather than dropped.
 | **self_len** (`l[0] == len(l)`) | 89 | **53** | `[8,0,0,0,0,0,0,0]` vs true `[1]` |
 | **load_bearing** (`a==0 and b>=5`) | **78** | 78 | - |
 | tree_depth | 100 | 100 | - |
-| **rare_precond** (`assume(x%7==3)`) | 100 | **7** | `605` vs true `101` |
+| **rare_precond** (`assume(x%7==3)`) | 100 | **6** | `269` vs true `101` |
 | two_lists | 100 | 100 | - |
 | big_boundary (2^62, full range) | 100 | 100 | - |
 | substring | 100 | 100 | - |
@@ -31,7 +31,7 @@ Three discriminators, of different kinds:
 - **self_len** — a *shrinking* weakness. Deleting an element breaks
   `l[0] == len(l)`; lowering `l[0]` breaks it too. Only a simultaneous
   edit works.
-- **rare_precond** — an *assume/discard* weakness, 7/100. Related to the
+- **rare_precond** — an *assume/discard* weakness, 6/100. Related to the
   filtered-generator cost measured on tapecheck's side.
 - **load_bearing** — a *generation* weakness: 78/100 found, but 78/78 of
   those shrink perfectly.

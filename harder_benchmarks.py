@@ -80,6 +80,15 @@ def depth(t):
     return 1 + max(depth(t[0]), depth(t[1]))
 
 
+def nodes(t):
+    """Interior nodes. depth alone is not minimality: a depth-3 tree with
+    redundant branches has the same depth as the smallest one, and was
+    being counted as fully minimal."""
+    if t is None:
+        return 0
+    return 1 + nodes(t[0]) + nodes(t[1])
+
+
 trees = st.recursive(st.none(), lambda c: st.tuples(c, c), max_leaves=12)
 
 ROWS = [
@@ -111,7 +120,9 @@ ROWS = [
         "tree_depth: fails iff depth >= 3",
         trees,
         lambda t: depth(t) < 3,
-        lambda t: depth(t) == 3,
+        # Smallest depth-3 tree is a 3-node chain; depth == 3 alone
+        # accepts bloated trees of the same depth.
+        lambda t: depth(t) == 3 and nodes(t) == 3,
     ),
     (
         "rare_precond: assume(x % 7 == 3), fails iff x >= 100",
@@ -164,8 +175,12 @@ def run_rare_precond(seed_value):
     )
     @given(st.integers(0, 100_000))
     def prop(v):
-        assume(v % 7 == 3)
+        # Counted BEFORE the assume. This benchmark exists to measure
+        # the cost of discard handling, and counting after the assume
+        # excluded roughly six of every seven executions -- precisely
+        # the ones being measured.
         calls[0] += 1
+        assume(v % 7 == 3)
         if v >= 100:
             found.append(v)
             raise AssertionError(repr(v))

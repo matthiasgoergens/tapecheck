@@ -1,12 +1,22 @@
-int uniform in [0, 1_000_000], fail iff v >= 123_457 -- 100 seeds
-  hypothesis found 100/100, fully minimal 100/100, avg    55 calls (gen+shrink), worst: -
-pair in [0,1000]^2, fail iff a + b >= 100 -- 100 seeds
-  hypothesis found 100/100, fully minimal 100/100, avg    35 calls (gen+shrink), worst: -
-int list, fail iff length >= 3 -- 100 seeds
-  hypothesis found 100/100, fully minimal 100/100, avg    27 calls (gen+shrink), worst: -
-int list, fail iff sum >= 100 -- 100 seeds
-  hypothesis found 100/100, fully minimal 100/100, avg    28 calls (gen+shrink), worst: -
-filtered even ints, fail iff v >= 100 -- 100 seeds
-  hypothesis found 100/100, fully minimal 100/100, avg    27 calls (gen+shrink), worst: -
-bind: len in [1,64], list_with_length, fail iff sum >= 100 -- 100 seeds
-  hypothesis found 100/100, fully minimal 100/100, avg    47 calls (gen+shrink), worst: -
+duplicate: fails iff list has a duplicate
+  hypothesis found 100/100, fully minimal 100/100, avg    37 calls, worst: -
+unsorted: fails iff list not ascending
+  hypothesis found 100/100, fully minimal 100/100, avg    28 calls, worst: -
+self_len: fails iff l and l[0] == len(l)
+  hypothesis found  89/100, fully minimal  53/100, avg   118 calls, worst: [8, 0, 0, 0, 0, 0, 0, 0]
+load_bearing: fails iff a == 0 and b >= 5
+  hypothesis found  81/100, fully minimal  81/100, avg   154 calls, worst: -
+tree_depth: fails iff depth >= 3
+  hypothesis found 100/100, fully minimal 100/100, avg    22 calls, worst: -
+rare_precond: assume(x % 7 == 3), fails iff x >= 100
+  hypothesis found 100/100, fully minimal   6/100, avg    26 calls, worst: 269
+two_lists: fails iff len(xs) == len(ys) >= 2
+  hypothesis found 100/100, fully minimal 100/100, avg    63 calls, worst: -
+big_boundary: fails iff x >= 2^62 (full 64-bit range)
+  hypothesis found 100/100, fully minimal 100/100, avg   219 calls, worst: -
+substring: fails iff 'ab' in s
+  hypothesis found 100/100, fully minimal 100/100, avg    14 calls, worst: -
+zig-zag: fails iff |m - n| == 1  (their own test_zig_zagging case)
+  hypothesis found  67/100, fully minimal  67/100, avg   166 calls, worst: -
+nested: fails iff some inner list has length >= 2
+  hypothesis found 100/100, fully minimal 100/100, avg    36 calls, worst: -
