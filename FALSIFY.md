@@ -43,32 +43,57 @@ Two details worth stealing regardless:
   whether it has already been shrunk. tapecheck has no such marking; it
   re-derives what to try from scratch each pass.
 
-## Why this matters for the open question
+## CORRECTION, after reading the shrinker rather than the data structure
 
-This is precisely the experiment I ran and misread. I tested making
-`base_quickcheck` combinators split per element
-(`diag2/probe_split.ml`): structure appeared exactly as predicted, one
-stream per list element, tape halved — and shrink quality DROPPED, 47/100
-to 17/100. I concluded it was "a real option with a real cost".
+The section above is right about `SampleTree` and wrong about what
+follows from it. Reading `Internal/Shrinking.hs` and
+`Internal/Generator.hs`:
 
-falsify says the cost is not intrinsic. It gets structure from exactly
-that mechanism and shrinks well. What dropped was *our* quality, because
-our passes work within a flat segment and the joint move they rely on
-stops being expressible once elements live on separate streams. The
-generator change needs a matching shrinker built for trees — which
-falsify has and we do not.
+```haskell
+newtype Gen a = Gen { runGen :: SampleTree -> (a, [SampleTree]) }
+```
 
-So the honest form of the email's question changes. Not "is PRNG-level
-recording a dead end for span-dependent passes?" but:
+A falsify generator returns a value **and a list of already-shrunk
+sample trees**. `bind` combines the candidates from both sides. The
+engine's `shrinkFrom` then does almost nothing: take the candidates the
+generator produced, keep the first that still fails, recurse.
 
-> Hypothesis takes structure from the strategy layer; falsify takes it
-> from the PRNG's split topology. tapecheck currently takes it from
-> neither. Given that `base_quickcheck` splits exactly once in its whole
-> generator library, is the split-topology route open to us at all
-> without changing those combinators — and if the combinators must
-> change, is that a better bargain than owning the strategy layer?
+So falsify does NOT derive shrinks from the split topology. **The
+generator proposes them.** That is integrated shrinking in the Hedgehog
+sense, moved from values onto sample trees. `SampleTree` is the
+representation; the shrinking power comes from generator cooperation.
 
-That is a sharper question, and it has a real third option in it.
+Which means my earlier inference was wrong. I wrote that our 47/100 ->
+17/100 drop under split-per-element "looks like ours, not the
+approach's, because falsify takes that route and shrinks well". falsify
+does not demonstrate that an ENGINE-DRIVEN shrinker over split topology
+works, because falsify's shrinker is not engine-driven. Nothing here
+shows the drop is avoidable.
+
+## The axis that actually matters
+
+Not "where does structure come from" but **how much cooperation does the
+shrinker need from the generator**:
+
+| | cooperation required | who proposes shrinks |
+|---|---|---|
+| Hypothesis | strategies must call `start_span`/`stop_span` | engine, over spans |
+| falsify | every combinator must emit candidate trees | **generator** |
+| tapecheck | **none** — unmodified `base_quickcheck` | engine, over a flat tape |
+
+Both alternatives buy their structure with generator cooperation.
+tapecheck is the only one of the three that requires nothing, and the
+missing span-dependent passes are the price of exactly that.
+
+That is a better framing than "third position", and it makes the
+question for the email sharper rather than softer: is zero-cooperation
+viable for span-dependent passes at all, given that both other designs
+pay for their structure — and if not, which currency is cheaper, spans
+at the strategy layer or candidates from the generator?
+
+Note also `instance Selective Gen`. Selective functors let you inspect
+both branches of a choice without running either, which is plausibly how
+falsify keeps structure visible under `bind`. Not yet followed up.
 
 ## Not yet read
 
