@@ -940,10 +940,46 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        Truncation is recorded, because a pass cut short cannot support a
        claim of convergence. *)
     let consecutive_failures = ref 0 in
+    (* The cutoff is a FLOOR, scaled by tape length, not a flat count.
+       A budget of 20 covers a very different fraction of a 20-choice
+       tape than of a 200-choice one, and the flat version was tuned on
+       the short ones. Measured across four properties
+       (diag2/probe_cutoff_sweep.ml, 50 runs each):
+
+         property                     flat 20        floor max(20,len/3)
+         list, len >= 3               50/50, 182     50/50, 182
+         deep bind, sum >= 500        50/50, 148     50/50, 149
+         lengthlist, max >= 900       34/50, 280     50/50, 137
+         zig-zag, |m-n| <> 1          50/50,  34     50/50,  34
+
+       Strictly better: the two short-tape properties are untouched
+       because len/3 never reaches 20 there, and lengthlist gains full
+       quality at HALF the cost. Raising the flat constant to 40 also
+       fixes lengthlist but costs the first property 182 -> 300, which
+       is what the proportional form avoids.
+
+       [cached_limit] exists because [live] is a loop condition: the sum
+       is recomputed only when [best] is replaced, which is exactly when
+       it can change. *)
+    let cached_for = ref None in
+    let cached_limit = ref 0 in
+    let limit n =
+      let b = !best in
+      (match !cached_for with
+       | Some prev when phys_equal prev b -> ()
+       | _ ->
+         let c = ref 0 in
+         for si = 0 to seg_count b - 1 do
+           c := !c + Array.length (seg_get b si)
+         done;
+         cached_for := Some b;
+         cached_limit := Int.max n (!c / 3));
+      !cached_limit
+    in
     let live () =
       match max_pass_failures with
       | None -> true
-      | Some n -> !consecutive_failures < n
+      | Some n -> !consecutive_failures < limit n
     in
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () && live () do
