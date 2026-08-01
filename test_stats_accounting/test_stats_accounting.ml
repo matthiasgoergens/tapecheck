@@ -155,6 +155,69 @@ let () =
   sweep "fails on UNEQUAL draws (a=5 && b=0)" ~test:(fun (a, b) ->
     not (a = 5 && b = 0));
 
+  (* Issue #1's other half: the pooled path. FIXED in this commit, and
+     these are live assertions rather than a recorded observation.
+
+     The defect: worker domains returned only "did this case fail", the
+     verdict was dropped, and [run] reported [Passed {cases = 300}] while
+     the statistics said 0 valid and 0 invalid -- the return value and
+     the summary line contradicting each other, which is the whole
+     subject of the issue. Workers cannot count it themselves ([stats] is
+     plain mutable state and they would race), so the verdict is carried
+     back as data and counted on the main domain.
+
+     Three cases, because the all-passing one alone would not have caught
+     a fix that counted every case as valid. *)
+  Stdio.printf "\n  issue #1: pooled runs count their cases (was: none)\n";
+  let pooled_counts ?(domains = 4) ~test () =
+    let st = Tape_engine.no_stats () in
+    let r =
+      Tape_engine.run
+        (G.int_uniform_inclusive 0 1_000_000)
+        ~test ~seed:3 ~count:300 ~size:10 ~stats:st ~domains
+    in
+    let cases = match r with
+      | Tape_engine.Passed { cases } -> cases
+      | Tape_engine.Failed _ -> -1
+    in
+    (cases, st)
+  in
+
+  (* (a) All passing: every case is valid, and the two views agree. *)
+  let cases, st = pooled_counts ~test:(fun _ -> true) () in
+  check "pooled, all passing: valid = returned cases"
+    ~engine:st.Tape_engine.cases_valid ~actual:cases;
+  check "pooled, all passing: none miscounted as invalid"
+    ~engine:st.Tape_engine.cases_invalid ~actual:0;
+
+  (* (b) Half discarded via assume. Guards against a fix that simply
+     counts everything as valid -- which (a) alone would accept. *)
+  let _, st_d =
+    pooled_counts
+      ~test:(fun x ->
+        Tape_stats.assume (x % 2 = 0);
+        true)
+      ()
+  in
+  let valid_d = st_d.Tape_engine.cases_valid
+  and invalid_d = st_d.Tape_engine.cases_invalid in
+  if valid_d > 0 && invalid_d > 0 then
+    Stdio.printf "  ok   %-44s %d valid, %d discarded\n"
+      "pooled, with assume: both buckets move" valid_d invalid_d
+  else begin
+    Int.incr failures;
+    Stdio.printf
+      "  FAIL %-44s %d valid, %d discarded (both must be > 0)\n"
+      "pooled, with assume: both buckets move" valid_d invalid_d
+  end;
+
+  (* (c) The sequential control. If domains:1 ever reports zero, the
+     comparisons above stop meaning anything -- a dead instrument reads
+     as "pooled is no worse than sequential". *)
+  let cases1, st1 = pooled_counts ~domains:1 ~test:(fun _ -> true) () in
+  check "control: domains:1 counts its cases too"
+    ~engine:st1.Tape_engine.cases_valid ~actual:cases1;
+
   Stdio.printf "\n";
   if !failures > 0 then begin
     Stdio.printf

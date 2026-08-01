@@ -518,6 +518,20 @@ let last_shape () =
   , !lad_successes )
 
 
+(* What a pooled task hands back. The pool's element type is fixed when
+   it is created, and ONE pool serves both the generate phase and the
+   shrink phase, so the payload has to satisfy both.
+
+   The second component exists because pooled generate-phase cases used
+   to be uncounted entirely: the worker returned only "did this fail",
+   the verdict was dropped on the floor, and [run] reported
+   [Passed {cases = 300}] while the statistics said 0 valid and 0
+   invalid (tapecheck#1). Counting inside the worker is not an option --
+   [stats] is plain mutable state on the main domain and several domains
+   would race on it -- so the verdict travels back as data and the main
+   domain does the arithmetic. Shrinking passes [None]. *)
+type 'a pool_payload = 'a * Tape_stats.verdict option
+
 (* Mutable state for a tape SEARCH -- shared by shrinking today, and by
    anything else that proposes edits and keeps the best result.
 
@@ -540,7 +554,12 @@ type 'a search =
   ; s_tape : Tape.t
   ; s_realign : realign
   ; s_stats : stats
-  ; s_pool : (Tape.image * 'a) option Pool.t option
+  ; s_pool : (Tape.image * 'a) option pool_payload Pool.t option
+        (* The payload is shared with the GENERATE phase, which runs on
+           the same pool and needs to report each case's verdict back to
+           the main domain -- worker domains cannot safely touch [stats]
+           themselves. Shrinking has no verdict to report and passes
+           [None]; see [pool_payload]. *)
   ; s_domains : int
   ; s_budget : int
   ; s_max_shrinks : int
@@ -848,14 +867,14 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
         let results =
           Pool.run_batch pool
             (List.map kept ~f:(fun (_, p) () ->
-                 eval_proposal ~gen ~size ~test ~realign p))
+                 (eval_proposal ~gen ~size ~test ~realign p, None)))
         in
         attempts := !attempts + List.length kept;
         let accepted =
           List.foldi results ~init:None ~f:(fun i acc r ->
             match (acc, r) with
-            | Some _, _ | _, None -> acc
-            | None, Some (image, value) ->
+            | Some _, _ | _, (None, _) -> acc
+            | None, (Some (image, value), _) ->
               if Tape.compare_image image !best < 0 then
                 (* Map back to the position in the ORIGINAL batch. *)
                 Some (fst (List.nth_exn kept i), image, value)
@@ -2309,14 +2328,47 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                  in
                  (* Verdict-aware since the stats merge: only a genuine
                     failure counts, and an [assume]-discarded case
-                    (Case_invalid) must NOT be mistaken for one. *)
-                 match tested with
-                 | Some Tape_stats.Case_failed -> Some (out.Tape.image, value)
-                 | _ -> None))
+                    (Case_invalid) must NOT be mistaken for one.
+
+                    The verdict is also returned, not just consumed: the
+                    main domain needs it to count the case. See
+                    [pool_payload] for why this cannot be counted here. *)
+                 let failure =
+                   match tested with
+                   | Some Tape_stats.Case_failed -> Some (out.Tape.image, value)
+                   | _ -> None
+                 in
+                 (failure, tested)))
           in
+          (* Count every case the workers actually ran, on this domain.
+             Without this the pooled path reported [Passed {cases = N}]
+             with 0 valid and 0 invalid -- the returned result and the
+             summary line disagreeing, which is tapecheck#1.
+
+             Only cases up to and including the first failure are
+             counted: run_batch evaluates the whole batch speculatively,
+             so a later case in the same batch ran but is not part of
+             the run the engine reports. *)
+          let stop_at =
+            match List.findi results ~f:(fun _ (f, _) -> Option.is_some f) with
+            | Some (i, _) -> i + 1
+            | None -> List.length results
+          in
+          List.iteri results ~f:(fun i (_, tested) ->
+            if i < stop_at then
+              match tested with
+              | Some Tape_stats.Case_passed ->
+                stats.cases_valid <- stats.cases_valid + 1
+              | Some Tape_stats.Case_invalid ->
+                stats.cases_invalid <- stats.cases_invalid + 1
+              | Some Tape_stats.Case_failed | None ->
+                (* Failures are counted in [finish_from_failure], the
+                   single commit point, exactly as on the sequential
+                   path. *)
+                ());
           (* run_batch preserves task order, so the first Some is the
              lowest failing case index. *)
-          found := List.find_map results ~f:Fn.id;
+          found := List.find_map results ~f:(fun (f, _) -> f);
           batch_start := !batch_start + n
         done;
         !found
