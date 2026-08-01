@@ -22,6 +22,7 @@ from random import Random
 from hypothesis import HealthCheck, Phase, Verbosity
 from hypothesis import seed as with_seed
 from hypothesis import settings
+from hypothesis.errors import UnsatisfiedAssumption
 from hypothesis.internal.reflection import proxies
 
 RUNS = 100
@@ -54,6 +55,15 @@ def measure(source, filename, expected):
             try:
                 base_function(**kwargs)
                 record(kwargs, False)
+            except UnsatisfiedAssumption:
+                # A discard is NOT a counterexample. Catching plain
+                # Exception here recorded every assume() rejection as
+                # interesting, which on an assume-heavy property means
+                # the reported "shrunk" value and the evaluation count
+                # both describe rejected inputs. calculator is the only
+                # challenge here that calls assume.
+                record(kwargs, False)
+                raise
             except Exception:
                 record(kwargs, True)
                 raise

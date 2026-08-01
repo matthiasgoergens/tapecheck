@@ -1,6 +1,3 @@
-Downloading hypothesis (1.1MiB)
- Downloaded hypothesis
-Installed 2 packages in 53ms
 # The Shrinking Challenge, Hypothesis 6.164.0
 
 100 runs per challenge.
@@ -11,23 +8,6 @@ Installed 2 packages in 53ms
   normalised    100/100 runs (1 distinct answers)
   evaluations   12..38 during shrinking, mean 17.65
       100 x  [0, 1]   <- expected
-
-## distinct
-
-  expected      [0, 1, -1]
-  normalised    100/100 runs (1 distinct answers)
-  evaluations   32..102 during shrinking, mean 48.46
-      100 x  [0, 1, -1]   <- expected
-
-## Summary
-
-| challenge | normalised | mean evaluations |
-|---|---|---|
-| reverse | 100/100 | 17.6 |
-| distinct | 100/100 | 48.5 |
-# The Shrinking Challenge, Hypothesis 6.164.0
-
-100 runs per challenge.
 
 ## large_union_list
 
@@ -42,6 +22,13 @@ Installed 2 packages in 53ms
   normalised    100/100 runs (1 distinct answers)
   evaluations   30..143 during shrinking, mean 87.70
       100 x  [900]   <- expected
+
+## distinct
+
+  expected      [0, 1, -1]
+  normalised    100/100 runs (1 distinct answers)
+  evaluations   32..102 during shrinking, mean 48.46
+      100 x  [0, 1, -1]   <- expected
 
 ## difference_must_not_be_zero
 
@@ -64,20 +51,30 @@ Installed 2 packages in 53ms
   evaluations   54..1056 during shrinking, mean 883.44
       100 x  10, 9   <- expected
 
+## bound5
+
+  expected      ([], [], [], [-1], [-32768])
+  normalised    100/100 runs (1 distinct answers)
+  evaluations   92..462 during shrinking, mean 157.40
+      100 x  ([], [], [], [-1], [-32768])   <- expected
+
 ## calculator
 
   expected      ('/', 0, ('+', 0, 0))
   normalised    100/100 runs (1 distinct answers)
-  evaluations   61..601 during shrinking, mean 191.23
+  evaluations   42..252 during shrinking, mean 103.67
       100 x  ('/', 0, ('+', 0, 0))   <- expected
 
 ## Summary
 
 | challenge | normalised | mean evaluations |
 |---|---|---|
+| reverse | 100/100 | 17.6 |
 | large_union_list | 100/100 | 208.2 |
 | lengthlist | 100/100 | 87.7 |
+| distinct | 100/100 | 48.5 |
 | difference_must_not_be_zero | 100/100 | 40.6 |
 | difference_must_not_be_small | 100/100 | 726.8 |
 | difference_must_not_be_one | 100/100 | 883.4 |
-| calculator | 100/100 | 191.2 |
+| bound5 | 100/100 | 157.4 |
+| calculator | 100/100 | 103.7 |
