@@ -6,12 +6,41 @@
 open Base
 module G = Base_quickcheck.Generator
 
-let tmpdir = "/tmp/tapecheck-db-test"
+(* A private directory under the CURRENT directory, which dune gives
+   each test to itself, rather than a predictable path in /tmp.
+
+   The old code used a fixed "/tmp/tapecheck-db-*" and then deleted
+   every immediate entry in it. If anything symlinks that path at a
+   directory you care about, `dune test` empties it; two checkouts
+   testing at once also destroy each other's fixtures. [Unix.mkdir]
+   fails if the name already exists, so reaching the body of this
+   function means the directory is one WE just made. *)
+let private_dir prefix =
+  let rec attempt n =
+    if n > 100 then failwith ("could not create a private directory: " ^ prefix)
+    else
+      let path = Printf.sprintf "%s-%d-%d" prefix (Unix.getpid ()) n in
+      match Unix.mkdir path 0o700 with
+      | () -> path
+      | exception Unix.Unix_error (Unix.EEXIST, _, _) -> attempt (n + 1)
+  in
+  attempt 0
+
+let remove_dir path =
+  (* Only files we wrote live here, and [path] is never a symlink
+     because we created it with mkdir. *)
+  if Stdlib.Sys.file_exists path then begin
+    Array.iter (Stdlib.Sys.readdir path) ~f:(fun f ->
+      try Stdlib.Sys.remove (Stdlib.Filename.concat path f) with _ -> ());
+    try Unix.rmdir path with _ -> ()
+  end
+
+let tmpdir = private_dir "tapecheck-db-test"
+let () = Stdlib.at_exit (fun () -> remove_dir tmpdir)
 
 let clean () =
-  if Stdlib.Sys.file_exists tmpdir then
-    Array.iter (Stdlib.Sys.readdir tmpdir) ~f:(fun f ->
-      try Stdlib.Sys.remove (Stdlib.Filename.concat tmpdir f) with _ -> ())
+  Array.iter (Stdlib.Sys.readdir tmpdir) ~f:(fun f ->
+    try Stdlib.Sys.remove (Stdlib.Filename.concat tmpdir f) with _ -> ())
 
 let gen = G.list (G.int_uniform_inclusive 0 1000)
 let failing l = List.sum (module Int) l ~f:Fn.id < 100
@@ -80,13 +109,18 @@ let () =
   Stdio.printf "\nVERDICT\n";
   let stored_ok = Option.is_some img1 in
   Stdio.printf "  saved a failing tape:                %b\n" stored_ok;
-  Stdio.printf "  replay reproduced without searching: %b\n"
-    (match img1 with
-     | None -> false
-     | Some img -> (
-       match fst (resume_from ~test:failing img) with
-       | Tape_engine.Failed _ -> true
-       | _ -> false));
+  (* Bound, not computed inside the printf: this was printed and then
+     left out of the verdict below, so an entirely unwired replay path
+     would still have exited 0. *)
+  let replay_reproduced =
+    match img1 with
+    | None -> false
+    | Some img -> (
+      match fst (resume_from ~test:failing img) with
+      | Tape_engine.Failed _ -> true
+      | _ -> false)
+  in
+  Stdio.printf "  replay reproduced without searching: %b\n" replay_reproduced;
   Stdio.printf "  stale entry deleted after a fix:     %b\n" gone;
   Stdio.printf "  ~record:false writes nothing:        %b\n"
     (not record_off_wrote);
@@ -113,7 +147,7 @@ let () =
   Stdio.printf "  Silent survives a bad dir:           %b\n" silent_survived;
   Stdio.printf "  Raise turns it into an error:        %b\n" raise_raised;
   if not
-       (stored_ok && gone
+       (stored_ok && replay_reproduced && gone
        && (not record_off_wrote)
        && (not replay_off_reads)
        && warn_survived && silent_survived && raise_raised)
@@ -155,6 +189,20 @@ let () =
      let c2 = st2.Tape_engine.tests in
      Stdio.printf "  cold search: %4d test calls\n" c1;
      Stdio.printf "  replay:      %4d test calls  (%.1fx fewer)\n" c2
-       (Float.of_int c1 /. Float.of_int (Int.max 1 c2))
+       (Float.of_int c1 /. Float.of_int (Int.max 1 c2));
+     (* Asserted, not merely printed. The whole point of the database is
+        that the second run is cheap; without this, replay could quietly
+        degenerate to a full search and the test would still pass. A
+        factor of 4 is well inside the measured 38x and well outside
+        anything a working replay would produce. *)
+     if c2 * 4 > c1 then begin
+       Stdio.printf
+         "  FAIL: replay cost %d against a cold search of %d -- replay is \
+          not saving work\n"
+         c2 c1;
+       Stdlib.exit 1
+     end
    | Tape_engine.Passed _ ->
-     Stdio.printf "  (no failure found at this seed)\n")
+     Stdio.printf "  FAIL: no failure found at this seed, so the replay \
+                   measurement tested nothing\n";
+     Stdlib.exit 1)

@@ -15,12 +15,39 @@ module Int_t = struct
   type nonrec t = t [@@deriving quickcheck, sexp_of]
 end
 
-let dir = "/tmp/tapecheck-db-wired"
+(* A private directory under the CURRENT directory, which dune gives
+   each test to itself, rather than a predictable path in /tmp.
+
+   The old code used a fixed "/tmp/tapecheck-db-*" and then deleted
+   every immediate entry in it. If anything symlinks that path at a
+   directory you care about, `dune test` empties it; two checkouts
+   testing at once also destroy each other's fixtures. [Unix.mkdir]
+   fails if the name already exists, so reaching the body of this
+   function means the directory is one WE just made. *)
+let private_dir prefix =
+  let rec attempt n =
+    if n > 100 then failwith ("could not create a private directory: " ^ prefix)
+    else
+      let path = Printf.sprintf "%s-%d-%d" prefix (Unix.getpid ()) n in
+      match Unix.mkdir path 0o700 with
+      | () -> path
+      | exception Unix.Unix_error (Unix.EEXIST, _, _) -> attempt (n + 1)
+  in
+  attempt 0
+
+let remove_dir path =
+  (* Only files we wrote live here, and [path] is never a symlink
+     because we created it with mkdir. *)
+  if Stdlib.Sys.file_exists path then begin
+    Array.iter (Stdlib.Sys.readdir path) ~f:(fun f ->
+      try Stdlib.Sys.remove (Stdlib.Filename.concat path f) with _ -> ());
+    try Unix.rmdir path with _ -> ()
+  end
+
+let dir = private_dir "tapecheck-db-wired"
+let () = Stdlib.at_exit (fun () -> remove_dir dir)
 
 let () =
-  if Stdlib.Sys.file_exists dir then
-    Array.iter (Stdlib.Sys.readdir dir) ~f:(fun f ->
-      try Stdlib.Sys.remove (Stdlib.Filename.concat dir f) with _ -> ());
   let db = Tape_db.create ~dir () in
   let key = "wired_property" in
   let calls = ref 0 in
