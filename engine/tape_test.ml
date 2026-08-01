@@ -410,12 +410,23 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     (match db_entry with
      | None -> ()
      | Some (d, k) -> (
-       match Tape_db.load d ~key:k with
+       match Tape_db.load_sized d ~key:k with
        | None -> ()
-       | Some img -> (
+       | Some (img, saved_size) -> (
+         (* Replay at the size the failure was FOUND at, not sizes.(0).
+            A tape recorded at size 40 can regenerate a different value
+            at size 0 -- the tape only covers the draws it recorded, and
+            size guides anything past its end -- and the entry would
+            then look stale and be deleted. Entries written before the
+            size was persisted report None and fall back as before. *)
+         let replay_size =
+           match saved_size with
+           | Some n when n >= 0 -> n
+           | _ -> sizes.(0)
+         in
          match
            Tape_engine.resume M.quickcheck_generator ~test ~realign
-             ~size:sizes.(0) ~budget:max_shrinks
+             ~size:replay_size ~budget:max_shrinks
              ~max_seconds:max_shrink_seconds ~stats img
          with
          | Tape_engine.Passed _ ->
@@ -427,7 +438,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
              report_failure ~f ~sexp_of:M.sexp_of_t
                ~gen:M.quickcheck_generator ~regressions ~explain
                ~explain_budget ~max_shrinks ~max_shrink_seconds
-               ~size:sizes.(0) engine_failure
+               ~size:replay_size engine_failure
            with
            | Error _ as e -> failure := Some e
            | Ok () -> ()))));
@@ -457,7 +468,8 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
           (match db_entry with
            | None -> ()
            | Some (d, k) ->
-             Tape_db.save d ~key:k engine_failure.Tape_engine.image)
+             Tape_db.save d ~key:k ~size:sizes.(!case)
+               engine_failure.Tape_engine.image)
         | Ok () -> ()));
       Int.incr case
     done;

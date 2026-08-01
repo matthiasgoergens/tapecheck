@@ -42,6 +42,7 @@ last_greedy_cost
 last_pass_costs
 last_shape
 load
+load_sized
 max_examples_per_choice
 max_invalid_draws
 max_large_draws
@@ -91,6 +92,7 @@ seg_get
 seg_set
 sexp_of_origin
 shrink
+split_header
 stats_summary_line
 stats_to_string_hum
 string_of_choice

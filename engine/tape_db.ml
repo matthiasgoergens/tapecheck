@@ -132,7 +132,25 @@ let ensure_dir t =
 (* Read the stored tape for [key], if any. A file that fails to parse is
    treated as absent rather than fatal: the database is a cache, and a
    format change or a truncated write must never break a test run. *)
-let load t ~key : Tape.image option =
+(* Entries are "<size>\n<serialized image>". The size matters: a failure
+   found at generator size 40 can replay differently at size 0, and the
+   caller then deletes the entry as stale. Regression files have always
+   persisted "@size" for exactly this reason; the database did not, and
+   replayed everything at sizes.(0).
+
+   Entries written before this change have no header. They are still
+   readable -- [None] size, and the caller falls back to its own
+   default -- so an existing database keeps working rather than being
+   silently discarded. *)
+let split_header (s : string) : int option * string =
+  match String.lsplit2 s ~on:'\n' with
+  | Some (head, rest) -> (
+    match Int.of_string_opt (String.strip head) with
+    | Some n -> (Some n, rest)
+    | None -> (None, s))
+  | None -> (None, s)
+
+let load_sized t ~key : (Tape.image * int option) option =
   if not t.replay then None
   else
   let file = path t ~key in
@@ -145,15 +163,19 @@ let load t ~key : Tape.image option =
     try
       Stdlib.In_channel.with_open_bin file (fun ic ->
         let n = Stdlib.in_channel_length ic in
-        let s = Stdlib.really_input_string ic n in
-        Tape.deserialize_image s)
+        let raw = Stdlib.really_input_string ic n in
+        let size, body = split_header raw in
+        Option.map (Tape.deserialize_image body) ~f:(fun img -> (img, size)))
     with _ -> None
   end
+
+let load t ~key : Tape.image option =
+  Option.map (load_sized t ~key) ~f:fst
 
 (* Written via a temporary file and renamed, so a crash mid-write cannot
    leave a half-written tape that the next run would silently treat as
    absent. *)
-let save t ~key (img : Tape.image) : unit =
+let save t ~key ?size (img : Tape.image) : unit =
   if not t.record then ()
   else
     let tmp_path = ref None in
@@ -166,6 +188,8 @@ let save t ~key (img : Tape.image) : unit =
          [output_string] or the implicit flush used to skip [close_out]
          entirely, leaking the channel into the error path. *)
       Stdlib.Out_channel.with_open_bin tmp (fun oc ->
+        Stdlib.Out_channel.output_string oc
+          (Printf.sprintf "%d\n" (Option.value size ~default:(-1)));
         Stdlib.Out_channel.output_string oc (Tape.serialize_image img));
       Stdlib.Sys.rename tmp file;
       tmp_path := None
