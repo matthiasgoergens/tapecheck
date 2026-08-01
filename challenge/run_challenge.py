@@ -13,6 +13,7 @@ onward, i.e. the cost of shrinking, which is what tapecheck reports as
 `attempts`. Same quantity, so the two are comparable.
 """
 import json
+import re
 import statistics
 import sys
 from collections import Counter
@@ -75,8 +76,15 @@ def measure(source, filename, expected):
         results.append(stats)
 
     found = [r for r in results if "shrunk" in r]
+    # numpy scalars repr as "np.int16(-1)", so a plain string compare
+    # against the challenge's stated answer reports a false 0/100 for
+    # bound5 while the values are in fact identical. Normalise rather
+    # than record the artefact.
+    def norm(s):
+        return re.sub(r"np\.\w+\(([^()]*)\)", r"\1", s)
+
     answers = Counter(
-        ", ".join(v for v in r["shrunk"].values()) for r in found
+        norm(", ".join(v for v in r["shrunk"].values())) for r in found
     )
     hits = sum(c for a, c in answers.items() if a == expected)
     evals = [r["evaluations"] for r in found]
@@ -154,6 +162,24 @@ def test(a, b):
     d = abs(a - b)
     assert a < 10 or not ({_bad})
 """, _exp)
+
+CHALLENGES["bound5"] = ("""
+import warnings
+import numpy as np
+import hypothesis.extra.numpy as nps
+import hypothesis.strategies as st
+from hypothesis import given
+
+int16s = nps.from_dtype(np.dtype("int16"))
+bounded_lists = st.lists(int16s, max_size=1).filter(lambda x: sum(x) < 256)
+
+@given(st.tuples(bounded_lists, bounded_lists, bounded_lists,
+                 bounded_lists, bounded_lists))
+def test(p):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert sum([x for sub in p for x in sub], np.int16(0)) < 5 * 256
+""", "([], [], [], [-1], [-32768])")
 
 CHALLENGES["calculator"] = ("""
 from hypothesis import assume, given, strategies as st
