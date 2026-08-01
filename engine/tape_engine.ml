@@ -1375,9 +1375,26 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let improved = minimize_choices () || improved in
     pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
     let improved = lower_together () || improved in
-    let a5 = !attempts in
-    let improved = sort_siblings () || improved in
-    pass_costs.(5) <- pass_costs.(5) + (!attempts - a5);
+    (* OFF by default. Measured on the Shrinking Challenge: against the
+       STOCK vendored base_quickcheck this pass is a net negative --
+       bound5 12.5% (8.6-17.8) against 15.9% (13.7-18.3), overlapping
+       or slightly worse, and large_union_list costs 23% more (1296 ->
+       1590 evaluations) for no gain. It only pays once
+       proposals/base_quickcheck-non_uniform.patch equalises sibling
+       draw counts, and then it pays a lot: distinct goes 11.6% -> 69.5%
+       with distinct answers collapsing from 34 to 4. Since we ship
+       against stock, it stays off until that lands or the signature
+       heuristic is sharpened. See SORT-SIBLINGS.md. *)
+    let sort_siblings_enabled = false in
+    let improved =
+      if sort_siblings_enabled then begin
+        let a5 = !attempts in
+        let r = sort_siblings () || improved in
+        pass_costs.(5) <- pass_costs.(5) + (!attempts - a5);
+        r
+      end
+      else improved
+    in
     continue_ := improved
   done;
   (* [budget_ok ()] still true here can only mean the loop exited
