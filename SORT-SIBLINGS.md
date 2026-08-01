@@ -110,3 +110,58 @@ current heuristic both misses real siblings (variable-length ones, whose
 signatures differ *because* their contents differ, which is most of
 `large_union_list`) and groups unrelated draws that happen to share
 bounds.
+
+## The ceiling, and why bound5 is now closed
+
+One more diagnostic settles it. Remove the edge-case shortcut entirely
+for ranges that straddle zero — **not** distribution-preserving, purely
+to find the ceiling:
+
+```ocaml
+if Integer.( >= ) lo Integer.zero
+then weighted_union [ 0.05, return lo; 0.05, return hi; 0.9, f lo hi ]
+else f lo hi
+```
+
+Result: `bound5` 0/200, with **195 distinct answers**, and they are no
+longer the same *content*:
+
+```
+5 x  ([], [], [], [-2], [-32767])
+2 x  ([], [], [-1], [], [-32768])
+```
+
+`-32768` is no longer reached at all in most runs. That is the whole
+explanation, and it runs the other way from what I assumed.
+
+**`-32768` is only reachable because the shortcut makes it cheap.** The
+property fails for *any* pair summing below `-32768`, so `-2, -32767`
+serves as well as `-1, -32768`. What privileges the expected answer is
+that one of its elements sits on a branch the generator reaches in 5% of
+draws regardless of range — and Hypothesis's `from_dtype(int16)` supplies
+the same edge weighting, which is why their answer agrees with the
+challenge's.
+
+So the two things are in tension and the tension is intrinsic:
+
+- The shortcut is **necessary** to reach the expected answer at all.
+- The shortcut is **exactly what breaks** the ordering between the two
+  slots, because it gives one sibling a shorter recording (stock) or a
+  smaller leading selector (patched), either of which dominates the
+  comparison before the value is reached.
+
+No reassociation of `non_uniform` escapes that, and the reason is
+general: a shortcut branch carries a *discarded* draw, and a discarded
+draw shrinks to its target, so the branch always ends up looking simpler
+than the one that did the work. Drawing the value before the selector
+does not help for the same reason.
+
+Which is what spans buy. `reorder_spans` compares whole subtrees as
+units, so the question "which sibling is simpler" is answered by the
+sibling's *meaning* rather than by whichever of its draws happens to be
+recorded first.
+
+**bound5 at 15.9% is close to what this encoding can do**, and the
+remaining gap is not a knob we are failing to find. Four attempts, four
+different-looking failures, one cause. Recorded so the fifth attempt is
+a deliberate decision rather than a rediscovery.
