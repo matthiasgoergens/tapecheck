@@ -276,4 +276,5 @@ let () =
   Stdio.printf "| challenge | normalised | 95%% CI | mean evaluations |\n";
   Stdio.printf "|---|---|---|---|\n";
   List.iter results ~f:(fun (name, hits, n, mean) ->
-    Stdio.printf "| %s | %d/%d | %.1f |\n" name hits n mean)
+    let lo_ci, hi_ci = wilson ~hits ~n in
+    Stdio.printf "| %s | %d/%d | %.1f-%.1f | %.1f |\n" name hits n lo_ci hi_ci mean)
