@@ -563,7 +563,10 @@ let resume_result (type a e) ~(f : a -> (unit, e) Result.t) ?(size = 30)
 let resume_run (type a) ~(f : a -> unit Or_error.t) ?size ?regressions
     ?realign ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ~tape
     (module M : Base_quickcheck.Test.S with type t = a) : unit Or_error.t =
-  let f v = Or_error.try_with_join (fun () -> f v) in
+  (* Preserving, exactly as [run] above: plain [Or_error.try_with_join]
+     catches [Invalid_example] too, which turns an assume-REJECTED input
+     into a reported counterexample on the resumed path. *)
+  let f v = try_with_join_preserving_assume (fun () -> f v) in
   match
     resume_result ~f ?size ?regressions ?realign ?explain ?explain_budget
       ?max_shrinks ?max_shrink_seconds ~tape (module M)
@@ -579,7 +582,7 @@ let resume_run (type a) ~(f : a -> unit Or_error.t) ?size ?regressions
 let resume_run_exn (type a) ~(f : a -> unit) ?size ?regressions ?realign
     ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ~tape
     (module M : Base_quickcheck.Test.S with type t = a) : unit =
-  let f v = Or_error.try_with (fun () -> f v) in
+  let f v = try_with_preserving_assume (fun () -> f v) in
   resume_run ~f ?size ?regressions ?realign ?explain ?explain_budget
     ?max_shrinks ?max_shrink_seconds ~tape (module M)
   |> Or_error.ok_exn
