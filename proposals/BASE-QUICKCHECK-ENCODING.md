@@ -123,9 +123,20 @@ Shrink quality, Shrinking Challenge, 100 runs each:
 | lengthlist | 64/100 | 64/100 (unaffected) |
 | difference (×3) | unchanged | unchanged (uses `int_uniform_inclusive`) |
 
-`max_int` disappears from the `reverse` and `distinct` answers entirely.
-Cost went **down** on all three affected challenges, so this is not a
-quality-for-time trade.
+`max_int` disappears from the `reverse` and `distinct` answers entirely,
+and cost goes down on all three.
+
+**But it is not a free win, and the full row set says so.** Measured
+afterwards, `calculator` is unchanged in quality at slightly lower cost
+(3/100, 880.5 to 839.6) and **`bound5` LOSES**: 17/100 to 7/100. Net
+normalisation across the suite is well positive -- 62 positions gained
+against 10 lost -- but this has to be stated plainly rather than
+buried, and it is why the two rows are no longer "—" in CHALLENGE.md.
+
+Not diagnosed. `bound5` is the one challenge whose expected answer
+contains both an extreme (`-32768`, reached by the `lo` branch) and a
+small value (`-1`, which must come from the general branch), so it is
+plausibly sensitive to precisely what the reordering changes.
 
 ## What is still wrong after it
 

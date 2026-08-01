@@ -1,0 +1,43 @@
+diff --git a/src/generator.ml b/src/generator.ml
+index 2146854..46898f1 100644
+--- a/src/generator.ml
++++ b/src/generator.ml
+@@ -569,11 +569,33 @@ module%template For_integer (Integer : Int_with_random) = struct
+   ;;
+ 
+   let non_uniform f lo hi =
+-    (weighted_union [@mode portable])
+-      [ 0.05, (return [@mode portable]) lo
+-      ; 0.05, (return [@mode portable]) hi
+-      ; 0.9, f lo hi
+-      ]
++    (* Draw the branch selector FIRST, always draw the general value, and
++       order the branches lo / general / hi.
++
++       Distribution is unchanged: the selector is independent of the
++       value, so this is a pure reassociation of the same three-way
++       choice. What changes is how the draws are RECORDED, which matters
++       to any tool that reduces a counterexample by editing the recorded
++       choice sequence.
++
++       Previously [return lo] and [return hi] drew nothing further while
++       [f lo hi] drew more, so [int] reached max_value through a shorter
++       recording than it reached 1 by. Shortlex ordering is length-first,
++       so the extreme values ranked BELOW the small ones and reduction
++       settled on them. Equal draw counts fix that; drawing the selector
++       first, with hi last, then makes position 0 impose lo < general <
++       hi, which is the intended order.
++
++       Cost: [f lo hi] is now always generated from, i.e. two extra PRNG
++       calls in the 10% of draws that previously took a shortcut. *)
++    let general = f lo hi in
++    let selector =
++      (create [@mode portable]) (fun ~size:_ ~random ->
++        Splittable_random.float random ~lo:0. ~hi:1.)
++    in
++    (bind [@mode portable]) selector ~f:(fun p ->
++      (map [@mode portable]) general ~f:(fun v ->
++        if Float.( < ) p 0.05 then lo else if Float.( < ) p 0.95 then v else hi))
+   ;;
+ 
+   let inclusive = non_uniform uniform_inclusive

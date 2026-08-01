@@ -43,8 +43,8 @@ change to `base_quickcheck` described in
 | reverse | **100/100**, 17.6 | 0/100, 294.0 | 50/100, 278.8 |
 | distinct | **100/100**, 48.5 | 0/100, 418.5 | 12/100, 417.7 |
 | large_union_list | **100/100**, 208.2 | 0/100, 1317.7 | 0/100, 1256.7 |
-| calculator | **100/100**, 103.7 | 3/100, 880.5 | 4/100, — |
-| bound5 | **100/100**, 157.4 | 17/100, 267.7 | 17/100, — |
+| calculator | **100/100**, 103.7 | 3/100, 880.5 | 3/100, 839.6 |
+| bound5 | **100/100**, 157.4 | **17/100**, 267.7 | 7/100, 278.6 |
 | lengthlist | **100/100**, 87.7 | 64/100, 298.8 | 64/100, 298.8 |
 | difference_must_not_be_zero | 100/100, 40.6 | 100/100, 93.9 | 100/100, 93.9 |
 | difference_must_not_be_small | 100/100, 726.8 | 100/100, **92.8** | 100/100, **92.8** |
@@ -59,6 +59,17 @@ headline and it is not close. It is also better than their own 2020
 report, so it is current work rather than legacy.
 
 **tapecheck reaches 100/100 on three of nine.**
+
+**The `+patch` column is a trade, not a free win.** It was reported as
+one here until the last two rows were actually measured rather than left
+at "—": it gains 50 points on `reverse` and 12 on `distinct`, shaves
+cost on `large_union_list` and `calculator`, and **loses 10 points on
+`bound5`** (17/100 to 7/100). Net normalisation is well positive, but
+anyone proposing it upstream has to say the bound5 row out loud. Not yet
+diagnosed; `bound5` is the one challenge whose expected answer contains
+both an extreme (`-32768`, the `lo` branch) and a small value (`-1`,
+which must come from the general branch), so it is plausibly sensitive
+to exactly what the reordering changes.
 
 **Where we lose, one cause dominates and it is not the shrinker.**
 reverse, distinct and large_union_list are the three built on
