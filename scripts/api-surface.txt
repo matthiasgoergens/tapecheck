@@ -8,6 +8,7 @@ check_generator_determinism
 choice_at_target
 clamp64
 compare_origin
+correlate_image
 create
 current
 data_too_large_choices

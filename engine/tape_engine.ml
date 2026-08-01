@@ -1455,6 +1455,61 @@ let nondeterminism_warning =
   \  Consequences: saved failures will not reproduce, shrinking chases a\n\
   \  moving target, and the minimal example reported may not fail at all."
 
+(* Correlated-value mutation.
+
+   Parity review #3: Hypothesis mutates test cases by structurally
+   duplicating equivalent spans, "to produce correlated or repeated
+   values that random sampling rarely finds". tapecheck drew every case
+   from an independent seed and had no such move.
+
+   Measured need (diag2/probe_correlation.ml), finding a bug that
+   requires two values to COINCIDE, over 200 runs:
+
+     pair a = b, each 0..10        200/200
+     pair a = b, each 0..100       182/200
+     pair a = b, each 0..1000       69/200
+     pair a = b, each 0..100000     32/200
+
+   Independent sampling simply cannot make two wide-range values agree.
+   Edge-case biasing helps a little -- both draws sometimes land on the
+   same special value -- and nowhere near enough.
+
+   The mutation: take a recorded image, find two integer choices with
+   IDENTICAL bounds, and copy one value over the other. Same bounds is
+   the cheap stand-in for "same kind of thing"; without span structure
+   we cannot know that two choices belong to comparable positions, but
+   equal bounds means the generator drew them from the same range, which
+   is a decent proxy and costs nothing. *)
+let correlate_image (img : Tape.image) ~(pick : int) : Tape.image option =
+  let arr = img.Tape.main in
+  let n = Array.length arr in
+  (* Every ordered pair of integer choices sharing bounds is a candidate
+     mutation; [pick] selects among them deterministically, so a run
+     stays reproducible from its seed. *)
+  let pairs = ref [] in
+  for i = 0 to n - 1 do
+    for j = 0 to n - 1 do
+      if i <> j then
+        match (arr.(i), arr.(j)) with
+        | Tape.Integer a, Tape.Integer b
+          when Int64.(a.lo = b.lo)
+               && Int64.(a.hi = b.hi)
+               && Int64.(a.value <> b.value) ->
+          pairs := (i, j) :: !pairs
+        | _ -> ()
+    done
+  done;
+  match !pairs with
+  | [] -> None
+  | ps ->
+    let ps = List.rev ps in
+    let i, j = List.nth_exn ps (pick % List.length ps) in
+    let src = arr.(i) in
+    Some
+      { img with
+        Tape.main = Array.mapi arr ~f:(fun k c -> if k = j then src else c)
+      }
+
 (* Multiple distinct failures in ONE run, each minimised separately.
 
    Ported from Hypothesis, which keys failures by [interesting_origin]
@@ -1797,6 +1852,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
        is set where a false positive is cheap: it only ever stops a run
        that was already finding nothing new. *)
     let seen_generated = Hashtbl.Poly.create () in
+    let first_correlated_failure = ref None in
     let consecutive_repeats = ref 0 in
     let exhausted_after = ref None in
     let repeats_before_giving_up = 64 in
@@ -1866,6 +1922,33 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
              Hashtbl.set seen_generated ~key:out.Tape.image ~data:();
              consecutive_repeats := 0
            end);
+          (* After a fresh case, try one CORRELATED variant of it: two
+             integer choices of the same bounds made equal. Random
+             sampling finds these essentially never at wide ranges (see
+             correlate_image), and the extra case is cheap because the
+             mutation is a local edit on a tape we already have.
+
+             Only when the fresh case passed -- if it already failed we
+             are done searching -- and only every other case, so the
+             generation budget is not halved. *)
+          (if
+             Option.is_none !found
+             && !case % 2 = 1
+             && Option.is_none !first_correlated_failure
+           then
+             match correlate_image out.Tape.image ~pick:!case with
+             | None -> ()
+             | Some mutant -> (
+               let mtape = Tape.create () in
+               Tape.start_replay_image mtape mutant;
+               let mvalue, mtested, mout =
+                 run_and_test ~tape:mtape ~gen ~size
+                   ~seed:replay_fresh_seed ~test
+               in
+               match mtested with
+               | Some Tape_stats.Case_failed when not mout.Tape.overrun ->
+                 first_correlated_failure := Some (mout.Tape.image, mvalue)
+               | _ -> ()));
           if !consecutive_repeats >= repeats_before_giving_up then
             exhausted_after := Some (!case + 1);
           Int.incr case
@@ -1885,7 +1968,9 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
            Stdlib.flush Stdlib.stderr
          | _ -> ());
         stats.warnings <- health.Tape_health.fired;
-        !found
+        (match !found with
+         | Some _ as f -> f
+         | None -> !first_correlated_failure)
       | Some pool ->
         let found = ref None in
         let batch_start = ref 0 in
