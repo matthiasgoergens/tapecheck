@@ -61,12 +61,12 @@ report, so it is current work rather than legacy.
 **tapecheck reaches 100/100 on three of nine.**
 
 **bound5's score is not a shrink-quality result at all, in either
-column.** Measured directly (`diag2/probe_bound5.ml`): **100 of 100 runs
-reduce to the right content** — exactly two singleton lists holding
-`-1` and `-32768`, and three empties. Every run finds the minimal
-counterexample. What varies is *which of the five slots* the two
-singletons land in, and the challenge scores one exact permutation. So
-`17/100` measures positional canonicalisation, not reduction.
+column.** Measured directly over 1000 runs (`diag2/probe_bound5.ml`):
+**all 1000 reduce to exactly two elements, and 998 of them to the right
+content** — two singleton lists holding `-1` and `-32768`, three
+empties. What varies is *which of the five slots* the singletons land
+in, and the challenge scores one exact permutation. So the 159/1000
+score measures positional canonicalisation, not reduction.
 
 That reframes the `+patch` column too. It gains 50 points on `reverse`
 and 12 on `distinct`, shaves cost on `large_union_list` and

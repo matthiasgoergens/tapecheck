@@ -138,13 +138,21 @@ and cost goes down on all three.
 880.5 to 839.6). `bound5` moves 17/100 to 7/100 — which looks like a
 regression and is not one.
 
-Measured directly: on `bound5`, **100 of 100 runs reduce to the right
-content** either way — two singleton lists holding `-1` and `-32768`,
-three empties. The challenge scores one exact permutation, so the score
-is measuring which of the five symmetric slots the singletons land in,
-not the quality of the reduction. The patch shifts the preferred
-permutation from `([], [], [], [-1], [-32768])` to
-`([], [], [], [-32768], [-1])`. Both are equally minimal.
+Measured directly over 1000 runs: on `bound5`, **all 1000 reduce to
+exactly two elements and 998 to the right content** either way — two
+singleton lists holding `-1` and `-32768`, three empties. The challenge
+scores one exact permutation, so the score measures which of the five
+symmetric slots the singletons land in, not the quality of the
+reduction. The patch shifts the preferred permutation from
+`([], [], [], [-1], [-32768])` to `([], [], [], [-32768], [-1])`. Both
+are equally minimal.
+
+At 1000 runs the shift is unambiguous rather than marginal: stock
+159/1000 (95% CI 13.7-18.3) against 52/1000 (4.0-6.8), non-overlapping.
+At 100 runs it was about two sigma and should not have been reported as
+settled. The answer breakdown confirms the mechanism directly -- all
+four most common patched answers place `-32768` before `-1`, which is
+what a minimal lo-branch selector sorting ahead of the value produces.
 
 The mechanism is worth recording, because it is this change's own
 pathology relocated. The selector is recorded BEFORE the value, so

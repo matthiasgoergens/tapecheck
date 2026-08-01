@@ -33,9 +33,14 @@ let test ls =
 let () =
   let exact = ref 0 and right_multiset = ref 0 and n = ref 0 in
   let sizes = Hashtbl.create (module Int) in
-  for t = 0 to 99 do
+  let runs =
+    match Stdlib.Sys.getenv_opt "TAPECHECK_RUNS" with
+    | Some s -> (try Int.of_string s with _ -> 100)
+    | None -> 100
+  in
+  for t = 0 to runs - 1 do
     match
-      Tape_engine.run gen ~test ~seed:(t * 7919) ~count:200_000 ~size:10
+      Tape_engine.run gen ~test ~seed:((t * 2_654_435_761) land 0x3FFF_FFFF) ~count:200_000 ~size:10
         ~budget:20_000
     with
     | Tape_engine.Passed _ -> ()

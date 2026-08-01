@@ -113,12 +113,13 @@ plus reduction passes that need structural spans we do not have. I am
 not proposing anything for those.
 
 **One row moves the other way and I would rather explain it than omit
-it.** On the suite's `bound5` challenge the score drops from 17/100 to
-7/100. That is not a worse counterexample: measured directly, 100 of 100
-runs reduce to the right content either way — two singleton lists
-holding `-1` and `-32768`, three empties — and the challenge scores one
-exact permutation of five symmetric slots. The change shifts which
-permutation wins.
+it.** On the suite's `bound5` challenge the score drops from 159/1000 to
+52/1000 (95% CIs 13.7-18.3 and 4.0-6.8, non-overlapping — so a real
+effect, not noise). That is not a worse counterexample: measured
+directly over 1000 runs, all 1000 reduce to exactly two elements and 998
+to the right content either way — two singleton lists holding `-1` and
+`-32768`, three empties — and the challenge scores one exact permutation
+of five symmetric slots. The change shifts which permutation wins.
 
 The mechanism is worth knowing before you accept this, because it is a
 real limit of the approach. The selector is recorded before the value,
