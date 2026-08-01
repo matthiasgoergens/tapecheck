@@ -40,10 +40,12 @@ change to `base_quickcheck` described in
 
 | challenge | Hypothesis 6.164.0 | tapecheck | tapecheck +patch |
 |---|---|---|---|
-| reverse | **100/100**, 17.6 | 0/100, 294.0 | 50/100, 278.8 |
-| distinct | **100/100**, 48.5 | 0/100, 418.5 | 12/100, 417.7 |
-| large_union_list | **100/100**, 208.2 | 0/100, 1317.7 | 0/100, 1256.7 |
-| lengthlist | **100/100**, 87.7 | 64/100, 298.8 | 64/100, 298.8 |
+| reverse | **100/100**, 17.6 | 0/100, 297.8 | 50/100, 278.8 |
+| distinct | **100/100**, 48.5 | 0/100, 424.6 | 12/100, 417.7 |
+| large_union_list | **100/100**, 208.2 | 0/100, 1437.1 | 0/100, 1256.7 |
+| calculator | **100/100**, 191.2 | 4/100, 852.4 | 4/100, — |
+| bound5 | **100/100**, 157.4 | 17/100, 267.7 | 17/100, — |
+| lengthlist | 100/100, 87.7 | 100/100, 144.3 | 100/100, 144.3 |
 | difference_must_not_be_zero | 100/100, 40.6 | 100/100, 93.9 | 100/100, 93.9 |
 | difference_must_not_be_small | 100/100, 726.8 | 100/100, **92.8** | 100/100, **92.8** |
 | difference_must_not_be_one | 100/100, 883.4 | 100/100, **94.5** | 100/100, **94.5** |
@@ -52,49 +54,74 @@ Cells are `normalised / mean evaluations`.
 
 ## Reading it
 
-**Hypothesis normalises everything, 100/100, on all seven.** That is the
-headline and it is not close. It is also a stronger result than their
-own 2020 report claims for them, so it is current work rather than
-legacy.
+**Hypothesis normalises everything, 100/100, on all nine.** That is the
+headline and it is not close. It is also better than their own 2020
+report, so it is current work rather than legacy.
 
-**Where we lose, we lose to one cause and it is not the shrinker.** The
-three challenges we fail — reverse, distinct, large_union_list — are the
-three built on `st.lists(st.integers())`, i.e. on `base_quickcheck`'s
-unbounded `Generator.int`. That generator reaches `max_int` through a
-two-choice tape and `1` through a four-choice tape, so shortlex ranks
-`max_int` below `1` and the shrinker converges, correctly by its own
-order, onto answers full of `4611686018427387903`. Full diagnosis and a
-distribution-preserving fix in
-`proposals/BASE-QUICKCHECK-ENCODING.md`; it takes `reverse` from 0/100
-to 50/100 and *reduces* cost. The remaining gap there is a milder second
-instance of the same thing (`-1` is cheaper to encode than `1`).
+**tapecheck reaches 100/100 on four of nine.**
 
-`lengthlist` is a different and genuine weakness: 64/100, and the misses
-are lists that never got down to one element. That one is ours.
+**Where we lose, one cause dominates and it is not the shrinker.**
+reverse, distinct and large_union_list are the three built on
+`base_quickcheck`'s unbounded `Generator.int`, which reaches `max_int`
+through a two-choice tape and `1` through a four-choice tape. Shortlex
+is length-first, so `max_int` ranks below `1` and the shrinker
+converges, correctly by its own order, onto answers full of
+`4611686018427387903`. Diagnosis and a distribution-preserving fix in
+`proposals/BASE-QUICKCHECK-ENCODING.md`: `reverse` 0/100 → 50/100,
+`distinct` 0/100 → 12/100, and cost *down* on all three.
 
-**Where we win, we win on the challenges the suite says are hardest.**
-The `difference` family requires holding a dependency between two
+**calculator and bound5 are the span gap, in a third and fourth dress.**
+calculator's misses are long inert chains — `('+', ('+', ('+', 0, 0),
+0), 0)` — wrapped around a small failing subterm the shrinker cannot
+promote to the root. That is `pass_to_descendant`, the same thing
+`test_poison/` prices at 10/34 (see `SPANS-THE-ROOT-CAUSE.md`). The
+`max_int` issue shows here too but only as flavour: with the patch the
+divisors become `('/', 0, -1)` instead of `('/', 0, max_int)`, and the
+inert chains remain, so the score does not move.
+
+**lengthlist was ours and is now fixed.** It sat at 64/100 until the
+per-pass failure cutoff was made proportional to tape length rather than
+a flat 20; it is now 100/100 at 144 evaluations, down from 299. See the
+tenth entry in `test_regression/regression_guard.ml`.
+
+**Where we win, we win on what the suite calls hardest.** The
+`difference` family requires holding a dependency between two
 separately-drawn integers, and the spec singles out
 `difference_must_not_be_one` as "the most difficult one to shrink
 because shrinking parameters individually will never lead to a smaller
-and falsifying sample". We match Hypothesis's answer 100/100 at **9.3x
-lower cost** — and near-deterministically: our evaluation range is
-94..95 against their 54..1056. That is `lower_together` (their
-`lower_integers_together`, ported after `test_zig_zagging.py` caught us
-falling into the trap) doing exactly what it was ported to do, plus the
-correlated-value mutation making the case findable at all.
+and falsifying sample". We match Hypothesis 100/100 at **9.3x lower
+cost** and near-deterministically: 94..95 evaluations against their
+54..1056. That is `lower_together` (their `lower_integers_together`,
+ported after `test_zig_zagging.py` caught us) doing what it was ported
+to do.
 
-So the honest summary is: on normalisation we are behind, mostly for one
-fixable reason in the host library; on joint-dependency shrinking we are
-substantially ahead, on the cases the benchmark's own author flagged as
-hardest.
+## Two measurement errors worth recording
+
+Both would have gone unnoticed and both distorted the comparison.
+
+**Budget mismatch, flattering us.** First run gave tapecheck
+`count = 500` against their `max_examples = 10**6`, and the `difference`
+rows read as 11/100 *found*. That measured a generation budget two
+thousand times too small.
+
+**A repr artefact, flattering us again.** Hypothesis's bound5 answer
+prints as `([], [], [], [np.int16(-1)], [np.int16(-32768)])`, so a
+string compare against the challenge's stated answer scored it 0/100
+while the values were identical. It is 100/100. The harness now
+normalises numpy scalar reprs.
+
+**And one that cost half an hour.** `calculator`'s generator is
+`recursive_union` with two recursive branches out of three, so node
+count grows exponentially in `size`: mean 37 nodes at size 8, 1357 at
+size 20 (`diag2/probe_calcgen.ml`). Run at the suite's default size 30
+it produced nothing for thirty minutes. It runs at size 8, which is what
+the suite now uses. Worth noting that Hypothesis's `st.deferred` has no
+size knob and is bounded by their buffer limit instead — the more robust
+arrangement for a recursive generator.
 
 ## Not yet implemented
 
-`calculator` (recursive expression generator plus `assume`) and `bound5`
-(five filtered `int16` lists) are measured for Hypothesis in
-`../tapecheck-hypothesis-baseline/challenge/` but not yet on our side.
-`binheap`, `coupling`, `deletion`, `nestedlists` have no Hypothesis
+`binheap`, `coupling`, `deletion` and `nestedlists` have no Hypothesis
 implementation in the upstream repo and are unstarted here.
 
 Contributing an OCaml entry upstream is an outward-facing action and is
