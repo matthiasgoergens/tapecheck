@@ -60,16 +60,35 @@ report, so it is current work rather than legacy.
 
 **tapecheck reaches 100/100 on three of nine.**
 
-**The `+patch` column is a trade, not a free win.** It was reported as
-one here until the last two rows were actually measured rather than left
-at "—": it gains 50 points on `reverse` and 12 on `distinct`, shaves
-cost on `large_union_list` and `calculator`, and **loses 10 points on
-`bound5`** (17/100 to 7/100). Net normalisation is well positive, but
-anyone proposing it upstream has to say the bound5 row out loud. Not yet
-diagnosed; `bound5` is the one challenge whose expected answer contains
-both an extreme (`-32768`, the `lo` branch) and a small value (`-1`,
-which must come from the general branch), so it is plausibly sensitive
-to exactly what the reordering changes.
+**bound5's score is not a shrink-quality result at all, in either
+column.** Measured directly (`diag2/probe_bound5.ml`): **100 of 100 runs
+reduce to the right content** — exactly two singleton lists holding
+`-1` and `-32768`, and three empties. Every run finds the minimal
+counterexample. What varies is *which of the five slots* the two
+singletons land in, and the challenge scores one exact permutation. So
+`17/100` measures positional canonicalisation, not reduction.
+
+That reframes the `+patch` column too. It gains 50 points on `reverse`
+and 12 on `distinct`, shaves cost on `large_union_list` and
+`calculator`, and moves `bound5` from 17 to 7 — but that last is the
+patch preferring a *different permutation* of an equally minimal answer
+(`([], [], [], [-32768], [-1])` instead of `([], [], [], [-1],
+[-32768])`), not a worse counterexample.
+
+The five slots are symmetric, so canonicalising them means moving
+content between positions — which is `reorder_spans`, and needs spans.
+bound5's residue is the span gap wearing yet another hat, alongside
+`calculator` and the poisoned trees.
+
+**A cleverer encoding does not rescue it, and I tried.** Ordering the
+`non_uniform` branches by distance from the shrink target rather than
+positionally — general branch first when the range straddles zero, so
+that `-1` sorts ahead of `-32768` instead of behind it — is the
+principled fix for the value ordering, and it works at the value level.
+It makes normalisation *worse*: 87 distinct answers against 17, because
+removing the strong `lo`-first preference leaves many slot
+configurations tied. Cost did fall 30% (268 to 188). Not adopted; the
+simpler patch is the proposal.
 
 **Where we lose, one cause dominates and it is not the shrinker.**
 reverse, distinct and large_union_list are the three built on

@@ -133,17 +133,37 @@ Shrink quality, Shrinking Challenge, 100 runs each:
 `max_int` disappears from the `reverse` and `distinct` answers entirely,
 and cost goes down on all three.
 
-**But it is not a free win, and the full row set says so.** Measured
-afterwards, `calculator` is unchanged in quality at slightly lower cost
-(3/100, 880.5 to 839.6) and **`bound5` LOSES**: 17/100 to 7/100. Net
-normalisation across the suite is well positive -- 62 positions gained
-against 10 lost -- but this has to be stated plainly rather than
-buried, and it is why the two rows are no longer "—" in CHALLENGE.md.
+**The full row set adds two more, and one needs explaining.**
+`calculator` is unchanged in quality at slightly lower cost (3/100,
+880.5 to 839.6). `bound5` moves 17/100 to 7/100 — which looks like a
+regression and is not one.
 
-Not diagnosed. `bound5` is the one challenge whose expected answer
-contains both an extreme (`-32768`, reached by the `lo` branch) and a
-small value (`-1`, which must come from the general branch), so it is
-plausibly sensitive to precisely what the reordering changes.
+Measured directly: on `bound5`, **100 of 100 runs reduce to the right
+content** either way — two singleton lists holding `-1` and `-32768`,
+three empties. The challenge scores one exact permutation, so the score
+is measuring which of the five symmetric slots the singletons land in,
+not the quality of the reduction. The patch shifts the preferred
+permutation from `([], [], [], [-1], [-32768])` to
+`([], [], [], [-32768], [-1])`. Both are equally minimal.
+
+The mechanism is worth recording, because it is this change's own
+pathology relocated. The selector is recorded BEFORE the value, so
+whichever branch the smallest selector reaches sorts ahead of every
+other outcome however small its value. Ordering `lo` first is correct
+when `lo` IS the shrink target — true for `int`'s magnitude,
+`log_inclusive zero max_value`. For a range straddling zero like int16's
+`[-32768, 32767]`, `lo` is an extreme, so `-32768` sorts ahead of `-1`.
+
+**Ordering the branches by distance from the target instead fixes that
+and makes normalisation worse.** Tried: general branch first when the
+range straddles zero. Value ordering becomes correct, cost falls 30%
+(268 to 188 evaluations) -- and distinct answers go from 17 to 87,
+because removing the strong `lo`-first preference leaves many slot
+configurations tied. Not adopted. Recorded so it is not re-attempted.
+
+The residue is positional: canonicalising which slot holds what means
+moving content between positions, i.e. `reorder_spans`, which needs
+spans.
 
 ## What is still wrong after it
 
