@@ -1,5 +1,5 @@
 (executables
  (names probe_correlation probe_cutoff probe_domains probe_drawcount
    probe_growth probe_hashcost probe_listgen probe_parity probe_realshapes
-   probe_selflen probe_split probe_poison probe_intenc probe_reverse probe_dist probe_lengthlist probe_lengthlist2 probe_cutoff_sweep probe_calculator probe_calcgen probe_identical probe_stockshrink probe_bound5)
+   probe_selflen probe_split probe_poison probe_intenc probe_reverse probe_dist probe_lengthlist probe_lengthlist2 probe_cutoff_sweep probe_calculator probe_calcgen probe_identical probe_stockshrink probe_bound5 probe_sortsib)
  (libraries base stdio unix base_quickcheck splittable_random tape tape_engine))

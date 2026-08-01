@@ -484,8 +484,11 @@ let no_stats () =
    start of every shrink. Used to find where tapecheck spends 641 calls
    on a property Hypothesis finishes in 27 (see
    ../tapecheck-hypothesis-baseline/README.md). *)
-let pass_names = [| "lower_and_delete"; "delete_streams"; "redistribute_pairs"; "minimize_choices"; "pre-loop" |]
-let pass_costs = Array.create ~len:5 0
+let pass_names =
+  [| "lower_and_delete"; "delete_streams"; "redistribute_pairs"
+   ; "minimize_choices"; "pre-loop"; "sort_siblings" |]
+
+let pass_costs = Array.create ~len:6 0
 let greedy_cost = ref 0
 let duplicate_proposals = ref 0
 let distinct_proposals = ref 0
@@ -861,6 +864,112 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      relative to those originals, exactly as they capture [buffer] up
      front; a larger k is strictly better, so committing along the way
      is safe. *)
+  (* PROTOTYPE: a span-free approximation of Hypothesis's [reorder_spans].
+
+     Theirs sorts the children of a span that share a LABEL, using
+     [sort_key] -- shortlex over the choice sequence. That gives
+     normalisation: their docstring's example is two [st.text()] draws
+     with [x <> y], which without reordering fails as either ("", "0")
+     or ("0", ""), and with it reliably as ("", "0").
+
+     We have neither spans nor labels. The stand-in is the one
+     [correlate_image] already uses for single choices, lifted to
+     subsequences: two windows with the same SIGNATURE -- the same
+     sequence of (kind, lo, hi) -- were plausibly drawn by the same
+     generator at comparable positions. Group the windows by signature,
+     take a non-overlapping subset, and propose them sorted by the
+     existing shortlex order.
+
+     One proposal per (window length, signature) group, not per pair, so
+     a group of k siblings costs one attempt rather than k^2 swaps.
+
+     Guessing structure from bounds is exactly that -- a guess. Two
+     unrelated draws that happen to share bounds will be reordered
+     against each other. That cannot produce a wrong ANSWER, because
+     every proposal is still validated by re-running the test and
+     re-recording, but it can waste attempts, which is what
+     [max_pass_failures] is there to contain. *)
+  let signature arr i k =
+    let b = Buffer.create (k * 8) in
+    for j = i to i + k - 1 do
+      match arr.(j) with
+      | Tape.Integer { lo; hi; _ } ->
+        Buffer.add_string b (Printf.sprintf "I%Ld,%Ld;" lo hi)
+      | Tape.Float { lo; hi; _ } ->
+        Buffer.add_string b (Printf.sprintf "F%h,%h;" lo hi)
+      | Tape.Bool _ -> Buffer.add_string b "B;"
+      | Tape.Marker -> Buffer.add_string b "M;"
+    done;
+    Buffer.contents b
+  in
+  let max_window = 8 in
+  let sort_siblings () =
+    let improved = ref false in
+    (* Its own consecutive-failure cutoff, same constant as the other
+       passes. Without one this can propose up to max_window groups per
+       position on a long tape, and a pass that scores nothing while
+       spending the budget is precisely the failure mode the cutoff
+       exists to contain. *)
+    let failures = ref 0 in
+    let live () =
+      match max_pass_failures with
+      | None -> true
+      | Some n -> !failures < n
+    in
+    let s = ref 0 in
+    while !s < seg_count !best && budget_ok () && live () do
+      let k = ref 1 in
+      while !k <= max_window && budget_ok () && live () do
+        let arr = seg_get !best !s in
+        let n = Array.length arr in
+        let groups = Hashtbl.create (module String) in
+        let i = ref 0 in
+        while !i + !k <= n do
+          Hashtbl.add_multi groups ~key:(signature arr !i !k) ~data:!i;
+          Int.incr i
+        done;
+        Hashtbl.iteri groups ~f:(fun ~key:_ ~data:positions ->
+          if budget_ok () && live () then begin
+            (* [add_multi] prepends, so restore ascending order, then
+               keep a greedy non-overlapping subset. *)
+            let ascending = List.rev positions in
+            let chosen = ref [] and last_end = ref (-1) in
+            List.iter ascending ~f:(fun p ->
+              if p > !last_end then begin
+                chosen := p :: !chosen;
+                last_end := p + !k - 1
+              end);
+            let chosen = List.rev !chosen in
+            if List.length chosen >= 2 then begin
+              let contents =
+                List.map chosen ~f:(fun p -> Array.sub arr ~pos:p ~len:!k)
+              in
+              let sorted =
+                List.sort contents ~compare:Tape.compare_shortlex
+              in
+              let already_sorted =
+                List.for_all2_exn contents sorted ~f:(fun a b ->
+                  Tape.compare_shortlex a b = 0)
+              in
+              if not already_sorted then begin
+                let a = Array.copy arr in
+                List.iter2_exn chosen sorted ~f:(fun p c ->
+                  Array.blit ~src:c ~src_pos:0 ~dst:a ~dst_pos:p ~len:!k);
+                if attempt (seg_set !best !s a) then begin
+                  improved := true;
+                  failures := 0
+                end
+                else Int.incr failures
+              end
+            end
+          end);
+        Int.incr k
+      done;
+      Int.incr s
+    done;
+    !improved
+  in
+
   let lower_together () =
     let improved = ref false in
     let s = ref 0 in
@@ -1266,6 +1375,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let improved = minimize_choices () || improved in
     pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
     let improved = lower_together () || improved in
+    let a5 = !attempts in
+    let improved = sort_siblings () || improved in
+    pass_costs.(5) <- pass_costs.(5) + (!attempts - a5);
     continue_ := improved
   done;
   (* [budget_ok ()] still true here can only mean the loop exited
