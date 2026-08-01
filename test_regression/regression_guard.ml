@@ -298,9 +298,9 @@ let () =
   check
     { name = "lengthlist: bind len, max >= 900  [frontier: not 100/100]"
     ; min_found = 100
-    ; min_minimal = 60 (* measured 70; 100 with a proportional cutoff *)
-    ; max_avg_calls = 400 (* measured 279; 147 with a proportional cutoff *)
-    ; max_non_converged = 40 (* measured 27; 0 with a proportional cutoff *)
+    ; min_minimal = 60 (* measured 73 with earned patience, 70 flat *)
+    ; max_avg_calls = 400 (* measured 256 with earned patience, 279 flat *)
+    ; max_non_converged = 40 (* measured 27 flat; earned patience similar *)
     ; catches =
         "a drop below the recorded 70/100, and equally an unnoticed \
          IMPROVEMENT -- if this reaches 100 the frontier has moved and \

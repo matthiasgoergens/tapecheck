@@ -45,7 +45,7 @@ change to `base_quickcheck` described in
 | large_union_list | **1000/1000**, 211.3 | 0/1000, 1295.6 | 0/1000, 1255.5 |
 | calculator | **1000/1000**, 103.3 | 17/1000, 886.1 | 15/1000, 874.9 |
 | bound5 | **1000/1000**, 154.8 | 159/1000, 266.9 | 52/1000, 281.9 |
-| lengthlist | **1000/1000**, 87.9 | 683/1000, 283.3 | 683/1000, 283.3 |
+| lengthlist | **1000/1000**, 87.9 | 716/1000, 261.0 | 716/1000, 261.0 |
 | difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, 94.0 | 1000/1000, 94.0 |
 | difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **93.5** | 1000/1000, **93.5** |
 | difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **94.6** | 1000/1000, **94.6** |
@@ -111,7 +111,19 @@ promote to the root. That is `pass_to_descendant`, the same thing
 divisors become `('/', 0, -1)` instead of `('/', 0, max_int)`, and the
 inert chains remain, so the score does not move.
 
-**lengthlist is ours, and the obvious fix was tried and reverted.** Its
+**lengthlist: earned patience helps a little.** A shrink pass's failure
+allowance is now the flat base plus one extra per success it has already
+banked in this shrink, so patience is earned rather than granted. At
+n=1000 that moves it 683/1000 to 716/1000 and drops cost 283 to 261,
+with nothing else on the suite changing and `test_poison` intact.
+
+Report that carefully: the quality intervals overlap ([65.4, 71.1]
+against [68.7, 74.3]), so the +3.3 points is suggestive, not
+established. The cost drop is firmer. Both runs use identical seeds, so
+comparing independent-sample intervals is conservative here — a paired
+test would have more power and has not been run.
+
+**The obvious fix, by contrast, was tried and reverted.** Its
 misses all stop with `converged = false` and the global budget
 untouched, so it is a cap rather than a capability gap: the per-pass
 failure cutoff is a flat 20, which is a very different fraction of a

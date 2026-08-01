@@ -1079,10 +1079,27 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        that is a design change rather than a constant. Recorded here so
        the proportional version is not re-attempted from scratch;
        lengthlist stays a known frontier in the regression guard. *)
+    (* EARNED patience: the allowance is the flat base PLUS one extra
+       failure per success this pass has already banked in this shrink.
+
+       This is not the adaptation the guard warns against. That one grew
+       the budget WITHIN a single invocation, so a pass whose budget was
+       too small to reach its first success could never grow. Here the
+       credit is carried ACROSS sweeps: lower_and_delete succeeds freely
+       early on (deleting and lowering elements), so by the time it
+       faces a move that needs many tries -- lengthlist's length
+       reduction -- it has banked enough to keep going.
+
+       And it stays zero exactly where the flat cutoff earns its keep:
+       on the list properties this pass scores NO successes while
+       consuming 96% of the shrink, so it banks nothing and is cut at
+       the base as before. That is the difference from the
+       tape-proportional floor, which handed the same patience to
+       productive and unproductive passes alike and broke test_poison. *)
     let live () =
       match max_pass_failures with
       | None -> true
-      | Some n -> !consecutive_failures < n
+      | Some n -> !consecutive_failures < n + !lad_successes
     in
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () && live () do
