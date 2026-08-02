@@ -443,3 +443,93 @@ attribution itself**. Ablate every component you add, not just the one
 you find interesting; and when two or three of your own mechanisms have
 been falsified in a row, stop generating a fourth and get an outside
 opinion.
+
+---
+
+# SECOND CORRECTION: the orphan regression was probe poisoning, and the frontier is closed
+
+The correction above left two things explicitly unresolved: whether
+lengthlist really has no sub-streams, and why the repair broke orphan
+adoption. Both are now settled, and the second overturns another of my
+explanations.
+
+## lengthlist has no sub-streams — measured, not asserted
+
+`seg_count` over 20 shrunk images per property:
+
+| property | seg_count | |
+|---|---|---|
+| lengthlist | min 1, max 1 | single stream |
+| bind | min 1, max 1 | single stream |
+| orphan (`fn`) | min 2, max 2 | has a sub-stream |
+
+So the restriction provably could not have been costing lengthlist
+anything. That claim is now measured.
+
+## The orphan regression was NOT the per-stream arithmetic
+
+My explanation — "the deletion is sized from what this stream consumed,
+and that stops describing the proposal once sibling streams exist" —
+is **refuted**. An independent pass (headless `codex`) found the real
+cause and it is somewhere else entirely.
+
+On the orphan property the root tape is essentially `[Integer x;
+Marker]`. Lowering `x` shortens nothing, so `L = 0` and the `l > 0`
+guard rejects the repair before any computed deletion is built. **No
+block is ever deleted on the relevant lowering.**
+
+The damage was the probe's bookkeeping. `computed_repair` inserted
+`lowered_only` into the global `seen_proposals` table before replaying
+it, then threw the candidate away. Later, `minimize_integer` offers the
+identical proposal for real — and `search_attempt` refuses it as a
+duplicate. On this property that proposal is `x = 0`: the winning,
+orphan-adopting shrink, permanently suppressed.
+
+Testable prediction, and it held: **stop poisoning the table and the
+regression disappears with no restriction at all.** Orphan 0/1000 with
+`seg_count` removed.
+
+It was also costing lengthlist. Fixing the poisoning takes it from
+994/1000 to **1000/1000** — the same suppression was eating good shrinks
+there too.
+
+## A separate live bug, found in the same review
+
+`seg_get` addresses streams positionally, but `Tape.finish` emits them
+sorted by key and a replay may drop or re-key one. So index `s` in a
+recorded image need not be the stream `s` named in `best`, and
+subtracting their lengths compares two unrelated numbers. Segment 0 is
+safe (always `image.main`); child streams were not. Both repair sites
+now match on the key and decline when it did not survive.
+
+This was latent on every multi-stream tape and was *not* covered by the
+`seg_count` quarantine — `minimize_integer`'s copy never had one.
+
+## Final, n = 1000 paired
+
+| property | master | final |
+|---|---|---|
+| **lengthlist** | 719/1000 @ 266.0 | **1000/1000 @ 84.2** |
+| bind | 1000/1000 @ 50.6 | 1000/1000 @ 49.0 |
+| deep bind | 1000/1000 @ 140.7 | 1000/1000 @ 172.0 |
+| listlen *(control)* | 1000/1000 @ 148.3 | 1000/1000 @ 150.3 |
+| listsum *(control)* | 1000/1000 @ 91.2 | 1000/1000 @ 93.2 |
+| orphan | 0/1000 stuck | 0/1000 stuck |
+
+**lengthlist is no longer a frontier.** It matches Hypothesis at
+1000/1000, having been 719/1000, and costs a third of what it did.
+
+## Tally
+
+Across this whole change I offered five mechanistic explanations. Four
+were wrong:
+
+1. cheaper steps preserve the budget — refuted by reading `attempt_batch`
+2. it escapes the `live ()` cutoff — refuted by adding the guard
+3. the computed repair buys the quality — refuted by ablation (p = 0.14)
+4. per-stream arithmetic breaks orphan adoption — refuted by codex, then
+   by the targeted fix
+
+The one that survived — a missing `lad_successes` increment — was also
+found from outside. The measurements were sound throughout; the
+storytelling was not, and nothing in a confidence interval catches that.

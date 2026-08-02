@@ -618,6 +618,29 @@ type 'a search =
            a still-failing image carrying the same origin. *)
   }
 
+(* Consumed length of the SAME logical stream in a replayed image.
+
+   [seg_get] addresses streams positionally, but [Tape.finish] emits
+   them sorted by key and a replay may drop or re-key one, so index [s]
+   in a recorded image need not be the stream that [s] named in [best].
+   Subtracting their lengths would then compare two unrelated numbers
+   and hand a confident, wrong deletion size to the caller.
+
+   Segment 0 is safe by construction -- it is always [image.main]. For a
+   child stream, match on the key and return [None] if it did not
+   survive the replay: there is then no meaningful length to compare.
+
+   Found by an independent review during a skeptic pass. The positional
+   version was live on every multi-stream tape. *)
+let consumed_in_same_stream (best : Tape.image) (rec_img : Tape.image) s =
+  if s = 0 then Some (Array.length rec_img.Tape.main)
+  else if s - 1 >= Array.length best.Tape.streams then None
+  else begin
+    let key = fst best.Tape.streams.(s - 1) in
+    Array.find_map rec_img.Tape.streams ~f:(fun (k, arr) ->
+      if Tape.compare_key k key = 0 then Some (Array.length arr) else None)
+  end
+
 let search_budget_ok (st : 'a search) =
   !(st.s_attempts) < st.s_budget
   && !(st.s_shrinks) < st.s_max_shrinks
@@ -1228,36 +1251,48 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                 let lowered_only =
                   seg_set !best !s (with_choice arr !i lowered)
                 in
-                (* Main stream only, and not merely as caution: the
-                   deletion is sized from how many choices THIS stream
-                   consumed, and that arithmetic stops describing the
-                   proposal once sibling streams exist. A generated
-                   function keys its observed stream by the argument's
-                   hash, so lowering the argument re-keys it and the
-                   engine has to adopt the orphan; deleting a computed
-                   block at the same time moves the ground under that.
+(* The seg_count = 1 restriction that used to sit here is
+                   GONE, and was a quarantine rather than a fix. It was
+                   added because allowing the repair on tapes with
+                   sub-streams took test_fn_shrink's orphan property
+                   from 0/1000 stuck to 19/1000 (McNemar p < 0.0001),
+                   and the explanation offered was that the per-stream
+                   length arithmetic breaks when siblings re-key.
 
-                   Measured: with the repair active on tapes that have
-                   sub-streams, test_fn_shrink's orphan property goes
-                   from 0/1000 stuck to 19/1000 (1.22-2.95%), McNemar
-                   p < 0.0001. Identical on both variants, so it is the
-                   repair itself and not the cheap deletion above.
-                   lengthlist has no sub-streams and is unaffected. *)
-                if seg_count !best > 1 then false
-                else if Hashtbl.mem seen_proposals lowered_only then false
+                   That explanation was wrong. On the orphan property
+                   the root tape is [Integer x; Marker], so lowering x
+                   shortens nothing, L = 0, and no computed deletion is
+                   ever attempted there. The damage was the line below
+                   that used to insert [lowered_only] into
+                   [seen_proposals]: the probe discards its candidate,
+                   so marking the proposal seen suppressed the SAME
+                   proposal when minimize_integer later offered it for
+                   real -- and on this property that proposal is x = 0,
+                   the winning shrink.
+
+                   Not poisoning the table fixes it with no restriction
+                   at all (orphan 0/1000) and additionally takes
+                   lengthlist from 994/1000 to 1000/1000, because the
+                   same suppression was costing shrinks there too. *)
+                if Hashtbl.mem seen_proposals lowered_only then false
                 else if not (!cr_hits > 0 || !cr_probes < cr_probe_budget) then
                   false
                 else begin
                   Int.incr cr_probes;
                   Int.incr attempts;
-                  Hashtbl.set seen_proposals ~key:lowered_only ~data:();
+                  (* Deliberately NOT recorded in seen_proposals. The
+                     probe throws its candidate away, so marking the
+                     proposal seen would suppress the SAME proposal when
+                     minimize_integer later offers it for real. *)
                   last_recorded := None;
                   ignore
                     (candidate ~policy:Tape.Consume lowered_only
                       : bool * (Tape.image * a) option);
-                  match !last_recorded with
-                  | Some rec_img when !s < seg_count rec_img ->
-                    let consumed = Array.length (seg_get rec_img !s) in
+                  match
+                    Option.bind !last_recorded ~f:(fun rec_img ->
+                      consumed_in_same_stream !best rec_img !s)
+                  with
+                  | Some consumed ->
                     let l = Array.length arr - consumed in
                     if l > 0 && !i + 1 + l <= Array.length arr then begin
                       let ok =
@@ -1571,12 +1606,13 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
         last_recorded := None;
         if attempt (seg_set !best s lowered) then true
         else
-          match !last_recorded with
+          match
+            Option.bind !last_recorded ~f:(fun rec_img ->
+              consumed_in_same_stream !best rec_img s)
+          with
           | None -> false
-          | Some rec_img ->
-            if s >= seg_count rec_img then false
-            else begin
-              let consumed = Array.length (seg_get rec_img s) in
+          | Some consumed ->
+            begin
               let l = Array.length lowered - consumed in
               if l > 0 && i + 1 + l <= Array.length lowered then begin
                 Int.incr length_repair_tries;
