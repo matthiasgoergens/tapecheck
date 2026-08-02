@@ -1228,7 +1228,23 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                 let lowered_only =
                   seg_set !best !s (with_choice arr !i lowered)
                 in
-                if Hashtbl.mem seen_proposals lowered_only then false
+                (* Main stream only, and not merely as caution: the
+                   deletion is sized from how many choices THIS stream
+                   consumed, and that arithmetic stops describing the
+                   proposal once sibling streams exist. A generated
+                   function keys its observed stream by the argument's
+                   hash, so lowering the argument re-keys it and the
+                   engine has to adopt the orphan; deleting a computed
+                   block at the same time moves the ground under that.
+
+                   Measured: with the repair active on tapes that have
+                   sub-streams, test_fn_shrink's orphan property goes
+                   from 0/1000 stuck to 19/1000 (1.22-2.95%), McNemar
+                   p < 0.0001. Identical on both variants, so it is the
+                   repair itself and not the cheap deletion above.
+                   lengthlist has no sub-streams and is unaffected. *)
+                if seg_count !best > 1 then false
+                else if Hashtbl.mem seen_proposals lowered_only then false
                 else if not (!cr_hits > 0 || !cr_probes < cr_probe_budget) then
                   false
                 else begin
@@ -1259,8 +1275,36 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                 end
               | _ -> false
           in
+          (* ONE cheap attempt first: lower by a step and delete the
+             single choice immediately after. Measured, this is where
+             the deletion actually is on ordinary shapes -- on bind the
+             computed repair below succeeds on 31 of 32 probes, so it
+             is not failing, it is REDUNDANT, and the probe costs about
+             one call each time (slope +0.99 calls per probe over 1000
+             seeds).
+
+             Falling back after the FULL j/k search was tried and is
+             useless: it fixes the cost and loses the whole gain,
+             because on lengthlist the search does eventually succeed,
+             just slowly. Falling back after this single attempt is the
+             different thing -- it is cheap enough not to matter when it
+             misses, and it catches the case that makes the probe
+             redundant. *)
           let accepted = ref false in
-          let again = ref true in
+          if !i + 1 <= Array.length arr - 1 then
+            if
+              attempt
+                (seg_set !best !s
+                   (with_deleted_block
+                      (with_choice arr !i lowered)
+                      ~pos:(!i + 1) ~len:1))
+            then begin
+              Int.incr lad_successes;
+              consecutive_failures := 0;
+              accepted := true;
+              improved := true
+            end;
+          let again = ref (not !accepted) in
           while !again && budget_ok () && live () do
             again := computed_repair ();
             if !again then begin

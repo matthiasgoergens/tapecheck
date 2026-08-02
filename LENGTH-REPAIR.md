@@ -268,3 +268,88 @@ Raising a cost bound to admit a change is the move that rule exists to
 make deliberate.
 
 Not landed. Needs a call.
+
+---
+
+# Resolved: v3 lands it, with no bound raised
+
+The trade in the section above was not intrinsic. Two further
+measurements dissolved it.
+
+## v2 — fall back after ONE cheap attempt, not after the whole search
+
+The instrumented run explained the cost precisely. On bind the repair
+fires 32 times per run and **succeeds 31 of those** — it was never
+failing, it was *redundant*: the deletable block sits at `j = i+1` and
+the existing search finds it in one attempt, so the probe added about
+one call each time (slope +0.99 calls per probe, r = 0.85).
+
+Falling back after the *full* j/k search had already been tried and was
+useless — it fixed the cost and lost the whole gain. Falling back after
+a *single* cheap attempt (lower a step, delete the one choice after it)
+is the different thing: cheap enough not to matter when it misses,
+and it catches exactly the case that made the probe redundant.
+
+Probes per run collapsed: lengthlist 50.5 → 8.0, bind 32.3 → 1.2,
+deep bind 103.9 → 2.4.
+
+## v3 — the repair must not run on tapes with sub-streams
+
+v2 broke something the guards nearly missed: `test_fn_shrink`'s
+orphan-adoption property, which asserts `stuck = 0` over 40 seeds, hit
+1. At n=40 against a strict zero that could be luck, so it was measured
+at n=1000: master **0/1000** (0.00–0.38%), v2 **19/1000** (1.22–2.95%),
+McNemar p < 0.0001. Real.
+
+v1 scored an identical 19/1000, which exonerates the cheap deletion and
+convicts the repair itself. The mechanism follows: the deletion is
+sized from how many choices *this stream* consumed, and that arithmetic
+stops describing the proposal once sibling streams exist. A generated
+function keys its observed stream by the argument's hash, so lowering
+the argument re-keys it and the engine must adopt the orphan — deleting
+a computed block at the same moment moves the ground under that.
+
+Restricting the repair to single-stream tapes restores **0/1000**.
+lengthlist has no sub-streams and does not notice.
+
+## Final, n = 1000 paired, master vs v3
+
+| property | master minimal | v3 minimal | master calls | v3 calls | paired call diff |
+|---|---|---|---|---|---|
+| **lengthlist** | 719/1000 (69.0–74.6%) | **994/1000 (98.7–99.7%)** | 266.0 | **84.1** | **−181.9 [−194.2, −169.7]** |
+| bind | 1000/1000 | 1000/1000 | 50.6 | 49.0 | −1.6 [−2.1, −1.0] |
+| deep bind | 1000/1000 | 1000/1000 | 140.7 | 171.9 | +31.2 [+25.2, +37.5] |
+| listlen *(control)* | 1000/1000 | 1000/1000 | 148.3 | 149.3 | +1.0 |
+| listsum *(control)* | 1000/1000 | 1000/1000 | 91.2 | 92.0 | +0.8 |
+
+lengthlist: 280 v3-only wins against 5, **McNemar p = 5.0e-76**.
+
+**Generation is untouched.** `never found the bug` is 0 in every cell of
+every arm — this only ever changes the shrink phase, which is the half
+where spending time is cheap.
+
+Suite level: every regression guard passes with **no bound raised**
+(bind 51 against 74, deep bind 179 against 210, lengthlist 99/100 at 85
+calls against 73/100 at 257). `test_poison` 10/34 → **12/34**,
+`test_poison_lists` 22/48 → 21/48, `test_shrink_quality` 5/8 → 5/8,
+orphan 0/1000, full suite green.
+
+The only remaining cost is deep bind at +31 calls for identical quality.
+
+## What the three rounds cost, and what they were worth
+
+Each variant was a measurement, not a guess, and each one falsified the
+previous explanation:
+
+1. **v1** established the effect is real and that the cost is not
+   avoidable by patience heuristics (a greedy repeat and an
+   earned-probing cap both changed nothing).
+2. **Instrumentation** showed the repair was redundant rather than
+   failing on the cheap shapes — which is what made v2 obvious.
+3. **The n=1000 orphan sweep** caught a quality regression that the
+   suite reported as a single stuck seed out of 40, which is not enough
+   to act on either way.
+
+The third is the one worth remembering. A strict `= 0` assertion over
+40 draws cannot tell "slightly worse" from "unlucky", and the honest
+response to it is a bigger sample rather than a judgement call.
