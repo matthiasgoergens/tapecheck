@@ -512,6 +512,21 @@ let final_choices = ref 0
 let scan_i_visits = ref 0
 let scan_jk_visits = ref 0
 let lad_successes = ref 0
+
+(* Earned probing for the computed repair in lower_and_delete. The probe
+   costs one evaluation whether or not it finds anything, so on shapes
+   where lowering never shortens the tape it is pure overhead -- bind
+   went 52 -> 80 calls and deep bind 141 -> 256 before this cap.
+
+   Same shape as the earned patience above: spend a small fixed number
+   of probes finding out whether this property is one where the move
+   pays, and stop probing if it never does. A property where it DOES pay
+   banks a success immediately and keeps the probe for the rest of the
+   shrink. *)
+let cr_probes = ref 0
+let cr_hits = ref 0
+let cr_probe_budget = 8
+let last_computed_repair () = (!cr_probes, !cr_hits)
 let truncated_passes = ref 0
 let last_shape () =
   ( !sweeps, !initial_choices, !final_choices, !scan_i_visits, !scan_jk_visits
@@ -770,6 +785,8 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   scan_i_visits := 0;
   scan_jk_visits := 0;
   lad_successes := 0;
+  cr_probes := 0;
+  cr_hits := 0;
   truncated_passes := 0;
   final_choices := 0;
   initial_choices :=
@@ -1174,7 +1191,86 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
              redistribute pass piles zeros there), so walk j upward, and
              after an accepted deletion stay at the same position: the
              next deletable block usually sits exactly there. *)
+          (* COMPUTED DELETION, tried before the j/k search below.
+
+             Same move as the length repair in minimize_integer, but at
+             lower_and_delete's existing position in the sweep, because
+             the measured blocker for lengthlist was pass ORDER:
+             hoisting the lowering earlier closes lengthlist and costs
+             test_poison 10/34 -> 6/34 (LENGTH-REPAIR.md).
+
+             This deliberately does NOT accept a bare lowering -- that
+             is exactly what damaged poison. It PROBES one to learn how
+             many choices the replay consumed, then attempts only the
+             repaired proposal. One probe plus one attempt replaces a
+             j/k search costing up to 4n. The probe is charged to
+             [attempts]: it runs the generator and the test like any
+             other evaluation.
+
+             Repeated greedily, which is not optional. Without the loop
+             each success restarts the whole scan at [i := 0] -- the
+             search path has always had its own greedy repeat -- and the
+             measured cost of leaving it out was bind 52 -> 80 calls and
+             deep bind 141 -> 256. *)
+          let computed_repair () =
+            let arr = seg_get !best !s in
+            if !i >= Array.length arr then false
+            else
+              match arr.(!i) with
+              | Tape.Integer { value; lo; hi }
+                when Int64.(value <> clamp64 0L ~lo ~hi) ->
+                let target = clamp64 0L ~lo ~hi in
+                let step =
+                  if Int64.(value > target) then Int64.( - ) value 1L
+                  else Int64.( + ) value 1L
+                in
+                let lowered = Tape.Integer { value = step; lo; hi } in
+                let lowered_only =
+                  seg_set !best !s (with_choice arr !i lowered)
+                in
+                if Hashtbl.mem seen_proposals lowered_only then false
+                else if not (!cr_hits > 0 || !cr_probes < cr_probe_budget) then
+                  false
+                else begin
+                  Int.incr cr_probes;
+                  Int.incr attempts;
+                  Hashtbl.set seen_proposals ~key:lowered_only ~data:();
+                  last_recorded := None;
+                  ignore
+                    (candidate ~policy:Tape.Consume lowered_only
+                      : bool * (Tape.image * a) option);
+                  match !last_recorded with
+                  | Some rec_img when !s < seg_count rec_img ->
+                    let consumed = Array.length (seg_get rec_img !s) in
+                    let l = Array.length arr - consumed in
+                    if l > 0 && !i + 1 + l <= Array.length arr then begin
+                      let ok =
+                        attempt
+                          (seg_set !best !s
+                             (with_deleted_block
+                                (with_choice arr !i lowered)
+                                ~pos:(!i + 1) ~len:l))
+                      in
+                      if ok then Int.incr cr_hits;
+                      ok
+                    end
+                    else false
+                  | _ -> false
+                end
+              | _ -> false
+          in
           let accepted = ref false in
+          let again = ref true in
+          while !again && budget_ok () && live () do
+            again := computed_repair ();
+            if !again then begin
+              accepted := true;
+              Int.incr lad_successes;
+              Int.incr length_repair_hits;
+              consecutive_failures := 0;
+              improved := true
+            end
+          done;
           let k = ref 1 in
           while (not !accepted) && !k <= 4 && budget_ok () && live () do
             let j = ref (!i + 1) in
@@ -1239,6 +1335,14 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
             done;
             Int.incr k
           done;
+          (* Fallback, not a first move. On ordinary shapes the deletable
+             block sits at j = i+1 and the search above finds it in ONE
+             attempt, so probing first cost two evaluations where one
+             sufficed -- measured as bind 52 -> 80 calls and deep bind
+             141 -> 256. The computed repair earns its place only where
+             that search FAILS: a deletion further away than the scan
+             reaches, or larger than the k <= 4 cap can express, which is
+             exactly lengthlist's shape. *)
           if !accepted then i := 0 else Int.incr i
         | _ -> Int.incr i);
         if not (live ()) then Int.incr truncated_passes;

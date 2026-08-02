@@ -144,3 +144,79 @@ number to beat.
 Worth noting what this is *not*: it is not a span problem. The ablation
 above rules that out, so `sort_siblings` and the span work are not the
 route here.
+
+---
+
+# Follow-up: the computed repair inside `lower_and_delete`
+
+Branch `computed-repair`. **Not on master: it fails two cost guards.**
+
+The 2x2 above concluded the blocker was pass order, and that hoisting
+the lowering earlier closes lengthlist but costs `test_poison`. This
+tries the third option: keep the pass order exactly as it is, and give
+`lower_and_delete` the *computed* deletion size at its existing position
+instead of searching for it.
+
+It never accepts a bare lowering — that is what damaged poison. It
+probes one to learn how many choices the replay consumed, then attempts
+only the repaired proposal.
+
+## Measured
+
+| | master | computed-repair |
+|---|---|---|
+| lengthlist, fully minimal | 73/100 | **99/100** |
+| lengthlist, calls | 257 | **128** |
+| `test_poison` | 10/34 | **12/34** |
+| `test_poison_lists` | 22/48 | 20/48 |
+| `test_shrink_quality` | 5/8 | 5/8 |
+| bind, calls | 53 | **80** (+51%) |
+| deep bind, calls | 142 | **256** (+80%) |
+| every other guard | pass | pass |
+
+lengthlist goes from a recorded frontier to one case short of
+Hypothesis, at half the cost, and poison improves — the reorder made
+poison *worse*, so the "keep the order" hypothesis was right.
+
+## Why the cost rises, and why the obvious fixes do not work
+
+The probe costs one evaluation whether or not it finds anything. Three
+attempts to avoid paying it, all measured, all with no effect on the
+numbers:
+
+1. **A greedy repeat** after each success, matching the search path's.
+   Identical results — the loop rarely fires twice.
+2. **Earned probing** (spend 8 probes finding out whether the move pays
+   here, then stop). Identical, because the cap never binds: the repair
+   *does* succeed on bind, so it keeps its probe.
+3. **Making it a fallback** after the j/k search fails. This fixes the
+   cost completely — bind 53, deep bind 142, all guards green — and
+   loses the entire gain, lengthlist back to 73/257. The fallback never
+   fires there because the search *does* succeed, just slowly.
+
+(3) is the one that explains the whole thing. On ordinary shapes the
+deletable block sits at `j = i+1` and the existing search finds it in
+**one** attempt; probing first spends two where one sufficed. The
+computed repair only wins where the search is slow or cannot express
+the deletion at all — further than the scan reaches, or larger than the
+`k <= 4` cap — which is exactly lengthlist. The two are not orderable:
+whichever goes first pays for the other.
+
+## The decision this needs
+
+Raising two cost bounds — bind 74 → ~90, deep bind 210 → ~280 — buys
+lengthlist 73 → 99 and poison 10 → 12, and costs `test_poison_lists`
+22 → 20.
+
+Arguments for: the increases are 1.5-1.8x, where the regressions those
+guards were built for were 3-20x (galloping took bind to 984), so both
+would still catch their named failure at the higher bound. lengthlist's
+own cost halves.
+
+Argument against, and it is the repo's own standing warning: several
+past changes looked obviously correct, held quality at 100/100, and
+blew cost up 3-20x — which is precisely why cost is guarded at all.
+Raising a cost bound to admit a change is the move that rule exists to
+make deliberate.
+
+Not landed. Needs a call.
