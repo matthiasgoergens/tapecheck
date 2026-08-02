@@ -1,5 +1,15 @@
 # Could tapecheck use the relations library?
 
+> **Nudge: candidate 1 is ready to go.** The rewrite below is verified
+> equivalent (property-tested with tapecheck itself, at a pinned commit),
+> asymptotically better, and about ten lines. The only open decision is the
+> pair-ordering caveat — the relational form yields candidates sorted rather
+> than in position order, so a given seed selects a different mutation. Sorting
+> back is cheap if recorded regressions matter. Say the word and it becomes a
+> PR; the dependency direction has already been shown to work, since `rel` is
+> installable and `base`-only, so tapecheck can consume it with no vendoring
+> and no `base_quickcheck` collision.
+
 A survey, prompted by the observation that the tell-tale sign is **wanting to
 look data up by more than one key**. tapecheck has that in two places, and both
 are visible in the source as the workaround rather than the intent: an array
@@ -40,11 +50,35 @@ Relation.diff
 **Verified equivalent**, property-tested with tapecheck itself at `4b9a619`
 over randomly generated choice lists: no counterexample. (Driver notes below.)
 
-**And it is asymptotically better, not merely shorter.** The loop is Θ(n²)
-whatever the tape looks like. The relational form composes through an index, so
-it groups by bounds and costs only what it returns. On 400 choices with all
-bounds distinct — the case where there is nothing to find — it touched 2 800
-tuples against the loop's 160 000 comparisons.
+**The performance is a footnote at tape sizes.** For the record the loop is
+Θ(n²) and the relational form groups through an index — 2 800 tuples against
+160 000 comparisons on 400 choices with distinct bounds — but a tape has tens
+of choices, not thousands, so the honest claim is only that nothing regresses.
+
+**The version I would actually propose** writes the diagonal removal where a
+reader can see it, rather than letting it fall out of subtracting
+`shares_value`:
+
+```ocaml
+let shares_bounds = Relation.compose bounds (Relation.converse bounds) in
+let shares_value  = Relation.compose values (Relation.converse values) in
+let self          = Relation.identity_on (Relation.dom bounds) in
+Relation.diff (Relation.diff shares_bounds self) shares_value
+```
+
+One `diff` longer than the clever form, and it maps one-for-one onto the
+loop's three conditions — `i <> j`, equal bounds, differing values — which is
+what makes it reviewable against the original.
+
+**The argument is how it reads, and it cuts both ways.** In favour: the two
+conditions get names, `same_bounds` and `same_value`, and the loop's three-part
+`when` guard disappears along with the index bookkeeping. Against, and worth
+saying out loud: the relational form drops the diagonal *implicitly* — it falls
+out of subtracting `same_value`, since a choice always shares its own value —
+where the loop says `if i <> j` in plain sight. That is cleverness, and a
+reviewer has to stop and check it. If the intent is to be obviously correct
+rather than merely correct, writing the diagonal removal explicitly is the
+better trade even though it is longer.
 
 **One migration caveat, and it is not cosmetic.** `pick` selects among the
 candidate pairs by index, so the *order* of the list is part of the observable
@@ -124,9 +158,12 @@ for that reason.
 
 ## Verdict
 
-Candidate 1 is worth doing on its merits — shorter, asymptotically better, and
-verified — with the pair-ordering caveat handled deliberately rather than
-discovered. Candidate 2 is worth doing as illustration more than as
-optimisation. Neither is urgent, and both are the same finding: *tapecheck
-stores tapes in arrays keyed by position, and two of its passes want a
-different key.*
+Candidate 1 is worth doing, but for readability rather than speed: at tape
+sizes the performance only has to stay competitive, and it does. The
+pair-ordering caveat should be handled deliberately rather than discovered, and
+the implicit diagonal removal should probably be made explicit — being
+*obviously* right matters more here than being short.
+
+Candidate 2 is illustration more than optimisation. Both are the same finding:
+*tapecheck stores tapes in arrays keyed by position, and two of its passes want
+a different key.*
