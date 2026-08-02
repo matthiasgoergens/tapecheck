@@ -86,6 +86,33 @@ let bench (type a) ~name ~(gen : a Base_quickcheck.Generator.t)
   let hi = List.max_elt attempts ~compare:Int.compare |> Option.value ~default:0 in
   Stdio.printf "## %s\n\n%!" name;
   Stdio.printf "  expected      %s\n" expected;
+  (* PARTIAL CREDIT. An exact-string hit rate throws away the difference
+     between "returned a 40-node heap" and "returned a 3-node one", and
+     it scores 0 for an answer SMALLER than the stated expected -- which
+     is not hypothetical, it is what every engine including Hypothesis
+     does on binheap.
+
+     Size is the length of the normalised rendered answer. Crude, but it
+     needs no per-challenge code and it is comparable across engines
+     because both sides render to the same format. [<= optimal] counts
+     runs that got at least as small as the stated answer, however they
+     spelled it. *)
+  let opt_size = String.length expected in
+  let sizes = List.map os ~f:(fun o -> String.length o.normal) in
+  let at_or_below =
+    List.count sizes ~f:(fun sz -> sz <= opt_size)
+  in
+  let mean_size =
+    if n = 0 then 0.
+    else Float.of_int (List.sum (module Int) sizes ~f:Fn.id) /. Float.of_int n
+  in
+  let sorted_sizes = List.sort sizes ~compare:Int.compare in
+  let median_size =
+    match List.nth sorted_sizes (n / 2) with Some v -> v | None -> 0
+  in
+  Stdio.printf
+    "  size          optimal %d, median %d, mean %.1f; %d/%d runs <= optimal\n"
+    opt_size median_size mean_size at_or_below n;
   let lo_ci, hi_ci = wilson ~hits ~n in
   Stdio.printf "  normalised    %d/%d runs = %.1f%% [95%% CI %.1f-%.1f] (%d distinct)\n"
     hits n
@@ -106,7 +133,7 @@ let bench (type a) ~name ~(gen : a Base_quickcheck.Generator.t)
     Stdio.printf "      %3d x  %s%s\n" c k
       (if String.equal k expected then "   <- expected" else ""));
   Stdio.printf "\n%!";
-  (name, hits, n, mean)
+  (name, hits, n, mean, at_or_below)
 
 let string_of_int_list l =
   "[" ^ String.concat ~sep:", " (List.map l ~f:Int.to_string) ^ "]"
@@ -287,8 +314,17 @@ let binheap () =
          So the target is what the reference implementation actually
          converges on. That also makes the interesting axis visible:
          Hypothesis gives ONE answer every time; this engine gave 12
-         distinct answers in 20 runs. *)
-    ~expected:"(0, None, (-1, None, None))" ()
+         distinct answers in 20 runs.
+
+         Kept at the UPSTREAM string all the same, so this column stays
+         comparable with the published reports and with the Python
+         harness. Retargeting it here while the Python side still used
+         upstream's made the two [<= optimal size] columns measure
+         against different targets (27 characters against 47) -- an
+         apples-to-oranges comparison introduced by the fix rather than
+         found by it. The partial-credit column is what expresses
+         "reached something at least as small". *)
+    ~expected:"(0, None, (0, (0, None, None), (1, None, None)))" ()
 
 (* ---- difference: three variants, all needing a dependency between
        two separately-drawn integers to be maintained ---- *)
@@ -417,8 +453,10 @@ let () =
     ]
   in
   Stdio.printf "## Summary\n\n";
-  Stdio.printf "| challenge | normalised | 95%% CI | mean evaluations |\n";
-  Stdio.printf "|---|---|---|---|\n";
-  List.iter results ~f:(fun (name, hits, n, mean) ->
+  Stdio.printf
+    "| challenge | exact | 95%% CI | <= optimal size | mean evaluations |\n";
+  Stdio.printf "|---|---|---|---|---|\n";
+  List.iter results ~f:(fun (name, hits, n, mean, at_or_below) ->
     let lo_ci, hi_ci = wilson ~hits ~n in
-    Stdio.printf "| %s | %d/%d | %.1f-%.1f | %.1f |\n" name hits n lo_ci hi_ci mean)
+    Stdio.printf "| %s | %d/%d | %.1f-%.1f | %d/%d | %.1f |\n" name hits n lo_ci
+      hi_ci at_or_below n mean)
