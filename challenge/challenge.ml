@@ -261,13 +261,56 @@ and render_heap_opt = function
   | None -> "None"
   | Some h -> render_heap h
 
-let rec heap_gen depth =
-  if depth <= 0 then G.map G.int ~f:(fun i -> Heap (i, None, None))
+(* VALID heaps: every child's key is >= its parent's, and keys start at
+   0. This is not a detail -- it is the whole difference between the
+   challenge as stated and the challenge most libraries implement.
+
+   jqwik generates keys as integers().greaterOrEqual(minKey) and passes
+   the parent's head down as the child's minKey; Americium does the same
+   with heaps(head). Both reach the stated smallest answer. CsCheck,
+   elm-test and the Hypothesis port all generate UNCONSTRAINED ints with
+   no invariant, and all stop at 2-node heaps containing a negative --
+   because with an arbitrary tree the first conjunct (l2 is sorted)
+   breaks trivially, e.g. (0, None, (-1, None, None)).
+
+   Those are different properties, and the easier one cannot reach the
+   stated answer because it never needs to. Measured against the
+   unconstrained version, tapecheck AND Hypothesis both scored 0/100
+   against upstream's string -- which says nothing about either engine.
+
+   Frequency 3:1 for empty:node, as jqwik has it, with a depth cap so
+   termination does not rely on the coin flips.
+
+   int_uniform_inclusive, NOT int_inclusive, and the difference decides
+   the result. int_inclusive is the non-uniform generator: it draws a
+   float in [0,1] and maps it onto the range, so over [0, max_int] it
+   shrinks to lo = 0 but cannot reach a small NON-ZERO value -- landing
+   on 1 would need the float to be about 2^-62. Measured with it, this
+   challenge returned the right four-node SHAPE every time but with
+   4611686018427387903 where the answer wants 1, i.e. it was testing
+   float reachability rather than the property. The uniform generator
+   records Integer{value; lo; hi} and bisects in value space. Range
+   capped per level so the bisection has somewhere to go. *)
+let rec heap_gen_opt ~min_key ~depth =
+  if depth <= 0 then G.return None
   else
-    G.map3 G.int
-      (G.option (heap_gen (depth - 1)))
-      (G.option (heap_gen (depth - 1)))
-      ~f:(fun n l r -> Heap (n, l, r))
+    G.weighted_union
+      [ (3.0, G.return None)
+      ; ( 1.0
+        , G.bind (G.int_uniform_inclusive min_key (min_key + 1000))
+            ~f:(fun head ->
+            G.bind (heap_gen_opt ~min_key:head ~depth:(depth - 1))
+              ~f:(fun l ->
+                G.map (heap_gen_opt ~min_key:head ~depth:(depth - 1))
+                  ~f:(fun r -> Some (Heap (head, l, r))))) )
+      ]
+
+(* The property needs a non-empty heap, so draw the root directly. *)
+let heap_gen depth =
+  G.bind (G.int_uniform_inclusive 0 1000) ~f:(fun head ->
+    G.bind (heap_gen_opt ~min_key:head ~depth:(depth - 1)) ~f:(fun l ->
+      G.map (heap_gen_opt ~min_key:head ~depth:(depth - 1)) ~f:(fun r ->
+        Heap (head, l, r))))
 
 let heap_to_list h =
   let rec go acc stack =
@@ -292,7 +335,7 @@ let wrong_to_sorted_list (Heap (n, l, r)) =
 
 let binheap () =
   bench ~name:"binheap"
-    ~gen:(heap_gen 4)
+    ~gen:(heap_gen 6)
     ~test:(fun h ->
       let l1 = heap_to_list h in
       let l2 = wrong_to_sorted_list h in
