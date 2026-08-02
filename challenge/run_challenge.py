@@ -310,8 +310,22 @@ def test(ls):
 CHALLENGES["binheap"] = ("""
 from hypothesis import given, strategies as st
 
-heap = st.deferred(lambda: st.tuples(
-    st.integers(), st.none() | heap, st.none() | heap))
+# VALID heaps: children's keys >= parent's, keys >= 0. jqwik and
+# Americium both enforce this and both reach the stated answer;
+# unconstrained trees are a DIFFERENT, easier property whose first
+# conjunct breaks trivially at (0, None, (-1, None, None)), which is
+# what this harness measured before and what CsCheck and elm-test
+# report. Matching jqwik so the target is reachable at all.
+def heap(min_key=0, depth=6):
+    if depth <= 0:
+        return st.none()
+    return st.none() | st.integers(min_key, min_key + 1000).flatmap(
+        lambda head: st.tuples(
+            st.just(head), heap(head, depth - 1), heap(head, depth - 1)))
+
+root = st.integers(0, 1000).flatmap(
+    lambda head: st.tuples(
+        st.just(head), heap(head, 5), heap(head, 5)))
 
 def to_list(h):
     out, stack = [], [h]
@@ -335,7 +349,7 @@ def merge_heaps(a, b):
 def wrong_to_sorted_list(h):
     return [h[0]] + to_list(merge_heaps(h[1], h[2]))
 
-@given(heap)
+@given(root)
 def test(h):
     l1 = to_list(h)
     l2 = wrong_to_sorted_list(h)
