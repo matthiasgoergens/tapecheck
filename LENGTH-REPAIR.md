@@ -161,18 +161,66 @@ It never accepts a bare lowering — that is what damaged poison. It
 probes one to learn how many choices the replay consumed, then attempts
 only the repaired proposal.
 
-## Measured
+## Measured, n = 1000 paired
 
-| | master | computed-repair |
+The first version of this table was n=100 with no variance quoted,
+which cannot distinguish a real effect from noise. Redone properly:
+**1000 independent random seeds** (master seed 20260802, recorded in
+`~/prog/tapecheck-bench/seeds.txt`), the *same* seed list under both
+arms so every comparison is within-seed, one worktree per arm.
+Wilson intervals for rates, McNemar on the paired disagreements,
+bootstrap CI (20 000 resamples) for the paired mean call difference.
+
+| property | arm | fully minimal | 95% CI | mean calls | median | IQR |
+|---|---|---|---|---|---|---|
+| lengthlist | master | 719/1000 | 69.0–74.6% | 266.0 | 159 | 119–584 |
+| lengthlist | **repair** | **990/1000** | **98.2–99.5%** | **126.6** | 130 | 82–173 |
+| bind | master | 1000/1000 | 99.6–100% | 50.6 | 50 | 33–69 |
+| bind | repair | 998/1000 | 99.3–99.9% | 80.0 | 79 | 45–114 |
+| deep bind | master | 1000/1000 | 99.6–100% | 140.7 | 142 | 86–194 |
+| deep bind | repair | 1000/1000 | 99.6–100% | 273.4 | 248 | 136–370 |
+| listlen *(control)* | master | 1000/1000 | 99.6–100% | 148.3 | 150 | 145–152 |
+| listlen *(control)* | repair | 1000/1000 | 99.6–100% | 149.3 | 151 | 146–153 |
+| listsum *(control)* | master | 1000/1000 | 99.6–100% | 91.2 | 104 | 88–113 |
+| listsum *(control)* | repair | 1000/1000 | 99.6–100% | 92.0 | 105 | 89–114 |
+
+Paired differences (repair − master):
+
+| property | quality | mean calls |
 |---|---|---|
-| lengthlist, fully minimal | 73/100 | **99/100** |
-| lengthlist, calls | 257 | **128** |
-| `test_poison` | 10/34 | **12/34** |
-| `test_poison_lists` | 22/48 | 20/48 |
-| `test_shrink_quality` | 5/8 | 5/8 |
-| bind, calls | 53 | **80** (+51%) |
-| deep bind, calls | 142 | **256** (+80%) |
-| every other guard | pass | pass |
+| **lengthlist** | 279 repair-only wins vs 8 master-only, **McNemar p = 8.6e-72** | **−139.3 [−152.0, −126.9]** |
+| bind | 0 vs 2, p = 0.5 (not significant) | **+29.4 [+28.0, +30.8]** |
+| deep bind | no disagreements | **+132.7 [+123.9, +141.7]** |
+| listlen | no disagreements | +1.0 [+1.0, +1.0] |
+| listsum | no disagreements | +0.8 [+0.7, +0.8] |
+
+The lengthlist confidence intervals do not overlap and the effect is
+about as unambiguous as this kind of measurement gets. The two cost
+regressions are equally real — both intervals are far from zero — and
+the two controls move by one call, which is the probe being paid once
+and is the right order of magnitude for a change that should not touch
+them.
+
+Suite-level figures, n as built in: `test_poison` 10/34 → **12/34**,
+`test_poison_lists` 22/48 → 20/48, `test_shrink_quality` 5/8 → 5/8.
+Those are single runs over fixed case sets, so treat them as
+indicative rather than measured; the 1000-seed table above is the
+evidence.
+
+### Two methodology errors worth recording
+
+**The first table was n=100 with no variance.** Matthias caught it. The
+direction survived (71.9% vs 99.0% brackets the 73 vs 99), but nothing
+in that table justified believing it.
+
+**My first 1000-seed run measured the wrong property.** I wrote a
+`bind` from memory — `len in 1..10`, elements `0..100` — and it
+reported a paired difference of −0.2 calls [−2.0, +1.7], i.e. "no
+effect". The guard's actual bind is `len in 1..64` with elements
+`0..1000`. With the real property the answer is +29.4 [+28.0, +30.8].
+A confident null result about a property nobody was asking about.
+The bench now copies the guard's definitions verbatim, including
+`count = 200`.
 
 lengthlist goes from a recorded frontier to one case short of
 Hypothesis, at half the cost, and poison improves — the reorder made

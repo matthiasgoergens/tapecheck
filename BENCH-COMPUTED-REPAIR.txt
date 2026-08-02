@@ -1,0 +1,27 @@
+property     arm               minimal           95% CI  mean calls   median           IQR
+--------------------------------------------------------------------------------------------
+lengthlist   master       719/1000       69.0-74.6           266.0      159   119-584    
+lengthlist   repair       990/1000       98.2-99.5           126.6      130    82-173    
+             PAIRED   master-only wins 8, repair-only wins 279, McNemar p=8.57e-72
+                      mean call diff (repair-master) -139.3 [-152.0, -126.9]
+
+bind         master      1000/1000       99.6-100.0           50.6       50    33-69     
+bind         repair       998/1000       99.3-99.9            80.0       79    45-114    
+             PAIRED   master-only wins 2, repair-only wins 0, McNemar p=0.5
+                      mean call diff (repair-master) +29.4 [+28.0, +30.8]
+
+deepbind     master      1000/1000       99.6-100.0          140.7      142    86-194    
+deepbind     repair      1000/1000       99.6-100.0          273.4      248   136-370    
+             PAIRED   master-only wins 0, repair-only wins 0, McNemar p=1
+                      mean call diff (repair-master) +132.7 [+123.9, +141.7]
+
+listlen      master      1000/1000       99.6-100.0          148.3      150   145-152    
+listlen      repair      1000/1000       99.6-100.0          149.3      151   146-153    
+             PAIRED   master-only wins 0, repair-only wins 0, McNemar p=1
+                      mean call diff (repair-master) +1.0 [+1.0, +1.0]
+
+listsum      master      1000/1000       99.6-100.0           91.2      104    88-113    
+listsum      repair      1000/1000       99.6-100.0           92.0      105    89-114    
+             PAIRED   master-only wins 0, repair-only wins 0, McNemar p=1
+                      mean call diff (repair-master) +0.8 [+0.7, +0.8]
+
