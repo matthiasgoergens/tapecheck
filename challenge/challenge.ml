@@ -211,6 +211,85 @@ let coupling () =
       Array.for_alli a ~f:(fun i j -> i = j || a.(j) <> i))
     ~render:string_of_int_list ~expected:"[1, 0]" ()
 
+(* ---- binheap: the GENERATION challenge ----
+
+   The eleventh upstream case, and different in kind from the rest.
+   Upstream: "most libraries seem to never find the smallest example
+   here... small examples are 'too sparse', so it's very hard to find
+   one by luck." The difficulty is in FINDING a counterexample, not in
+   reducing one, which makes it the challenge that bears on the budget
+   that actually matters -- generation runs on every CI job and usually
+   finds nothing.
+
+   From QuickCheck's test suite via the SmartCheck paper. Definition
+   follows the elm-test reference (depth 4, optional children); the
+   merge is deliberately wrong, so a heap whose toList disagrees with
+   the sorted wrongToSortedList is a counterexample. *)
+type heap = Heap of int * heap option * heap option
+
+let rec render_heap (Heap (n, l, r)) =
+  Printf.sprintf "(%d, %s, %s)" n (render_heap_opt l) (render_heap_opt r)
+
+and render_heap_opt = function
+  | None -> "None"
+  | Some h -> render_heap h
+
+let rec heap_gen depth =
+  if depth <= 0 then G.map G.int ~f:(fun i -> Heap (i, None, None))
+  else
+    G.map3 G.int
+      (G.option (heap_gen (depth - 1)))
+      (G.option (heap_gen (depth - 1)))
+      ~f:(fun n l r -> Heap (n, l, r))
+
+let heap_to_list h =
+  let rec go acc stack =
+    match stack with
+    | [] -> List.rev acc
+    | Heap (n, l, r) :: hs ->
+      go (n :: acc) (List.filter_opt [ l; r ] @ hs)
+  in
+  go [] [ h ]
+
+(* The bug under test: this merge is not heap-correct. *)
+let rec merge_heaps left right =
+  match (left, right) with
+  | None, _ -> right
+  | _, None -> left
+  | Some (Heap (ln, ll, lr)), Some (Heap (rn, rl, rr)) ->
+    if ln <= rn then Some (Heap (ln, merge_heaps lr right, ll))
+    else Some (Heap (rn, merge_heaps rr left, rl))
+
+let wrong_to_sorted_list (Heap (n, l, r)) =
+  n :: (match merge_heaps l r with Some h -> heap_to_list h | None -> [])
+
+let binheap () =
+  bench ~name:"binheap"
+    ~gen:(heap_gen 4)
+    ~test:(fun h ->
+      let l1 = heap_to_list h in
+      let l2 = wrong_to_sorted_list h in
+      List.equal Int.equal l2 (List.sort l2 ~compare:Int.compare)
+      && List.equal Int.equal (List.sort l1 ~compare:Int.compare) l2)
+    ~render:render_heap
+      (* NOT the upstream string, and the deviation is the finding.
+         Upstream states the smallest as
+           (0, None, (0, (0, None, None), (1, None, None)))
+         but only jqwik and Americium reach it. Measured here, current
+         Hypothesis 6.164.0 returns (0, None, (-1, None, None)) on
+         100/100 runs -- one distinct answer, mean 25.8 evaluations.
+         CsCheck and elm-test land in the same place. Those heaps have
+         FEWER nodes but contain a negative, so "smallest" is a
+         tie-break between structure size and value magnitude rather
+         than an agreed minimum, and scoring against the upstream
+         string measures agreement with jqwik, not minimality.
+
+         So the target is what the reference implementation actually
+         converges on. That also makes the interesting axis visible:
+         Hypothesis gives ONE answer every time; this engine gave 12
+         distinct answers in 20 runs. *)
+    ~expected:"(0, None, (-1, None, None))" ()
+
 (* ---- difference: three variants, all needing a dependency between
        two separately-drawn integers to be maintained ---- *)
 let difference ~name ~bad ~expected =
@@ -334,6 +413,7 @@ let () =
     ; deletion ()
     ; nestedlists ()
     ; coupling ()
+    ; binheap ()
     ]
   in
   Stdio.printf "## Summary\n\n";
