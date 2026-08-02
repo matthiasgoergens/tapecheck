@@ -150,6 +150,67 @@ let distinct () =
       Hash_set.length s < 3)
     ~render:string_of_int_list ~expected:"[0, 1, -1]" ()
 
+(* ---- deletion, nestedlists, coupling ----
+
+   Three of the eleven upstream challenges were never ported. Found by
+   diffing shrinking-challenge/challenges/ against this file rather than
+   by inventing new cases, and they are the ones aimed squarely at what
+   a delete-and-lower shrinker is bad at. Definitions taken from the
+   fast-check reference implementations so the comparison is like for
+   like; expected answers are the upstream ones.
+
+   The fourth, binheap, is not here: it needs a heap datatype and is a
+   GENERATION challenge rather than a shrinking one ("most libraries
+   seem to never find the smallest example... small examples are too
+   sparse"). Worth its own entry, not a line in this list. *)
+
+(* "Remove an element from a list and it is no longer in the list",
+   with a remove that only drops the FIRST occurrence -- so it fails
+   exactly on duplicates. Upstream: "shrinking duplicates
+   simultaneously is something that most property-based testing
+   libraries can't do." Expected ([0, 0], 0). *)
+let deletion () =
+  bench ~name:"deletion"
+    ~gen:(G.both (G.list G.int) (G.int_uniform_inclusive 0 10))
+    ~test:(fun (ls, i) ->
+      Tape_stats.assume (i < List.length ls);
+      let x = List.nth_exn ls i in
+      let without =
+        List.filteri ls ~f:(fun j _ -> j <> i)
+      in
+      not (List.mem without x ~equal:Int.equal))
+    ~render:(fun (ls, i) ->
+      Printf.sprintf "(%s, %d)" (string_of_int_list ls) i)
+    ~expected:"([0, 0], 0)" ()
+
+(* Sum of inner lengths must be <= 10. Upstream: "lots of local minima
+   under pure deletion based approaches -- [[0], ..., [0]] and
+   [[0, ..., 0]] are both minima for anything that can only make
+   individual elements smaller." Hypothesis and jqwik reach the single
+   11-element list reliably. *)
+let nestedlists () =
+  bench ~name:"nestedlists"
+    ~gen:(G.list (G.list (G.return 0)))
+    ~test:(fun ls -> List.sum (module Int) ls ~f:List.length <= 10)
+    ~render:(fun ls ->
+      "["
+      ^ String.concat ~sep:", " (List.map ls ~f:string_of_int_list)
+      ^ "]")
+    ~expected:"[[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]" ()
+
+(* Elements coupled to their own index: for each i with j = ls.(i) and
+   i <> j, ls.(j) must not be i. Every element must be a valid index.
+   Expected [1, 0]. *)
+let coupling () =
+  bench ~name:"coupling"
+    ~gen:(G.list (G.int_uniform_inclusive 0 10))
+    ~test:(fun ls ->
+      let n = List.length ls in
+      Tape_stats.assume (List.for_all ls ~f:(fun v -> v < n));
+      let a = Array.of_list ls in
+      Array.for_alli a ~f:(fun i j -> i = j || a.(j) <> i))
+    ~render:string_of_int_list ~expected:"[1, 0]" ()
+
 (* ---- difference: three variants, all needing a dependency between
        two separately-drawn integers to be maintained ---- *)
 let difference ~name ~bad ~expected =
@@ -270,6 +331,9 @@ let () =
         ~expected:"[10, 9]"
     ; calculator ()
     ; bound5 ()
+    ; deletion ()
+    ; nestedlists ()
+    ; coupling ()
     ]
   in
   Stdio.printf "## Summary\n\n";
