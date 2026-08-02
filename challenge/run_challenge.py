@@ -328,13 +328,18 @@ root = st.integers(0, 1000).flatmap(
         st.just(head), heap(head, 5), heap(head, 5)))
 
 def to_list(h):
+    # LIFO, push left then right, so the RIGHT subtree is visited first
+    # -- as jqwik and CsCheck do. The left-first version this harness
+    # had is a DIFFERENT property: upstream's stated answer is not even
+    # a counterexample under it.
     out, stack = [], [h]
     while stack:
-        n = stack.pop(0)
+        n = stack.pop()
         if n is None:
             continue
         out.append(n[0])
-        stack = [n[1], n[2]] + stack
+        stack.append(n[1])
+        stack.append(n[2])
     return out
 
 def merge_heaps(a, b):
