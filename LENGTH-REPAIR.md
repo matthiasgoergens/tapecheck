@@ -353,3 +353,93 @@ previous explanation:
 The third is the one worth remembering. A strict `= 0` assertion over
 40 draws cannot tell "slightly worse" from "unlucky", and the honest
 response to it is a bigger sample rather than a judgement call.
+
+---
+
+# CORRECTION: the quality win is a one-line bookkeeping fix, not the repair
+
+Everything above attributes lengthlist's improvement to the computed
+repair. **That is wrong**, and a skeptic pass caught it after the change
+had already been merged. The numbers in the tables are all real; the
+causal account attached to them was not.
+
+## What the ablation showed
+
+v2 added two things at once and only one was ablated. Doing the other:
+
+| configuration | lengthlist | mean calls |
+|---|---|---|
+| master | 719/1000 (69.0–74.6%) | 266.0 |
+| cheap single delete only, probe OFF | **987/1000 (97.8–99.2%)** | 150.5 |
+| probe only (v1) | 990/1000 | 126.6 |
+| both (v3) | 994/1000 | 84.1 |
+
+Paired, the probe on top of the cheap delete is **12 wins to 5,
+McNemar p = 0.14 — not significant**. The cheap delete on top of master
+is **268 to 0, p = 4.2e-81**. The probe buys cost (−66 calls), not
+quality.
+
+## Three explanations of mine, all falsified
+
+The cheap delete's proposal is *identical* to the k/j search's first
+candidate (k=1, j=i+1), so on the face of it it cannot change anything.
+
+1. *"It makes successful steps cheaper, so the budget lasts."*
+   `attempt_batch`'s non-pool path short-circuits on first success, so
+   the success already cost one evaluation. Refuted by reading it.
+2. *"It escapes the per-pass failure cutoff."* Putting it back under
+   `live ()` changed nothing — 994/1000 and 84.1 calls, identical.
+   Refuted by measurement.
+3. *"The deletion is sized per-stream, so sibling streams break it."*
+   Never tested. That sentence was inference written into a code
+   comment as if it were a finding.
+
+## The actual mechanism
+
+Found by an independent refutation pass (headless `codex`, a different
+model family) after those three failed.
+
+The greedy repeat that runs after a batch success re-applies the same
+edit until it fails — and **never incremented `lad_successes`**. So a
+run of N accepted deletions at one position banked ONE patience credit.
+Since
+
+    live () = consecutive_failures < max_pass_failures + lad_successes
+
+the pass was starved of patience in exactly the situation where it was
+being most productive. The "cheap attempt" reached the correct state by
+accident: it accepted one edit, restarted the scan at `i := 0`, and so
+passed through the increment once per edit.
+
+Confirmed rather than merely made plausible: moving the increment into
+the greedy repeat, on plain pre-change master with no other edit,
+reproduces the cheap-delete result **to the decimal on all five
+properties** — 987/1000 at 150.5, 50.9, 178.1, 148.3, 91.2.
+
+## What ships, and why each piece is there
+
+- **The credit in the greedy repeat** — the actual fix. One increment.
+  Zero measured cost; the configuration with and without it is
+  bit-identical today, because the cheap attempt below already banks
+  per edit. Kept anyway, so the invariant holds on its own rather than
+  as a side effect of another block.
+- **The single cheap attempt** — kept on its real merit: it accepts the
+  common deletion in one evaluation where the probe needs two. Removing
+  it costs lengthlist 994 → 990 and 84.1 → 126.6 calls.
+- **The computed repair (probe)** — kept for cost on the shapes the
+  search handles badly: −66 calls on lengthlist, −6 on deep bind, −2 on
+  bind, +1 on the controls. It buys no significant quality.
+- **The single-stream restriction** — kept: without it the orphan
+  property goes 0/1000 → 19/1000 stuck (p < 0.0001). Note this is the
+  one place where the per-stream reasoning IS backed by measurement,
+  even though the mechanism story remains inference.
+
+## The lesson
+
+The change was measured at n=1000 with confidence intervals and paired
+tests, and the headline numbers were all correct — and the explanation
+was still wrong, because **no measurement was ever pointed at the
+attribution itself**. Ablate every component you add, not just the one
+you find interesting; and when two or three of your own mechanisms have
+been falsified in a row, stop generating a fourth and get an outside
+opinion.

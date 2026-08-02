@@ -1275,21 +1275,28 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                 end
               | _ -> false
           in
-          (* ONE cheap attempt first: lower by a step and delete the
-             single choice immediately after. Measured, this is where
-             the deletion actually is on ordinary shapes -- on bind the
-             computed repair below succeeds on 31 of 32 probes, so it
-             is not failing, it is REDUNDANT, and the probe costs about
-             one call each time (slope +0.99 calls per probe over 1000
-             seeds).
+          (* No special-cased first attempt here. An earlier version
+             tried one explicitly -- lower a step, delete the single
+             choice at i+1 -- and it took lengthlist from 719/1000 to
+             987/1000. That proposal is IDENTICAL to the k/j search's
+             first candidate, so it should have changed nothing, and
+             chasing why exposed the real defect: it was banking a
+             patience credit per accepted edit where the greedy repeat
+             below banked one per run. The credit is now incremented
+             where it belongs (see the greedy repeat), which reproduces
+             that result exactly -- 987/1000 and 150.5 calls, matching
+             to the decimal on all five benchmark properties -- without
+             a redundant attempt whose effect was accidental.
 
-             Falling back after the FULL j/k search was tried and is
-             useless: it fixes the cost and loses the whole gain,
-             because on lengthlist the search does eventually succeed,
-             just slowly. Falling back after this single attempt is the
-             different thing -- it is cheap enough not to matter when it
-             misses, and it catches the case that makes the probe
-             redundant. *)
+             The single cheap attempt IS kept, but on its real merit and
+             not the one first claimed for it: it accepts the common
+             deletion in ONE evaluation where the probe below needs two
+             (a probe plus the repair). Measured with the credit fix
+             already in place, dropping it costs lengthlist 994 -> 990
+             and 84.1 -> 126.6 calls. So it is a cost optimisation for
+             the common shape, exactly as the probe is a cost
+             optimisation for the far/large shape. Neither is what buys
+             the quality; the credit does. *)
           let accepted = ref false in
           if !i + 1 <= Array.length arr - 1 then
             if
@@ -1369,7 +1376,19 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                         (seg_set !best !s
                            (with_deleted_block
                               (with_choice arr !i lowered)
-                              ~pos:jj ~len:!k))
+                              ~pos:jj ~len:!k));
+                    (* Each greedy repeat is a separate accepted shrink
+                       and banks its own patience credit. Without this a
+                       run of N deletions at one position earned ONE
+                       credit, and [live ()] is
+                         consecutive_failures < max_pass_failures
+                                                + lad_successes
+                       so the pass was starved of patience in precisely
+                       the situation where it was being most productive.
+                       Worth 719/1000 -> 987/1000 fully-minimal on
+                       lengthlist, n=1000 paired, McNemar p = 4.2e-81,
+                       and it costs one increment. *)
+                    if !again then Int.incr lad_successes
                   | _ -> again := false
                 done;
                 greedy_cost := !greedy_cost + (!attempts - greedy_start)
