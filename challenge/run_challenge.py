@@ -106,12 +106,28 @@ def measure(source, filename, expected):
         norm(", ".join(v for v in r["shrunk"].values())) for r in found
     )
     hits = sum(c for a, c in answers.items() if a == expected)
+    # Partial credit. An exact-string hit rate scores 0 for an answer
+    # SMALLER than the stated one, which is what every engine does on
+    # binheap, and it penalises a permutation of the optimal multiset,
+    # which is what happens on bound5. Size is the length of the
+    # normalised rendering: crude, needs no per-challenge code, and
+    # comparable across engines because both sides render the same way.
+    # Exact remains the headline; this is the consolation column.
+    opt_size = len(expected)
+    sizes = sorted(len(a) for a in
+                   (norm(", ".join(v for v in r["shrunk"].values()))
+                    for r in found))
+    at_or_below = sum(1 for sz in sizes if sz <= opt_size)
     evals = [r["evaluations"] for r in found]
     print(f"## {filename}\n")
     print(f"  expected      {expected}")
     n = len(found)
     lo_ci, hi_ci = wilson(hits, n)
     pct = 100.0 * hits / n if n else 0.0
+    if sizes:
+        print(f"  size          optimal {opt_size}, median "
+              f"{sizes[len(sizes)//2]}, mean {statistics.mean(sizes):.1f}; "
+              f"{at_or_below}/{len(sizes)} runs <= optimal")
     print(f"  normalised    {hits}/{n} runs = {pct:.1f}% "
           f"[95% CI {lo_ci:.1f}-{hi_ci:.1f}] ({len(answers)} distinct)")
     if len(found) < RUNS:
@@ -124,7 +140,7 @@ def measure(source, filename, expected):
         print(f"      {c:3d} x  {a}{mark}")
     print()
     return (filename, hits, len(found),
-            statistics.mean(evals) if evals else 0.0)
+            statistics.mean(evals) if evals else 0.0, at_or_below)
 
 
 def wilson(hits, n):
@@ -336,8 +352,9 @@ if __name__ == "__main__":
     rows = [measure(src, name, exp)
             for name, (src, exp) in CHALLENGES.items() if name in wanted]
     print("## Summary\n")
-    print("| challenge | normalised | 95% CI | mean evaluations |")
-    print("|---|---|---|---|")
-    for name, hits, n, mean in rows:
+    print("| challenge | exact | 95% CI | <= optimal size | mean evaluations |")
+    print("|---|---|---|---|---|")
+    for name, hits, n, mean, at_or_below in rows:
         lo_ci, hi_ci = wilson(hits, n)
-        print(f"| {name} | {hits}/{n} | {lo_ci:.1f}-{hi_ci:.1f} | {mean:.1f} |")
+        print(f"| {name} | {hits}/{n} | {lo_ci:.1f}-{hi_ci:.1f} | "
+              f"{at_or_below}/{n} | {mean:.1f} |")
