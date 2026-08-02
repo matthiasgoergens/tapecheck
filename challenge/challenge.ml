@@ -312,14 +312,33 @@ let heap_gen depth =
       G.map (heap_gen_opt ~min_key:head ~depth:(depth - 1)) ~f:(fun r ->
         Heap (head, l, r))))
 
+(* LIFO, pushing left then right so the RIGHT subtree is visited first.
+
+   This is not cosmetic. jqwik and CsCheck both use a stack this way;
+   elm-test (and my first port, copied from it) prepends [left; right]
+   to a queue and visits the left first. l2 is built from this
+   traversal, so the order decides which heaps falsify -- and measured
+   directly, upstream's stated answer
+     (0, None, (0, (0, None, None), (1, None, None)))
+   is NOT a counterexample under left-first, while the mirror this port
+   used to return is NOT one under right-first. They are different
+   properties with different minima, so scoring a left-first port
+   against upstream's string was meaningless. *)
 let heap_to_list h =
-  let rec go acc stack =
-    match stack with
-    | [] -> List.rev acc
-    | Heap (n, l, r) :: hs ->
-      go (n :: acc) (List.filter_opt [ l; r ] @ hs)
-  in
-  go [] [ h ]
+  let out = ref [] in
+  let stack = ref [ Some h ] in
+  while not (List.is_empty !stack) do
+    match !stack with
+    | [] -> ()
+    | top :: rest ->
+      stack := rest;
+      (match top with
+       | None -> ()
+       | Some (Heap (n, l, r)) ->
+         out := n :: !out;
+         stack := r :: l :: !stack)
+  done;
+  List.rev !out
 
 (* The bug under test: this merge is not heap-correct. *)
 let rec merge_heaps left right =
