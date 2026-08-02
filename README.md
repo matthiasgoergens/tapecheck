@@ -144,6 +144,16 @@ only on the misaligned minority. It reaches the canonical simplest
 example more often on shape-changing (`bind`/union) generators. See
 [design/realign-bench-results.txt](design/realign-bench-results.txt).
 
+`?report` (default `` `Summary ``) controls what every call prints to
+stdout: one line giving cases tried, valid, discarded and failing, plus
+any health-check warnings. Pass `` `Silent `` to turn it off. Worth
+knowing before you wire tapecheck into a large suite — the default is
+per *call*, so a 47-property suite prints 47 lines:
+
+```ocaml
+Tape_test.run_exn ~report:`Silent ~f:(fun t -> ...) (module My_type)
+```
+
 `Tape_engine.run` is the lower-level entry point; `?domains:n`
 evaluates generation cases and shrink proposals in parallel (worker
 pool). Accepted-edit sequences and results are identical to the

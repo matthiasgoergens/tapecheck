@@ -322,6 +322,28 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     | `Full -> Stdlib.print_string (Tape_engine.stats_to_string_hum stats)
   in
   let test v = Result.is_ok (f v) in
+  (* tapecheck#1, the two paths the engine's run loop never sees.
+     Neither [?regressions] nor [?examples] goes through
+     [Tape_engine.run], so a failure found by either returned [Error]
+     while the summary line said "0 cases (0 valid, 0 discarded, 0
+     failing)" -- the return value and the report contradicting each
+     other, which is the whole subject of the issue.
+
+     Whether a user-supplied example is a "case" was left open as a
+     design question, on the grounds that neither runs a GENERATED
+     case, so 0 is arguably honest. Settled the other way, because the
+     invariant being broken is not "generated cases are counted" but "a
+     returned failure is never reported as 0 failing" -- and that one
+     does not care where the value came from. A user handed it over, it
+     ran, and it failed.
+
+     [Invalid_example] counts as a discard, matching what the engine
+     does with an [assume] that rejects a generated case. *)
+  let count_verdict : (unit, e) Result.t -> unit = function
+    | Ok () -> stats.Tape_engine.cases_valid <- stats.Tape_engine.cases_valid + 1
+    | Error _ ->
+      stats.Tape_engine.cases_failed <- stats.Tape_engine.cases_failed + 1
+  in
   (* Persisted failures replay first: they are the cheapest and the
      most likely to fail again. *)
   (* Replay EVERY regression entry before deciding anything: a real
@@ -347,6 +369,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
              Tape_engine.replay_image_and_apply M.quickcheck_generator
                ~size image ~f
            in
+           count_verdict verdict;
            match verdict with
            | Error e -> Some (Error (value, e))
            | Ok () ->
@@ -375,8 +398,16 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
   let example_failure =
     List.find_map examples ~f:(fun v ->
       match f v with
-      | Ok () -> None
-      | Error e -> Some (Error (v, e)))
+      | Ok () as ok ->
+        count_verdict ok;
+        None
+      | Error e as err ->
+        count_verdict err;
+        Some (Error (v, e))
+      | exception Tape_stats.Invalid_example ->
+        stats.Tape_engine.cases_invalid
+        <- stats.Tape_engine.cases_invalid + 1;
+        None)
   in
   match example_failure with
   | Some err -> err

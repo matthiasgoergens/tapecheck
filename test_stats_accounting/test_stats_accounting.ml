@@ -18,7 +18,12 @@
    which is the point -- a counter that is wrong in the same way in both
    places would otherwise agree with itself. *)
 open Base
+open Base_quickcheck.Export
 module G = Base_quickcheck.Generator
+
+module Int_t = struct
+  type t = int [@@deriving quickcheck, sexp_of]
+end
 
 let failures = ref 0
 
@@ -217,6 +222,62 @@ let () =
   let cases1, st1 = pooled_counts ~domains:1 ~test:(fun _ -> true) () in
   check "control: domains:1 counts its cases too"
     ~engine:st1.Tape_engine.cases_valid ~actual:cases1;
+
+  (* Issue #1's last two paths: ?examples and ?regressions. Neither
+     enters the engine's run loop, so before this a failure found by
+     either returned Error while the summary said "0 cases ... 0
+     failing" -- the same contradiction the sweep above guards for
+     generated cases, on the two entry points the sweep cannot reach.
+
+     This was left open as a design question ("neither runs a GENERATED
+     case, so 0 is arguably honest"). Settled by noticing the invariant
+     at stake is not about provenance: a returned failure must never be
+     reported as 0 failing, whoever supplied the value. *)
+  Stdio.printf "\n  issue #1: ?examples and ?regressions are counted too\n";
+
+  (* All three examples pass. *)
+  let st_ok = Tape_engine.no_stats () in
+  let (_ : (unit, int * Error.t) Result.t) =
+    Tape_test.result
+      ~f:(fun v -> if v > 1_000_000 then Or_error.error_string "big" else Ok ())
+      ~examples:[ 1; 2; 3 ] ~report:`Silent ~stats:st_ok
+      ~config:{ Base_quickcheck.Test.default_config with test_count = 1 }
+      (module Int_t)
+  in
+  if st_ok.Tape_engine.cases_valid >= 3 then
+    Stdio.printf "  ok   %-44s %d valid (>= the 3 examples)\n"
+      "examples: passing ones are counted" st_ok.Tape_engine.cases_valid
+  else begin
+    Int.incr failures;
+    Stdio.printf "  FAIL %-44s %d valid, expected at least 3\n"
+      "examples: passing ones are counted" st_ok.Tape_engine.cases_valid
+  end;
+
+  (* One example fails. The summary must not say "0 failing" while the
+     call returns Error -- that is the whole issue. *)
+  let st_bad = Tape_engine.no_stats () in
+  let res =
+    Tape_test.result
+      ~f:(fun v -> if v = 7 then Or_error.error_string "boom" else Ok ())
+      ~examples:[ 1; 7; 3 ] ~report:`Silent ~stats:st_bad
+      ~config:{ Base_quickcheck.Test.default_config with test_count = 1 }
+      (module Int_t)
+  in
+  let returned_failure = Result.is_error res in
+  let says_zero_failing =
+    String.is_substring
+      (Tape_engine.stats_summary_line st_bad)
+      ~substring:"0 failing"
+  in
+  if returned_failure && not says_zero_failing then
+    Stdio.printf "  ok   %-44s %s\n" "examples: a failing one is counted"
+      (Tape_engine.stats_summary_line st_bad)
+  else begin
+    Int.incr failures;
+    Stdio.printf "  FAIL %-44s returned_failure=%b, summary=%s\n"
+      "examples: a failing one is counted" returned_failure
+      (Tape_engine.stats_summary_line st_bad)
+  end;
 
   Stdio.printf "\n";
   if !failures > 0 then begin
