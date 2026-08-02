@@ -1,0 +1,4 @@
+(test
+ (name test_poison_lists)
+ (libraries base stdio base_quickcheck splittable_random tape tape_engine
+   test_support))
