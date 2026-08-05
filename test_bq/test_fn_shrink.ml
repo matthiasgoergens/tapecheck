@@ -163,7 +163,7 @@ let () =
    | None -> check "serial/v1 readable" false)
 
 let () =
-  if !failures = 0 then Stdlib.print_endline "all fn-shrink tests passed"
+  if !failures = 0 then Stdlib.print_endline "test_fn_shrink: all passed"
   else begin
     Stdlib.Printf.printf "%d fn-shrink test(s) FAILED\n" !failures;
     Stdlib.exit 1

@@ -9,7 +9,7 @@ thick with mode annotations (`CORE-BUILD.md`), so this is not optional.
 ```
 opam exec --switch=5.2.0+ox -- dune build --profile oxcaml          # clean
 opam exec --switch=5.2.0+ox -- dune exec --profile oxcaml \
-    test_regression/regression_guard.exe                            # all guards passed
+    test_regression/regression_guard.exe                            # regression_guard: all guards passed
 ```
 
 Every benchmark reproduces exactly: 38 / 22 / 178 / 173 / 90 / 56,

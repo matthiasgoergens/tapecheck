@@ -164,4 +164,4 @@ let () =
   in
   check "Both reaches the B-shape minimum on some seed" both_reached_b;
 
-  Stdlib.print_endline "all shrink tests passed"
+  Stdlib.print_endline "test_shrink: all passed"

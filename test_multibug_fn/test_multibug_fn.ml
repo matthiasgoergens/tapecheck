@@ -47,4 +47,4 @@ let () =
      Test_support.report "fr_minimal still exhibits the failure"
        (from_report > 100)
        (Printf.sprintf "f 0 = %d (needs > 100)" from_report));
-  Test_support.finish ()
+  Test_support.finish ~name:"test_multibug_fn" ()

@@ -68,10 +68,10 @@ let expect_raise ~name ?(setup = fun () -> ()) f =
   let raised = try f (); false with _ -> true in
   report name raised (if raised then "raised as expected" else "did NOT raise")
 
-let finish () =
+let finish ~name () =
   Stdio.printf "\n";
   if !failures > 0 then begin
-    Stdio.printf "%d assertion(s) failed\n" !failures;
+    Stdio.printf "%s: %d assertion(s) failed\n" name !failures;
     Stdlib.exit 1
   end
-  else Stdio.printf "all assertions passed\n"
+  else Stdio.printf "%s: all assertions passed\n" name

@@ -71,4 +71,4 @@ let () =
   Test_support.report "correlation reachable through Tape_test"
     (!found * 100 / runs >= 80)
     (Printf.sprintf "found %d/%d (need 80%%)" !found runs);
-  Test_support.finish ()
+  Test_support.finish ~name:"test_correlation" ()

@@ -56,7 +56,7 @@ let () =
   let out3 = Tape.finish tape in
   check "untaped states record nothing" (Array.length out3.Tape.choices = 0);
 
-  Stdlib.print_endline "all round-trip tests passed";
+  Stdlib.print_endline "test_roundtrip: all passed";
   Stdlib.Printf.printf "tape length for one point: %d choices\n"
     (Array.length out1.Tape.choices);
   Stdlib.Printf.printf "sample value: %s\n"
