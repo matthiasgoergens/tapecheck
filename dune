@@ -1,8 +1,12 @@
 ; vendor-study holds throwaway upstream clones for reading only.
+(dirs :standard \ vendor-study)
+
 ; bonsai-tapecheck-hunt is a self-contained consumer workspace (own
 ; dune-project, own pins of the splittable_random/base_quickcheck shims);
-; building it from here would clash with vendor/'s library names.
-(dirs :standard \ vendor-study \ bonsai-tapecheck-hunt)
+; building it from here would clash with vendor/'s library names. It must
+; be data_only, not just excluded from (dirs): its nested dune-project
+; would otherwise still pull it into this build as a second project.
+(data_only_dirs bonsai-tapecheck-hunt)
 
 ; Fail fast on profile/compiler mismatches: an OxCaml switch without
 ; --profile oxcaml would miscompile the ppx pieces against a divergent
