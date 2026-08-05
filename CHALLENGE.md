@@ -178,10 +178,29 @@ the suite now uses. Worth noting that Hypothesis's `st.deferred` has no
 size knob and is bounded by their buffer limit instead — the more robust
 arrangement for a recursive generator.
 
+## binheap, and one more measurement error
+
+`binheap` is the eleventh upstream case, a GENERATION challenge rather
+than a shrinking one, and is implemented in `challenge/challenge.ml`.
+Measured at n=100 a side, same seeds:
+
+| | exact | 95% CI | <= optimal size | distinct | mean evaluations |
+|---|---|---|---|---|---|
+| Hypothesis 6.164.0 | 65/100 | 55.3-73.6 | 78/100 | 4 | 169 |
+| tapecheck | 6/100 | 2.8-12.5 | 30/100 | 54 | 1195 |
+
+An earlier version of this comparison read 27/100 exact [19.3-36.4] for
+tapecheck. The generator used 3:1 empty:node, jqwik parity, against the
+Hypothesis baseline's 1:1 (`st.none() | node`), and the heavier leaf
+weight puts small heaps much denser in the input distribution. Matched
+at 1:1 the gap is wider than reported, on cost as well as quality. Same
+flattering-mismatch class as the budget bug above, one layer down.
+
 ## Not yet implemented
 
-`binheap`, `coupling`, `deletion` and `nestedlists` have no Hypothesis
-implementation in the upstream repo and are unstarted here.
+`coupling`, `deletion` and `nestedlists` are implemented in
+`challenge/` but have no Hypothesis implementation in the upstream
+repo.
 
 Contributing an OCaml entry upstream is an outward-facing action and is
 not done.

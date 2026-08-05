@@ -278,8 +278,13 @@ and render_heap_opt = function
    unconstrained version, tapecheck AND Hypothesis both scored 0/100
    against upstream's string -- which says nothing about either engine.
 
-   Frequency 3:1 for empty:node, as jqwik has it, with a depth cap so
-   termination does not rely on the coin flips.
+   Frequency 1:1 for empty:node, matching the Hypothesis baseline's
+   st.none() | node, with a depth cap so termination does not rely on
+   the coin flips. The 3:1 this had before was jqwik parity, and it
+   flattered the exact-match rate against the Hypothesis column about
+   fourfold: 27/100 measured at 3:1 against 6/100 at the matched 1:1
+   (n=100, same seeds). jqwik is not the column this suite reports
+   against.
 
    int_uniform_inclusive, NOT int_inclusive, and the difference decides
    the result. int_inclusive is the non-uniform generator: it draws a
@@ -295,7 +300,7 @@ let rec heap_gen_opt ~min_key ~depth =
   if depth <= 0 then G.return None
   else
     G.weighted_union
-      [ (3.0, G.return None)
+      [ (1.0, G.return None)
       ; ( 1.0
         , G.bind (G.int_uniform_inclusive min_key (min_key + 1000))
             ~f:(fun head ->
