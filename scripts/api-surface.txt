@@ -8,8 +8,12 @@ check_generator_determinism
 choice_at_target
 clamp64
 compare_origin
+consumed_in_same_stream
 correlate_image
 create
+cr_hits
+cr_probe_budget
+cr_probes
 current
 data_too_large_choices
 default_attempts_per_choice
@@ -37,10 +41,14 @@ initial_choices
 key_to_filename
 lad_successes
 large_base_example_choices
+last_computed_repair
 last_duplicate_stats
 last_greedy_cost
+last_length_repair
 last_pass_costs
 last_shape
+length_repair_hits
+length_repair_tries
 load
 load_sized
 max_examples_per_choice
