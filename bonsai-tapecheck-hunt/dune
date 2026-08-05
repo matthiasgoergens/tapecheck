@@ -1,0 +1,4 @@
+; The pkgs/ tree holds the opam pin packages (splittable_random shim,
+; base_quickcheck). They are built by opam into the switch, not as part
+; of this workspace.
+(dirs :standard \ pkgs)

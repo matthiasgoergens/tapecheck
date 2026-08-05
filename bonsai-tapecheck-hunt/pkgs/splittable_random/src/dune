@@ -1,0 +1,15 @@
+; The tape shim as an opam-level replacement for upstream
+; splittable_random: the PATCHED upstream implementation (sr_real.ml,
+; carrying the Intercept seam), the Splittable_random shim module that
+; re-exports it and adds For_tape, and the Tape choice-tape core --
+; all in one (wrapped false) library so that `(libraries
+; splittable_random)` exposes modules Splittable_random, Sr_real and
+; Tape at top level.
+(library
+ (name splittable_random)
+ (public_name splittable_random)
+ (wrapped false)
+ (modules sr_real splittable_random tape)
+ (libraries base)
+ (preprocess
+  (pps ppx_sexp_message)))

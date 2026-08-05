@@ -1,0 +1,3 @@
+(library
+ (name trampoline)
+ (libraries core core_kernel.nonempty_list))
