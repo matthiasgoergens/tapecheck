@@ -1,0 +1,6 @@
+(lang dune 3.11)
+
+(name base_quickcheck)
+
+(package
+ (name base_quickcheck))

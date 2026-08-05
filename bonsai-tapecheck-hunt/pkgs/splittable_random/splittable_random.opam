@@ -1,0 +1,19 @@
+opam-version: "2.0"
+version: "v0.17.0"
+synopsis: "PRNG that can be split into independent streams (tape-shim build)"
+description: """
+tapecheck shim: upstream splittable_random v0.17 plus the Intercept
+seam and the Tape choice-tape core, installed as an opam-level
+replacement so all reverse dependencies rebuild against it."""
+maintainer: "Jane Street developers"
+authors: ["Jane Street Group, LLC"]
+license: "MIT"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml"            {>= "5.1.0"}
+  "base"             {>= "v0.17" & < "v0.18~"}
+  "ppx_sexp_message" {>= "v0.17" & < "v0.18~"}
+  "dune"             {>= "3.11.0"}
+]
