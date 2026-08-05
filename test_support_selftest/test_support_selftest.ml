@@ -81,4 +81,4 @@ let () =
     (setup_threw && not !body_ran)
     (Printf.sprintf "setup propagated=%b body_ran=%b" setup_threw !body_ran);
 
-  T.finish ()
+  T.finish ~name:"test_support_selftest" ()

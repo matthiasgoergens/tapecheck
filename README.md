@@ -236,6 +236,21 @@ dune test
 (No opam install of splittable_random or base_quickcheck is needed or
 used: the workspace's vendored copies shadow them; see Vendoring.)
 
+Building and testing need the 5.3.0 switch created above: on a switch
+missing `stdio`/`ppx_sexp_conv` and the other ppx deps, most test
+directories fail to build and dune silently runs only what remains.
+Also, plain `dune test`/`dune runtest` can exit 0 without running
+anything, because dune caches test actions and replays a cached success
+instead of re-executing. The reliable way to actually run the suite is
+
+```
+dune runtest --force
+```
+
+and each test executable prints a success line naming itself (e.g.
+`test_tape: all passed`), so a partial run cannot be mistaken for a
+full-suite green.
+
 The engine also builds and runs under OxCaml, bit-identically:
 
 ```

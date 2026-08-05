@@ -189,4 +189,4 @@ let () =
   check "too_slow: recorded as fired"
     (List.mem health10.Tape_health.fired Tape_health.Too_slow ~equal:Tape_health.equal);
 
-  Stdlib.print_endline "all stats tests passed"
+  Stdlib.print_endline "test_stats: all passed"

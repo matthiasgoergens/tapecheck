@@ -67,4 +67,4 @@ let () =
        false
        ("reported a counterexample from a discarded input: "
         ^ String.prefix msg 90));
-  Test_support.finish ()
+  Test_support.finish ~name:"test_resume_assume" ()

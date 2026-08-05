@@ -223,4 +223,4 @@ let () =
   check "converged run's output does not mention truncation"
     (not (String.is_substring printed_converged ~substring:"TRUNCATED"));
 
-  Stdlib.print_endline "all resume tests passed"
+  Stdlib.print_endline "test_resume: all passed"

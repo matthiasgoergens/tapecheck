@@ -130,4 +130,4 @@ let () =
   | Ok _ -> failwith "corrupt regression line did not fail loudly");
   Stdlib.Sys.remove reg_file;
 
-  Stdlib.print_endline "all wrapper tests passed"
+  Stdlib.print_endline "test_wrapper: all passed"

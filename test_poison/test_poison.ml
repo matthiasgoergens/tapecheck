@@ -210,4 +210,4 @@ let () =
       "\n  NOTE: %d/%d beats the recorded 10/34. If a shrink pass changed,\n\
       \        raise the floor and update the header measurement.\n"
       ok total;
-  Test_support.finish ()
+  Test_support.finish ~name:"test_poison" ()

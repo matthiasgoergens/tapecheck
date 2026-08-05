@@ -355,4 +355,4 @@ let () =
       !failures;
     Stdlib.exit 1
   end
-  else Stdio.printf "all guards passed\n"
+  else Stdio.printf "regression_guard: all guards passed\n"

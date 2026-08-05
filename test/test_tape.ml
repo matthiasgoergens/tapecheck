@@ -119,4 +119,4 @@ let () =
   let big = [| Tape.Integer { value = 90L; lo = 0L; hi = 100L } |] in
   check "closer to target is smaller" (Tape.compare_shortlex small big < 0);
 
-  print_endline "all tape tests passed"
+  print_endline "test_tape: all passed"
