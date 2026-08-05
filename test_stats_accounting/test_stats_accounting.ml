@@ -93,6 +93,20 @@ let () =
     !n gen_calls determinism_replays
     (!n - gen_calls - determinism_replays);
 
+  (* Issue #7: the `Full report's three-way time split printed
+     [shrink_time] but nothing ever assigned it, so every report read
+     "shrink 0.0000s". The run above shrank (its property is far from
+     trivial at the shrink target), so its shrink time must be
+     positive. *)
+  if Float.(st.Tape_engine.shrink_time > 0.) then
+    Stdio.printf "  ok   %-44s %.4fs\n" "failing run: shrink_time > 0"
+      st.Tape_engine.shrink_time
+  else begin
+    Int.incr failures;
+    Stdio.printf "  FAIL %-44s %.4fs (a shrink happened; 0 is the bug)\n"
+      "failing run: shrink_time > 0" st.Tape_engine.shrink_time
+  end;
+
   (* 3. resume: generation is one confirmation replay, then shrinking. *)
   (match result with
    | Tape_engine.Failed { image; _ } ->
@@ -278,6 +292,49 @@ let () =
       "examples: a failing one is counted" returned_failure
       (Tape_engine.stats_summary_line st_bad)
   end;
+
+  (* Issue #6: pooled SHRINK evaluations must be counted too. The pooled
+     arm of [attempt_batch] dispatched proposals to worker domains and
+     bumped only [attempts] -- [replays]/[tests]/[misaligns] stayed at
+     zero while the shrink ran, so the `Full report's "shrink calls"
+     line read 0 on exactly the runs doing the most shrink work.
+     Workers cannot touch [stats] without racing (see [pool_payload] in
+     the engine), so each proposal's accounting now rides back as data
+     and the main domain folds it in.
+
+     The invariant is the one the sequential path already satisfies:
+     with the default realign ([`Consume], exactly one replay per
+     proposal), [replays] equals [attempts]. Asserted at domains:4 with
+     a domains:1 control, so a dead instrument cannot read as "pooled
+     is no worse than sequential". *)
+  Stdio.printf "\n  issue #6: pooled shrink evaluations are counted\n";
+  let shrink_stats ~domains =
+    let st = Tape_engine.no_stats () in
+    match
+      Tape_engine.run gen ~test:prop ~seed:7 ~count:200 ~size:10 ~stats:st
+        ~domains
+    with
+    | Tape_engine.Passed _ -> failwith "setup: expected a failure to shrink"
+    | Tape_engine.Failed { attempts; _ } -> (st, attempts)
+  in
+  let check_replays ~domains =
+    let st, attempts = shrink_stats ~domains in
+    check
+      (Printf.sprintf "domains:%d: replays = attempts" domains)
+      ~engine:st.Tape_engine.replays ~actual:attempts;
+    if st.Tape_engine.tests > 0 then
+      Stdio.printf "  ok   %-44s %d\n"
+        (Printf.sprintf "domains:%d: tests behind the replays counted" domains)
+        st.Tape_engine.tests
+    else begin
+      Int.incr failures;
+      Stdio.printf "  FAIL %-44s %d (replays ran tests; 0 is the bug)\n"
+        (Printf.sprintf "domains:%d: tests behind the replays counted" domains)
+        st.Tape_engine.tests
+    end
+  in
+  check_replays ~domains:4;
+  check_replays ~domains:1;
 
   Stdio.printf "\n";
   if !failures > 0 then begin

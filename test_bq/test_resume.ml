@@ -223,4 +223,73 @@ let () =
   check "converged run's output does not mention truncation"
     (not (String.is_substring printed_converged ~substring:"TRUNCATED"));
 
+  (* --- A hand-edited tape with crossed float bounds is odd data, not a
+     crash (issue #11) ---
+
+     [resume] trusts the image it is handed, and a hand-edited tape can
+     carry [Float { lo > hi }]: deserialization accepts it (a
+     well-formed record), but the engine's shrink-target computation
+     used [Float.clamp_exn], which asserts [min <= max] -- so resuming
+     such a tape died with [Assert_failure] inside [finish_from_failure]
+     instead of shrinking. The clamp is now total, as [clamp_int64]
+     always was.
+
+     The crossed tape is built by editing the bounds of a REAL recorded
+     tape, so the confirmation replay stays aligned and actually reaches
+     the crash site; a from-scratch one-choice tape just overruns. *)
+  let float_gen = G.float_inclusive 0. 10. in
+  let float_test f = Float.( < ) f 5. in
+  (match
+     Tape_engine.run float_gen ~test:float_test ~seed:3 ~count:200 ~size:10
+   with
+   | Tape_engine.Passed _ -> failwith "setup: expected a float failure"
+   | Tape_engine.Failed { image; _ } ->
+     let crossed =
+       Tape.image_of_main
+         (Array.map image.Tape.main ~f:(function
+            | Tape.Float { value; _ } -> Tape.Float { value; lo = 5.; hi = 2. }
+            | c -> c))
+     in
+     (match
+        Tape_engine.resume float_gen ~test:float_test ~size:10 ~budget:200
+          crossed
+      with
+      | exception Assert_failure _ ->
+        check "resume of a crossed-bounds tape: no Assert_failure" false
+      | Tape_engine.Passed _ ->
+        (* The replayed tape still fails the property, so resume must
+           not report a pass. *)
+        check "resume of a crossed-bounds tape: still fails" false
+      | Tape_engine.Failed _ ->
+        check "resume of a crossed-bounds tape: shrinks instead of crashing"
+          true));
+
+  (* --- A regression-entry failure prints the report too (issue #11) ---
+
+     [Tape_test.result] returned a regression-entry failure before
+     reaching [print_report], so the one failure mode with the cheapest
+     reproducer was also the one with no summary line. Routed through
+     the same report path now; asserted on the actual printed output,
+     not the structured result, because the bug IS the missing print. *)
+  let regressions_path = "test_resume_issue11_regressions.txt" in
+  (match converged_run with
+   | Tape_engine.Passed _ -> assert false
+   | Tape_engine.Failed { image; _ } ->
+     Tape_test.Regressions.append regressions_path ~image ~size:10
+       ~comment:"issue 11 reproducer";
+     let printed_regression =
+       capture_stdout (fun () ->
+         match
+           Tape_test.result
+             ~f:(fun v -> if test v then Ok () else Error "too big")
+             ~regressions:regressions_path
+             (module M : Base_quickcheck.Test.S with type t = int)
+         with
+         | Ok () -> failwith "expected the regression entry to fail"
+         | Error _ -> ())
+     in
+     Stdlib.Sys.remove regressions_path;
+     check "regression-entry failure prints the summary line"
+       (String.is_substring printed_regression ~substring:"tapecheck:"));
+
   Stdlib.print_endline "all resume tests passed"
