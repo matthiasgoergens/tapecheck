@@ -34,7 +34,31 @@ let () =
   Stdio.printf "\n  stops early on a 2-value space:   %b\n" stops_tiny;
   Stdio.printf "  stops early on a 6-value space:   %b\n" stops_small;
   Stdio.printf "  does NOT truncate a huge space:   %b\n" runs_big;
-  if not (stops_tiny && stops_small && runs_big) then begin
+
+  (* Issue #11: an early-stopped run must report the cases it actually
+     RAN, not ~count. Before the fix, [G.bool] with ~count:200 stopped
+     after 66 cases and still returned [Passed {cases = 200}] while the
+     summary line said 66 valid -- the run's own outputs contradicting
+     each other. *)
+  let n = ref 0 in
+  let st = Tape_engine.no_stats () in
+  let honest =
+    match
+      Tape_engine.run G.bool
+        ~test:(fun _ ->
+          Int.incr n;
+          true)
+        ~seed:1 ~count:200 ~size:10 ~stats:st
+    with
+    | Tape_engine.Failed _ -> false
+    | Tape_engine.Passed { cases } ->
+      Stdio.printf
+        "     (returned {cases = %d}; actually ran %d; stats say %d valid)\n"
+        cases !n st.Tape_engine.cases_valid;
+      cases = !n && cases = st.Tape_engine.cases_valid
+  in
+  Stdio.printf "  early stop reports cases RUN, not ~count: %b\n" honest;
+  if not (stops_tiny && stops_small && runs_big && honest) then begin
     Stdio.printf "\nFAIL\n";
     Stdlib.exit 1
   end;

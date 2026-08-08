@@ -391,7 +391,12 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
             ~lines:(stale : int list)]
   in
   match regression_failure with
-  | Some err -> err
+  | Some err ->
+    (* Route through the same report path as a fresh-generation failure:
+       without this a regression-entry failure was the one result that
+       printed no summary line at all (tapecheck#11). *)
+    print_report ();
+    err
   | None ->
     finish_run
       @@
