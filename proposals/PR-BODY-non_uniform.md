@@ -73,19 +73,35 @@ the `weighted_union` list so `hi` needs a large selector float — does
 **not** work, and I measured that rather than assuming it. Length is
 compared before the selector ever is.
 
-## Distribution is unchanged, with one caveat I should state exactly
+## Distribution is unchanged
 
-The selector is independent of the value, so this is a reassociation of
-the same three-way choice — but "identical by construction" would be
-overstating it, and I would rather be precise. `weighted_union` resolves
-the branch with a `First_greater_than_or_equal_to` search over the
-cumulative weights, so a selector of *exactly* 0.05 takes the `lo`
-branch, where `p < 0.05` above takes the general one; the same applies
-at exactly 0.95. That is two grid points out of 2^53, so the two
-distributions agree everywhere it is possible to measure them, but they
-are not equal pointwise.
+Not "by construction" — counted. `unit_float` returns `k / 2^53` for
+`k` in `[0, 2^53)`, so the selector has a known finite grid and the
+branch split can just be enumerated exactly. Both formulations give:
 
-Verified rather than asserted, over 400 000 draws of `Generator.int`:
+| branch | selectors | |
+|---|---|---|
+| `lo` | 450359962737050 | |
+| `hi` | 450359962737050 | |
+| general | 8106479329266892 | |
+
+The same three numbers either way. (Neither is exactly 5/5/90: `0.05`
+as a binary64 is a shade over, so the true split is 0.0500000000000000444
+/ 0.0500000000000000444 / 0.8999999999999999. Stock is wrong by the
+identical amount, since it is the same constant.)
+
+What *does* change is which selector reaches which branch, and on whole
+intervals rather than at the boundaries: stock's cumulative weights are
+`[0.05; 0.10; 1.0]`, so `hi` occupies `(0.05, 0.10]`, where after the
+change it occupies `[0.95, 1)`. That remapping is the point of the
+change rather than a side effect — it is exactly what lets position 0
+impose `lo < general < hi`. I mention it because it is visible to
+anything that *forces* a selector rather than sampling one: a forced
+`1.0` lands on general before and `hi` after. `unit_float` never
+returns `1.0`, so nothing in `base_quickcheck` can see this; a
+replay-based harness that pins float draws can.
+
+Also verified empirically, over 400 000 draws of `Generator.int`:
 
 | | before | after |
 |---|---|---|

@@ -194,7 +194,9 @@ OCaml and OxCaml. `master` and the `oxcaml` branch carry the same
 mode-annotated source (their `non_uniform` is byte-identical); the stock
 releases are separate branches. `src/generator.ml` differs by 783
 changed lines between `master` and `v0.17` — 502 added and 281 removed,
-per `git diff --numstat v0.17 master -- src/generator.ml`. Stating the
+per `git diff --numstat v0.17 master -- src/generator.ml`, with `master`
+at 1a5d1f5 (`v0.18~preview.130.100+614`, 2026-05-15). Pinning the SHA
+because `master` moves and the figure otherwise decays. Stating the
 metric because it is easy to measure something adjacent and conclude the
 figure is stale: adding `src/generator.mli` to the same command gives
 999, and the raw `git diff` output is 1136 lines.

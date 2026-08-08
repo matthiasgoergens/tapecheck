@@ -1,6 +1,6 @@
 --- vendor/base_quickcheck/generator.ml	2026-08-01 11:30:43.462783304 +0800
 +++ /home/matthias/prog/tapecheck-notes/generator-PATCHED.ml	2026-08-01 11:30:43.460783290 +0800
-@@ -365,17 +365,50 @@
+@@ -365,17 +365,59 @@
      create (fun ~size:_ ~random -> Integer.uniform random ~lo ~hi)
    ;;
  
@@ -12,14 +12,23 @@
 -    weighted_union [ 0.05, return lo; 0.05, return hi; 0.9, f lo hi ]
 +    (* EXPERIMENT (tapecheck): tape-friendly reformulation of
 +         weighted_union [ 0.05, return lo; 0.05, return hi; 0.9, f lo hi ]
-+       with the same distribution -- up to two selector values.
++       with an identical branch distribution -- counted, not asserted.
 +
-+       Stock picks the branch with a First_greater_than_or_equal_to
-+       binary search over the cumulative weights, so a selector of
-+       EXACTLY 0.05 takes the lo branch, where [p < 0.05] below takes
-+       the general one; likewise at exactly 0.95. Two grid points out of
-+       2^53, so the distributions agree everywhere it is possible to
-+       measure, but "identical by construction" would be false.
++       Over the whole 2^53-point selector grid the two formulations put
++       exactly the same number of selectors in each branch: 450359962737050
++       to lo, 450359962737050 to hi, 8106479329266892 to general. (Neither
++       is exactly 5/5/90 -- 0.05 as a binary64 is a shade over -- but both
++       are wrong by the same amount.)
++
++       What DOES change is which selector reaches which branch, and on
++       whole intervals rather than at the edges: stock's cumulative
++       weights are [0.05; 0.10; 1.0], so hi occupies (0.05, 0.10], while
++       here it occupies [0.95, 1). That remapping is the entire point --
++       it is what makes position 0 order lo < general < hi -- so it is a
++       feature, not a caveat. It is worth stating only because it means
++       a harness that FORCES a selector value can see a different branch:
++       a forced 1.0 takes general under stock and hi here. The ordinary
++       sampler never returns 1.0, so this is unreachable without one.
 +
 +       Two things were wrong with the original for a tape shrinker, and
 +       only fixing both helps:
