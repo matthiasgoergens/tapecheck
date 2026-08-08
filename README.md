@@ -179,9 +179,11 @@ base_quickcheck compiles against the shim unmodified; that is the
 entire integration. Details and design history:
 [design/choice-tape-for-base-quickcheck.md](design/choice-tape-for-base-quickcheck.md).
 
-Known limitation: `Generator.fn` splits the random state; split-off
-streams are untaped, so generated functions do not shrink (Hypothesis
-has the same limitation).
+`Generator.fn` splits the random state. Split-off streams used to be
+untaped, so generated functions did not shrink at all; stream-keyed
+tapes fixed that, and `test_bq/test_fn_shrink.ml` pins it — `fn/point`
+reaches `f(0)=100` in 16 attempts, `fn/sum` reaches `f(1)+f(2)=100` in
+22, and none of the 40 orphan seeds gets stuck.
 
 ## Edge-case-biased generation
 
@@ -193,7 +195,7 @@ towards in the first place — an exact bound, zero, or (famously,
 one number being an exact multiple of another. This is a direct port
 of [Python Hypothesis](https://hypothesis.readthedocs.io/)'s
 Conjecture provider
-([`draw_integer`/`draw_float`](outreach/hypothesis-sources/providers_hypothesis.py)):
+([`draw_integer`/`draw_float`](https://github.com/HypothesisWorks/hypothesis/blob/master/hypothesis-python/src/hypothesis/internal/conjecture/providers.py)):
 a fresh draw (nothing recorded on the tape yet to replay) rolls a
 biased distribution instead of a plain uniform one — a boundary
 candidate (the range's ends, one step in from each, the shrink target)

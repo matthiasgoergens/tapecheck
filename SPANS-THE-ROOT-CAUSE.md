@@ -117,7 +117,8 @@ measurement, leaving two.
   without any cooperation from generator authors. It does not work, and
   the reason is decisive rather than a matter of tuning:
   `Splittable_random.split` appears **exactly once in all of
-  base_quickcheck's `generator.ml`** (line 87), inside `fn` — the
+  base_quickcheck's `generator.ml`** (`vendor/base_quickcheck/generator.ml:26`,
+  re-checked 2026-08-08), inside `fn` — the
   FUNCTION generator — where it gives a function's body an independent
   stream so that repeated calls with the same argument stay
   deterministic. `perturb` serves the same purpose for arguments.
@@ -301,17 +302,23 @@ Three details of theirs are load-bearing and worth keeping when porting:
 - **Every position, not just one.** First and last are the easy cases.
 
 Ported to `test_poison/`. Same three sizes (2, 5, 10) and two seeds as
-theirs, hence the same 34 leaf positions. Measured 2026-08-01:
+theirs, hence the same 34 leaf positions. First measured 2026-08-01,
+re-measured 2026-08-08:
 
 | | positions fully reduced |
 |---|---|
 | Hypothesis 6.152.9 (their own test) | 34/34 |
-| tapecheck | 10/34 |
+| tapecheck | 12/34 (10/34 on 2026-08-01) |
 
 The failure has a shape, which is what makes it evidence rather than a
-score. Positions 0 and 1 reduce fully; from position 2 onward the
-surviving tree grows monotonically with how deep the poison sits in the
-tape. For the 10-leaf tree: 4, 5, 6, 8, 10, 10, 10, 10 leaves left.
+score. The ENDS reduce and the middle does not: for the 10-leaf tree
+only positions 0 and 9 come out, and between them the surviving tree
+grows monotonically with how deep the poison sits in the tape — 3, 4,
+5, 6, 8, 10, 10, 10 leaves left at positions 1 through 8. The 5-leaf
+tree reduces at 0, 1 and 4 and sticks at 4 and 5 leaves in the middle.
+(The 2026-08-01 measurement recorded positions 0 and 1 reducing, with
+4, 5, 6, 8, 10, 10, 10, 10 left; the extra two positions in the 12/34
+total are the last leaf of each 10-leaf tree.)
 
 The mechanism is legible. Poison early in the tape can be isolated by
 deleting what *follows* it, and suffix deletion is a pass we have.

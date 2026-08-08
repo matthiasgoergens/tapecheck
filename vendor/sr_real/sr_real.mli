@@ -86,11 +86,12 @@ module Intercept : sig
     }
 end
 
-(** [with_intercept t hooks] is a state sharing [t]'s underlying PRNG whose
-    draws consult [hooks]. [copy] preserves hooks; [split] produces
-    hook-free states (after calling [on_split], so an observer can keep its
-    record aligned); [perturb] calls [on_perturb] before mixing in the
-    salt. *)
+(** [with_intercept t hooks] returns a snapshot copy of [t] whose draws
+    consult [hooks]; [t] itself is unchanged. [copy] preserves hooks;
+    [split] calls [on_split] and installs whatever hooks it returns on the
+    freshly split state ([None] leaves the split state hook-free);
+    [perturb] calls [on_perturb] before mixing in the salt and installs
+    whatever hooks it returns ([None] keeps the current hooks). *)
 val with_intercept : t -> Intercept.t -> t
 
 module State : sig
