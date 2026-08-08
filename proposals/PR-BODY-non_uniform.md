@@ -48,13 +48,18 @@ branches lo / general / hi:
 
 ```ocaml
 let non_uniform f lo hi =
+  let general = f lo hi in
   let selector =
     create (fun ~size:_ ~random -> Splittable_random.float random ~lo:0. ~hi:1.)
   in
   bind selector ~f:(fun p ->
-    map (f lo hi) ~f:(fun v ->
+    map general ~f:(fun v ->
       if Float.( < ) p 0.05 then lo else if Float.( < ) p 0.95 then v else hi))
 ```
+
+`general` is bound outside the `bind` deliberately: `f lo hi` is a
+generator, and building it once when `non_uniform` is applied rather
+than once per draw is what keeps the claim about allocation below true.
 
 Both properties are needed and neither alone suffices:
 
@@ -68,10 +73,17 @@ the `weighted_union` list so `hi` needs a large selector float — does
 **not** work, and I measured that rather than assuming it. Length is
 compared before the selector ever is.
 
-## Distribution is unchanged
+## Distribution is unchanged, with one caveat I should state exactly
 
-By construction: the selector is independent of the value, so this is a
-pure reassociation of the same three-way choice.
+The selector is independent of the value, so this is a reassociation of
+the same three-way choice — but "identical by construction" would be
+overstating it, and I would rather be precise. `weighted_union` resolves
+the branch with a `First_greater_than_or_equal_to` search over the
+cumulative weights, so a selector of *exactly* 0.05 takes the `lo`
+branch, where `p < 0.05` above takes the general one; the same applies
+at exactly 0.95. That is two grid points out of 2^53, so the two
+distributions agree everywhere it is possible to measure them, but they
+are not equal pointwise.
 
 Verified rather than asserted, over 400 000 draws of `Generator.int`:
 
@@ -87,10 +99,18 @@ degrees of freedom. Statistically indistinguishable.
 
 ## Cost
 
-`f lo hi` is now always evaluated, so the 10% of draws that previously
-took a shortcut pay two extra PRNG calls. Nothing else changes: no
-allocation on the fast path, no change to any signature, no change to
-any `.mli`.
+`f lo hi` is now always generated from, so the 10% of draws that
+previously took a shortcut pay two extra PRNG calls. The generator
+itself is still built once per `non_uniform` application, so there is no
+per-draw allocation; no signature changes and no `.mli` changes.
+
+One thing that *does* change, and which "distribution unchanged" can
+hide: every path now draws the selector plus the general value, so for a
+given seed the sequence of draws differs from stock. Anyone pinning a
+fixed seed in `Test.run` and expecting the same concrete cases will see
+different ones. The distribution is preserved; per-seed reproducibility
+across this change is not, in the same way it is not across any change
+to draw structure.
 
 ## Effect
 

@@ -1,6 +1,6 @@
 --- vendor/base_quickcheck/generator.ml	2026-08-01 11:30:43.462783304 +0800
 +++ /home/matthias/prog/tapecheck-notes/generator-PATCHED.ml	2026-08-01 11:30:43.460783290 +0800
-@@ -365,17 +365,42 @@
+@@ -365,17 +365,50 @@
      create (fun ~size:_ ~random -> Integer.uniform random ~lo ~hi)
    ;;
  
@@ -12,7 +12,14 @@
 -    weighted_union [ 0.05, return lo; 0.05, return hi; 0.9, f lo hi ]
 +    (* EXPERIMENT (tapecheck): tape-friendly reformulation of
 +         weighted_union [ 0.05, return lo; 0.05, return hi; 0.9, f lo hi ]
-+       with an IDENTICAL distribution.
++       with the same distribution -- up to two selector values.
++
++       Stock picks the branch with a First_greater_than_or_equal_to
++       binary search over the cumulative weights, so a selector of
++       EXACTLY 0.05 takes the lo branch, where [p < 0.05] below takes
++       the general one; likewise at exactly 0.95. Two grid points out of
++       2^53, so the distributions agree everywhere it is possible to
++       measure, but "identical by construction" would be false.
 +
 +       Two things were wrong with the original for a tape shrinker, and
 +       only fixing both helps:
@@ -30,11 +37,12 @@
 +
 +       Cost to a non-tape user: [f lo hi] is now always evaluated, i.e.
 +       two extra PRNG calls in the 10% of cases that take a shortcut. *)
++    let general = f lo hi in
 +    let selector =
 +      create (fun ~size:_ ~random -> Splittable_random.float random ~lo:0. ~hi:1.)
 +    in
 +    bind selector ~f:(fun p ->
-+      map (f lo hi) ~f:(fun v ->
++      map general ~f:(fun v ->
 +        if Float.( < ) p 0.05 then lo else if Float.( < ) p 0.95 then v else hi))
    ;;
  

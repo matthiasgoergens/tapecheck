@@ -192,8 +192,12 @@ not rediscovered from scratch.
 `base_quickcheck` does not use conditional compilation to span stock
 OCaml and OxCaml. `master` and the `oxcaml` branch carry the same
 mode-annotated source (their `non_uniform` is byte-identical); the stock
-releases are separate branches. `src/generator.ml` differs by 783 lines
-between `master` and `v0.17`.
+releases are separate branches. `src/generator.ml` differs by 783
+changed lines between `master` and `v0.17` — 502 added and 281 removed,
+per `git diff --numstat v0.17 master -- src/generator.ml`. Stating the
+metric because it is easy to measure something adjacent and conclude the
+figure is stale: adding `src/generator.mli` to the same command gives
+999, and the raw `git diff` output is 1136 lines.
 
 So there are two patches:
 
@@ -209,7 +213,16 @@ So there are two patches:
 
 - **Stock variant: compiled.** Applied to a clean checkout of upstream
   `v0.17.1` and built with OCaml 5.3.0 — `dune build src/` clean,
-  `base_quickcheck__Generator.cmi` produced.
+  `base_quickcheck__Generator.cmi` produced. Re-checked after the
+  `let general` hoist (issue #13): the patch applies to
+  `vendor/base_quickcheck/generator.ml` — the same stock source — and
+  `dune build vendor/` is clean.
+- **Both patches: application re-checked, 2026-08-08.** `patch
+  --dry-run` succeeds for the stock patch against the vendored
+  generator and for the OxCaml patch against upstream `master` at
+  `1a5d1f5`. Worth stating separately from "compiles", because an
+  edited patch can stop applying while the code it describes is still
+  fine.
 - **OxCaml variant: NOT compiled, and it cannot be from outside.** This
   was chased properly rather than assumed, and the conclusion is a
   pincer:
