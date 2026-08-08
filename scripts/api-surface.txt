@@ -7,6 +7,7 @@ candidates_for
 check_generator_determinism
 choice_at_target
 clamp64
+clampf
 compare_origin
 consumed_in_same_stream
 correlate_image
@@ -59,6 +60,7 @@ maybe_check_large_base_example
 merge_current_events_into
 message_for
 natural_example_choices
+no_eval_stats
 nondeterminism_warning
 no_stats
 origin_of_exn
