@@ -2021,7 +2021,12 @@ let check_generator_determinism (type a) ?(replays = 8)
   let first = replay_once () in
   let rec go k =
     if k <= 1 then true
-    else if Tape.compare_image (replay_once ()) first <> 0 then false
+    (* [Tape.equal_image], not [compare_image = 0]. The order is a
+       PREORDER: float choices compare by distance from their target, so
+       0.0 drawn from [0,1] and 5.0 drawn from [5,6] are indistinguishable
+       to it. A generator alternating between two such draws is
+       nondeterministic and this check passed it. *)
+    else if not (Tape.equal_image (replay_once ()) first) then false
     else go (k - 1)
   in
   go replays

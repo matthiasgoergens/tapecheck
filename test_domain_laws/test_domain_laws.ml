@@ -108,6 +108,46 @@ let () =
   run_prop "target is itself at target" choice_gen (fun c ->
     Tape.Domain.at_target (Tape.Domain.target c));
 
+  (* THE LAW THAT MAKES THE REST MEAN ANYTHING.
+
+     Everything above relates a choice only to ITSELF, so all of it is
+     satisfied by [target c = c] with [at_target _ = true] -- an engine
+     that shrinks nothing passes every law stated so far. Codex made
+     that point against the first version of this file and it was right.
+
+     This one is cross-value: the target of a choice must be no larger
+     than ANY other choice over the same domain. It fails immediately
+     for the identity mutant, with c = 2 and d = 0 over [0,2]. *)
+  run_prop "target of a domain is <= every value in it"
+    (G.both choice_gen choice_gen) (fun (c, d) ->
+      let same_domain =
+        match (c, d) with
+        | Tape.Integer a, Tape.Integer b ->
+          Int64.equal a.lo b.lo && Int64.equal a.hi b.hi
+        | Tape.Float a, Tape.Float b ->
+          (* bit equality, so NaN bounds count as the same domain *)
+          let bits = Int64.bits_of_float in
+          Int64.equal (bits a.lo) (bits b.lo) && Int64.equal (bits a.hi) (bits b.hi)
+        | Tape.Bool _, Tape.Bool _ | Tape.Marker, Tape.Marker -> true
+        | _ -> false
+      in
+      if not same_domain then true
+      else Tape.Domain.compare (Tape.Domain.target c) d <= 0);
+
+  (* Strict progress: a choice NOT at its target must be strictly larger
+     than the target. Without this, [compare] could rank everything
+     equal and the descent would have nothing to descend. *)
+  run_prop "a non-target choice is strictly above its target" choice_gen
+    (fun c ->
+      if Tape.Domain.at_target c then true
+      else Tape.Domain.compare (Tape.Domain.target c) c < 0);
+
+  (* And the identity-vs-order distinction, as a law rather than a
+     one-off: equal structure implies equal rank, but NOT conversely. *)
+  run_prop "structural equality implies compare = 0"
+    (G.both choice_gen choice_gen) (fun (a, b) ->
+      if Tape.Domain.equal a b then Tape.Domain.compare a b = 0 else true);
+
   (* --- the image order the engine actually accepts on -------------- *)
   run_prop "compare_image is reflexive" image_gen (fun i ->
     Tape.compare_image i i = 0);
