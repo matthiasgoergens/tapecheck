@@ -229,20 +229,52 @@ let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
        budget is still bounded by [size], so recursive generators still
        terminate.
 
-       What this costs, stated plainly: the distribution changes. Sizes
-       are now front-loaded rather than permuted across positions, so
-       early elements are larger on average than late ones. The old
-       exact-sum assertion is gone too -- the total is now at most
+       Each element is ALSO charged 1 against the budget as it is drawn,
+       which is how the original made the length itself cost something
+       (its assertion was [sum + (len - min_length) = size]). Charging
+       per element as we go, rather than computing the charge from the
+       drawn length up front, is what keeps both properties at once: the
+       total stays bounded by [size], and truncating [len] still leaves
+       the surviving prefix bit-identical because the budget evolution
+       over that prefix does not depend on what came after it.
+
+       A first version of this change omitted the per-element charge, so
+       length became free. The means barely moved but the TAILS blew up:
+       at size 50 a recursive tree went from at most 51 nodes to 116,
+       and a list of strings from at most 50 characters to 78. Bounding
+       generated values by [size] is a contract callers rely on --
+       especially recursive ones through [fixed_point] -- so that
+       version was wrong even though every shrink-quality number
+       improved.
+
+       What this still costs, stated plainly: the distribution changes.
+       Sizes are front-loaded rather than permuted across positions, so
+       early elements are larger on average than late ones. And the old
+       exact-sum assertion becomes an inequality -- the total is at most
        [size] rather than exactly it, because a log-uniform draw
        weighted low usually leaves budget unspent. *)
     if len = 0
     then []
     else (
-      let budget = ref size in
-      List.init len ~f:(fun _ ->
-        let s = Splittable_random.Log_uniform.int random ~lo:0 ~hi:!budget in
-        budget := !budget - s;
-        s)))
+      (* An EXPLICIT in-order loop, not [List.init]: Base's [List.init]
+         evaluates [f (n-1)] first and counts down, so the draws would
+         come off the tape last-element-first and truncating [len] would
+         change the whole sequence rather than dropping its tail. That
+         is the entire property this change exists to establish, and it
+         was silently broken by the obvious spelling. Verified: with
+         [List.init 5], the evaluation order is 4,3,2,1,0. *)
+      let rec go i acc budget =
+        if i >= len
+        then List.rev acc
+        else if budget <= 0
+        then go (i + 1) (0 :: acc) budget
+        else (
+          (* the element itself costs 1, as in the original accounting *)
+          let budget = budget - 1 in
+          let s = Splittable_random.Log_uniform.int random ~lo:0 ~hi:budget in
+          go (i + 1) (s :: acc) (budget - s))
+      in
+      go 0 [] size))
 ;;
 
 let unit = return ()
