@@ -152,8 +152,12 @@ let () =
     (match Tape.deserialize_image serialized with
     | None -> failwith "round-trip: failed to deserialize a freshly serialized image"
     | Some round_tripped ->
+      (* [equal_image], not [compare_image = 0]: the latter is the
+         SHRINK order, which ranks floats by distance from target and so
+         cannot tell 0.0 in [0,1] from 5.0 in [5,6]. An assertion whose
+         own text says "bit-for-bit" must not be tested with a preorder. *)
       check "round-trip: image is bit-for-bit identical"
-        (Tape.compare_image image round_tripped = 0);
+        (Tape.equal_image image round_tripped);
       let replayed, () =
         Tape_engine.replay_image_and_apply pair_gen ~size:10 round_tripped
           ~f:(fun _ -> ())

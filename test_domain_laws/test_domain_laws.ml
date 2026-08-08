@@ -44,9 +44,25 @@ let choice_gen =
     ; G.return Tape.Marker
     ]
 
+(* Images WITH child streams, not just a main stream. The first version
+   generated main-only images, so every image law was silently untested
+   against the stream half of compare_image -- and streams are where the
+   ordering is most intricate (count, then key order, then per-stream
+   shortlex). *)
+let key_gen =
+  G.map (G.list (G.of_list [ Tape.Split 0; Tape.Split 1; Tape.Salt 7 ]))
+    ~f:(fun l -> l)
+
 let image_gen =
-  G.map (G.list choice_gen) ~f:(fun l ->
-    Tape.image_of_main (Array.of_list l))
+  G.map
+    (G.both (G.list choice_gen)
+       (G.list (G.both key_gen (G.list choice_gen))))
+    ~f:(fun (main, streams) ->
+      let streams =
+        List.map streams ~f:(fun (k, cs) -> (k, Array.of_list cs))
+        |> List.sort ~compare:(fun (a, _) (b, _) -> Tape.compare_key a b)
+      in
+      { Tape.main = Array.of_list main; streams = Array.of_list streams })
 
 let sign n = if n < 0 then -1 else if n > 0 then 1 else 0
 
@@ -148,6 +164,37 @@ let () =
     (G.both choice_gen choice_gen) (fun (a, b) ->
       if Tape.Domain.equal a b then Tape.Domain.compare a b = 0 else true);
 
+  (* [target] must stay inside the domain it was given. Without this a
+     mutant mapping every integer target to Integer {0;0;0} satisfies
+     every ORDER law above while silently leaving the original bounds --
+     and a replay would then draw from the wrong range. *)
+  run_prop "target preserves kind and bounds" choice_gen (fun c ->
+    match (c, Tape.Domain.target c) with
+    | Tape.Integer a, Tape.Integer t ->
+      Int64.equal a.lo t.lo && Int64.equal a.hi t.hi
+    | Tape.Float a, Tape.Float t ->
+      let bits = Int64.bits_of_float in
+      Int64.equal (bits a.lo) (bits t.lo) && Int64.equal (bits a.hi) (bits t.hi)
+    | Tape.Bool _, Tape.Bool _ | Tape.Marker, Tape.Marker -> true
+    | _ -> false);
+
+  (* --- laws for the IDENTITY side, which had none --------------- *)
+  run_prop "compare_structural = 0 iff equal" (G.both choice_gen choice_gen)
+    (fun (a, b) ->
+      Bool.equal (Tape.Domain.compare_structural a b = 0) (Tape.Domain.equal a b));
+
+  run_prop "equal is reflexive" choice_gen (fun c -> Tape.Domain.equal c c);
+
+  run_prop "equal is symmetric" (G.both choice_gen choice_gen) (fun (a, b) ->
+    Bool.equal (Tape.Domain.equal a b) (Tape.Domain.equal b a));
+
+  run_prop "compare_structural is transitive"
+    (G.both choice_gen (G.both choice_gen choice_gen)) (fun (a, (b, c)) ->
+      let ( <= ) x y = Tape.Domain.compare_structural x y <= 0 in
+      if a <= b && b <= c then a <= c else true);
+
+  run_prop "equal_image is reflexive" image_gen (fun i -> Tape.equal_image i i);
+
   (* --- the image order the engine actually accepts on -------------- *)
   run_prop "compare_image is reflexive" image_gen (fun i ->
     Tape.compare_image i i = 0);
@@ -160,10 +207,21 @@ let () =
       let ( <= ) x y = Tape.compare_image x y <= 0 in
       if a <= b && b <= c then a <= c else true);
 
-  run_prop "shorter image is always smaller" (G.both image_gen image_gen)
-    (fun (a, b) ->
-      let la = Array.length a.Tape.main and lb = Array.length b.Tape.main in
-      if la < lb then Tape.compare_image a b < 0 else true);
+  (* TOTAL choice count, not main-stream length. The first version of
+     this law compared [Array.length a.main] and passed only because
+     [image_gen] generated main-only images; once the generator started
+     producing child streams it failed at once. compare_image orders by
+     [image_size], which counts every stream -- deleting a whole stream
+     is a smaller tape even though the main stream is untouched. The law
+     was wrong, and a narrow generator had been hiding it. *)
+  run_prop "an image with fewer choices is always smaller"
+    (G.both image_gen image_gen) (fun (a, b) ->
+      let size (i : Tape.image) =
+        Array.fold i.Tape.streams
+          ~init:(Array.length i.Tape.main)
+          ~f:(fun acc (_, arr) -> acc + Array.length arr)
+      in
+      if size a < size b then Tape.compare_image a b < 0 else true);
 
   (* --- the law the engine's termination rests on ------------------- *)
   run_prop "trivializing an image never increases it" image_gen (fun i ->
@@ -183,6 +241,37 @@ let () =
   report "compare_image is a PREORDER, not an order"
     (Tape.compare_image a b = 0 && not (Poly.equal a b))
     "-1.0 and 1.0 compare equal about target 0.0, and are not equal";
+
+  report "...but equal_image tells them apart"
+    (not (Tape.equal_image a b))
+    "which is why identity-sensitive callers must not use the order";
+
+  (* THE REGRESSION TEST FOR THE ACTUAL BUG.
+
+     A generator alternating between two at-target draws from different
+     ranges is nondeterministic, and the whole job of
+     check_generator_determinism is to say so. It did not, because it
+     compared successive replays with [compare_image <> 0] and both
+     recordings rank equal. Constructed here rather than described. *)
+  let flip = ref false in
+  let alternating =
+    G.create (fun ~size:_ ~random ->
+      flip := not !flip;
+      if !flip then Splittable_random.float random ~lo:0. ~hi:1.
+      else Splittable_random.float random ~lo:5. ~hi:6.)
+  in
+  let img =
+    Tape.image_of_main [| Tape.Float { value = 0.; lo = 0.; hi = 1. } |]
+  in
+  flip := false;
+  let caught =
+    not
+      (Tape_engine.check_generator_determinism ~replays:4 ~gen:alternating
+         ~size:10 ~test:(fun _ -> false) img)
+  in
+  report "determinism check catches alternating at-target floats" caught
+    (if caught then "flagged as nondeterministic"
+     else "PASSED an impure generator -- the preorder hole is back");
 
   Stdio.printf "\n";
   if !failures > 0 then begin

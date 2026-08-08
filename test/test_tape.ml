@@ -43,8 +43,11 @@ let () =
   let out2 = Tape.finish tape in
   check "replay reproduces" (v2 = v1);
   check "replay not overrun" (not out2.Tape.overrun);
+  (* [equal_choices]: "identically" is a claim about the recording, and
+     compare_shortlex is the shrink order, which can rank two different
+     recordings equal. *)
   check "replay re-records identically"
-    (Tape.compare_shortlex out1.Tape.choices out2.Tape.choices = 0);
+    (Tape.equal_choices out1.Tape.choices out2.Tape.choices);
 
   (* Editing a choice steers generation: flip the bool to false and the
      dependent draw disappears; the output tape is shorter, hence
@@ -87,7 +90,7 @@ let () =
   let bytes = Tape.serialize sample in
   (match Tape.deserialize bytes with
   | Some back ->
-    check "serialize round-trips" (Tape.compare_shortlex sample back = 0);
+    check "serialize round-trips" (Tape.equal_choices sample back);
     check "same length" (Array.length back = Array.length sample)
   | None -> failwith "FAILED: deserialize returned None");
   (* Cutting mid-record is rejected; cutting at a record boundary
