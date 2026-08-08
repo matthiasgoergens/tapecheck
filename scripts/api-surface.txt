@@ -121,4 +121,3 @@ warned_shrink_count
 warn_if_shrink_count_set
 with_choice
 with_deleted_block
-without_stream

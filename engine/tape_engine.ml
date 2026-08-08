@@ -116,11 +116,6 @@ let seg_set (img : Tape.image) s arr : Tape.image =
           if i = s - 1 then (k, arr) else (k, a))
     }
 
-let without_stream (img : Tape.image) s : Tape.image =
-  { img with
-    streams = Array.filteri img.streams ~f:(fun i _ -> i <> s - 1)
-  }
-
 let image_all_trivial (img : Tape.image) =
   Array.for_all img.main ~f:choice_at_target
   && Array.for_all img.streams ~f:(fun (_, arr) ->
@@ -530,7 +525,7 @@ let no_stats () =
    on a property Hypothesis finishes in 27 (see
    ../tapecheck-hypothesis-baseline/README.md). *)
 let pass_names =
-  [| "lower_and_delete"; "delete_streams"; "redistribute_pairs"
+  [| "lower_and_delete"; "(removed: delete_streams)"; "redistribute_pairs"
    ; "minimize_choices"; "pre-loop"; "sort_siblings" |]
 
 let pass_costs = Array.create ~len:6 0
@@ -1517,17 +1512,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      (an absent stream is not an overrun), which in practice pushes
      generated functions toward constant observed behaviour. The main
      stream (segment 0) is never deleted. *)
-  let delete_streams () =
-    let improved = ref false in
-    let s = ref 1 in
-    while !s < seg_count !best && budget_ok () do
-      if attempt (without_stream !best !s) then improved := true
-        (* the array shifted left; stay at the same index *)
-      else Int.incr s
-    done;
-    !improved
-  in
-
   (* Move weight from an earlier integer choice to the next integer
      after it in the same stream, preserving their sum: [27, 23]
      becomes [0, 50], after which lower-and-delete can drop the zero.
@@ -1769,9 +1753,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a0 = !attempts in
     let improved = lower_and_delete () in
     pass_costs.(0) <- pass_costs.(0) + (!attempts - a0);
-    let a1 = !attempts in
-    let improved = delete_streams () || improved in
-    pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
     let a2 = !attempts in
     let improved = redistribute_pairs () || improved in
     pass_costs.(2) <- pass_costs.(2) + (!attempts - a2);
