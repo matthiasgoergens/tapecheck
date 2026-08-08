@@ -41,6 +41,23 @@ type expectation =
   { name : string
   ; min_found : int
   ; min_minimal : int
+  ; high_minimal : int
+      (* The best [minimal] ever recorded for this property. Exceeding it
+         FAILS, which is the point: [min_minimal] alone is a one-sided
+         floor, so an improvement slid past unnoticed and the guard went
+         on printing "ok" for a property whose own name had become false.
+         That is not hypothetical -- lengthlist sat at [frontier: not
+         100/100] with a floor of 60 while actually scoring 100/100, and
+         the guard reported ok every run (issue #9).
+
+         Failing rather than noting is deliberate, and follows
+         scripts/check_api_surface.sh, which fails on ADDITIONS for the
+         same reason: a message that only advises gets ignored. The
+         evidence is in this repo -- test_poison printed "raise the
+         floor" on every run for a week and the floor stayed at 10.
+
+         At-ceiling properties set this to [trials], where it can never
+         fire. *)
   ; max_avg_calls : int
   ; max_non_converged : int
       (* Normally 0: the per-pass cutoff must not clear [converged].
@@ -93,6 +110,14 @@ let check (e : expectation) (o : outcome) =
     problems :=
       Printf.sprintf "fully minimal %d < %d" o.minimal e.min_minimal
       :: !problems;
+  if o.minimal > e.high_minimal then
+    problems :=
+      Printf.sprintf
+        "fully minimal %d > recorded best %d -- IMPROVEMENT, not a \
+         regression: raise high_minimal (and min_minimal with it), and \
+         update CHALLENGE.md and this property's name"
+        o.minimal e.high_minimal
+      :: !problems;
   if o.avg_calls > e.max_avg_calls then
     problems :=
       Printf.sprintf "avg calls %d > %d" o.avg_calls e.max_avg_calls
@@ -130,6 +155,7 @@ let () =
     { name = "int uniform, fail iff v >= 123_457"
     ; min_found = 100
     ; min_minimal = 100
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
     ; max_avg_calls = 50 (* measured 34 after duplicate-skipping *)
     ; max_non_converged = 0
     ; catches =
@@ -145,6 +171,7 @@ let () =
     { name = "pair, fail iff a + b >= 100"
     ; min_found = 100
     ; min_minimal = 100
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
     ; max_avg_calls = 26 (* measured 18 after duplicate-skipping *)
     ; max_non_converged = 0
     ; catches = "multi-choice coordination on the cheapest possible case"
@@ -159,6 +186,7 @@ let () =
     { name = "int list, fail iff length >= 3"
     ; min_found = 100
     ; min_minimal = 100
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
     ; max_avg_calls = 205 (* measured 147; 178 before duplicate-skipping, 641 before the cutoff *)
     ; max_non_converged = 0
     ; catches =
@@ -176,6 +204,7 @@ let () =
     { name = "int list, fail iff sum >= 100"
     ; min_found = 100
     ; min_minimal = 100
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
     ; max_avg_calls = 130 (* measured 90; 173 before duplicate-skipping, 456 before the cutoff *)
     ; max_non_converged = 0
     ; catches =
@@ -191,6 +220,7 @@ let () =
     { name = "filtered even ints, fail iff v >= 100"
     ; min_found = 100
     ; min_minimal = 100
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
     ; max_avg_calls = 112 (* measured 79 after duplicate-skipping *)
     ; max_non_converged = 0
     ; catches =
@@ -208,6 +238,7 @@ let () =
     { name = "bind, fail iff sum >= 100 (no stock shrinker)"
     ; min_found = 100
     ; min_minimal = 100
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
     ; max_avg_calls = 74 (* measured 52 after duplicate-skipping *)
     ; max_non_converged = 0
     ; catches =
@@ -236,6 +267,7 @@ let () =
     { name = "zig-zag, fails iff |m - n| = 1"
     ; min_found = 75
     ; min_minimal = 75 (* measured 83 of 83 found *)
+    ; high_minimal = 83 (* measured 2026-08-08 *)
     ; max_avg_calls = 44 (* measured 28; 2929 without lower_together *)
     ; max_non_converged = 0
     ; catches =
@@ -257,6 +289,7 @@ let () =
     { name = "deep bind, len in [1,200], sum >= 500"
     ; min_found = 95
     ; min_minimal = 95 (* measured 100; 47 with the cutoff at 3 *)
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
     ; max_avg_calls = 210 (* measured 149; 250 with no cutoff at all *)
     ; max_non_converged = 0
     ; catches =
@@ -296,22 +329,32 @@ let () =
      ~size:30 because this property is about LONG tapes; at the default
      size:10 the tapes are too short to exercise the interaction. *)
   check
-    { name = "lengthlist: bind len, max >= 900  [frontier: not 100/100]"
+    { name = "lengthlist: bind len, max >= 900"
     ; min_found = 100
-    ; min_minimal = 60
-        (* measured 73 with earned patience, 70 flat; 74 once the length
-           repair landed, i.e. unchanged within noise because the repair
-           is inert under the current pass order -- it fires ONCE in 100
-           trials. 100/100 at 135 calls IS reachable by running
-           minimize_choices before lower_and_delete, but that costs
-           test_poison 10/34 -> 6/34 and is not shipped. Full 2x2 in
-           LENGTH-REPAIR.md; do not re-derive it. *)
-    ; max_avg_calls = 400 (* measured 256 with earned patience, 279 flat *)
-    ; max_non_converged = 40 (* measured 27 flat; earned patience similar *)
+    ; min_minimal = 100
+        (* Was 60, with the name carrying "[frontier: not 100/100]" and
+           a comment explaining that 100/100 was reachable only at a
+           cost we did not pay. Both were true when written and both
+           went stale: the computed repair landed and this now measures
+           100/100 at 85 calls, with test_poison going UP (10 -> 12),
+           not down. Re-measured 2026-08-08.
+
+           This is the case that motivated [high_minimal]: the floor of
+           60 meant the guard printed "ok" against a name asserting the
+           opposite of the truth, for as long as nobody looked (issue
+           #9). The history is kept in LENGTH-REPAIR.md; what is NOT
+           kept is the old claim that the trade is unavoidable. *)
+    ; high_minimal = 100 (* trials; cannot be exceeded *)
+    ; max_avg_calls = 400
+        (* measured 85 on 2026-08-08, down from 256/279. Ceiling left
+           well above rather than tightened to ~120: the cost guard's
+           job is catching a 3x-20x blow-up, and this property's cost
+           moved by 3x for a legitimate reason once already. *)
+    ; max_non_converged = 40 (* measured 0 on 2026-08-08; was 27 flat *)
     ; catches =
-        "a drop below the recorded 70/100, and equally an unnoticed \
-         IMPROVEMENT -- if this reaches 100 the frontier has moved and \
-         both this bound and CHALLENGE.md should be updated."
+        "a drop below the recorded 100/100, and equally an unnoticed \
+         IMPROVEMENT -- which is now enforced by high_minimal rather \
+         than merely described here, because describing it did not work."
     }
     (measure
        ~gen:
@@ -333,6 +376,11 @@ let () =
     { name = "self_len, fails iff hd l = length l  [frontier: not 100/100]"
     ; min_found = 90
     ; min_minimal = 40 (* measured 47; Hypothesis gets 53 *)
+    ; high_minimal = 47
+        (* The genuine frontier, and the one property where this bound
+           earns its keep every run: 47 is the measured value, so any
+           improvement stops the suite and asks for the number. 53 is
+           where Hypothesis sits -- see [catches]. *)
     ; max_avg_calls = 180 (* measured 127 after duplicate-skipping *)
     ; max_non_converged = 0
     ; catches =
