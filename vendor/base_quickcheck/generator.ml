@@ -204,26 +204,45 @@ let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
     in
     (* pick a length, weighted low so that most of the size is spent on elements *)
     let len = Splittable_random.Log_uniform.int random ~lo:min_length ~hi:max_length in
-    (* if there are no elements return an empty array, otherwise return a non-empty array
-       with the size distributed among the elements *)
+    (* WAVE 2 (tapecheck): one size draw PER ELEMENT, left to right, from a
+       running budget -- replacing a scheme that was anti-monotone in [len].
+
+       The original computed [remaining = size - (len - min_length)] and
+       distributed it with [remaining] index draws, then permuted with
+       [len - 1] swaps. Three separate dependencies on [len], and the
+       first is the damaging one: shortening a list REDISTRIBUTES the
+       freed size into the surviving elements, so they grow. For a
+       replay-based reducer that is fatal, because the move that should
+       make a counterexample smaller makes the recording bigger.
+
+       Measured before the change, on a stuck [G.list G.string] tape:
+       lowering the recorded length from 30 to 15 took the tape from 206
+       choices to 253 and the content from 14 characters to 24. The
+       proposal overran and was rejected, correctly, and the list length
+       therefore never came down at all -- with the engine reporting
+       converged.
+
+       Here each element draws its own size from what is left of the
+       budget, in order. Truncating [len] deletes exactly the trailing
+       draws and leaves every surviving element's size bit-identical, so
+       shortening a list is a strict reduction of the recording. The
+       budget is still bounded by [size], so recursive generators still
+       terminate.
+
+       What this costs, stated plainly: the distribution changes. Sizes
+       are now front-loaded rather than permuted across positions, so
+       early elements are larger on average than late ones. The old
+       exact-sum assertion is gone too -- the total is now at most
+       [size] rather than exactly it, because a log-uniform draw
+       weighted low usually leaves budget unspent. *)
     if len = 0
     then []
     else (
-      let sizes = Array.init len ~f:(fun _ -> 0) in
-      let remaining = size - (len - min_length) in
-      let max_index = len - 1 in
-      for _ = 1 to remaining do
-        (* pick an index, weighted low so that we see unbalanced distributions often *)
-        let index = Splittable_random.Log_uniform.int random ~lo:0 ~hi:max_index in
-        sizes.(index) <- sizes.(index) + 1
-      done;
-      (* permute the array so that no index is favored over another *)
-      for i = 0 to max_index - 1 do
-        let j = Splittable_random.int random ~lo:i ~hi:max_index in
-        Array.swap sizes i j
-      done;
-      assert (Array.sum (module Int) sizes ~f:Fn.id + (len - min_length) = size);
-      Array.to_list sizes))
+      let budget = ref size in
+      List.init len ~f:(fun _ ->
+        let s = Splittable_random.Log_uniform.int random ~lo:0 ~hi:!budget in
+        budget := !budget - s;
+        s)))
 ;;
 
 let unit = return ()
