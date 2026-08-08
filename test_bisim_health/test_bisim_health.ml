@@ -173,4 +173,4 @@ let () =
                  \  each of these assertions exists.\n";
     Stdlib.exit 1
   end
-  else Stdio.printf "\nall bisim health assertions passed\n"
+  else Stdio.printf "\ntest_bisim_health: all assertions passed\n"

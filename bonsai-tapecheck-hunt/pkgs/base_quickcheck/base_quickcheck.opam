@@ -1,0 +1,27 @@
+opam-version: "2.0"
+version: "v0.17.1"
+synopsis: "Randomized testing framework, designed for compatibility with Base"
+description: """
+Base_quickcheck provides randomized testing in the style of Haskell's
+Quickcheck library, with support for built-in types as well as types
+provided by Base. Includes ppx_quickcheck as sublibraries (as upstream
+v0.17). Built against the pinned splittable_random tape shim."""
+maintainer: "Jane Street developers"
+authors: ["Jane Street Group, LLC"]
+license: "MIT"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml"             {>= "5.1.0"}
+  "base"              {>= "v0.17" & < "v0.18~"}
+  "ppx_base"          {>= "v0.17" & < "v0.18~"}
+  "ppx_fields_conv"   {>= "v0.17" & < "v0.18~"}
+  "ppx_let"           {>= "v0.17" & < "v0.18~"}
+  "ppx_sexp_message"  {>= "v0.17" & < "v0.18~"}
+  "ppx_sexp_value"    {>= "v0.17" & < "v0.18~"}
+  "ppxlib_jane"       {>= "v0.17" & < "v0.18~"}
+  "splittable_random" {>= "v0.17" & < "v0.18~"}
+  "dune"              {>= "3.11.0"}
+  "ppxlib"            {>= "0.36.0"}
+]

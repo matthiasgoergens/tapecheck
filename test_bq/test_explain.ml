@@ -112,4 +112,4 @@ let () =
   check "render mentions no variation found"
     (String.is_substring rendered ~substring:"no variation found");
 
-  Stdlib.print_endline "all explain tests passed"
+  Stdlib.print_endline "test_explain: all passed"

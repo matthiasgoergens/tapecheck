@@ -47,8 +47,10 @@ jobs:
       # contains the regression guard (shrink quality AND cost, with
       # every threshold tied to a specific past regression), the bisim
       # health assertions, the statistics accounting checks, and the
-      # determinism checks.
-      - run: opam exec -- dune test
+      # determinism checks. --force defeats dune's action cache, which
+      # would otherwise replay a cached success without running the
+      # tests (the dune-cache option above makes that reachable in CI).
+      - run: opam exec -- dune runtest --force
 
       # Catches a public function being DROPPED. Added after a merge
       # resolver silently discarded resume_result/resume_run/

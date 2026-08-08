@@ -292,4 +292,4 @@ let () =
      check "regression-entry failure prints the summary line"
        (String.is_substring printed_regression ~substring:"tapecheck:"));
 
-  Stdlib.print_endline "all resume tests passed"
+  Stdlib.print_endline "test_resume: all passed"
