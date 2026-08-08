@@ -74,20 +74,13 @@ let clampf = Tape.clamp_float
    the same fallback stream. *)
 let replay_fresh_seed = 0x7ea9e
 
-let choice_at_target = function
-  | Tape.Integer { value; lo; hi } -> Int64.(value = clamp64 0L ~lo ~hi)
-  | Tape.Float { value; lo; hi } ->
-    Float.( = ) value (clampf 0. ~lo ~hi)
-  | Tape.Bool b -> not b
-  | Tape.Marker -> true
-
-let trivial_choice = function
-  | Tape.Integer { lo; hi; _ } ->
-    Tape.Integer { value = clamp64 0L ~lo ~hi; lo; hi }
-  | Tape.Float { lo; hi; _ } ->
-    Tape.Float { value = clampf 0. ~lo ~hi; lo; hi }
-  | Tape.Bool _ -> Tape.Bool false
-  | Tape.Marker -> Tape.Marker
+(* Both delegate to [Tape.Domain], which states the target next to the
+   comparison it has to agree with. They were independent definitions
+   here, in a different file from [compare_choice], with nothing
+   checking that "smallest" matched "smaller". Kept as names because
+   they are the vocabulary the passes below are written in. *)
+let choice_at_target = Tape.Domain.at_target
+let trivial_choice = Tape.Domain.target
 
 let with_choice tape_choices i c =
   let copy = Array.copy tape_choices in

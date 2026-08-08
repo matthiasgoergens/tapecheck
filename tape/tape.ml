@@ -732,6 +732,50 @@ let compare_choice a b =
   | Bool _, _ -> -1
   | _, Bool _ -> 1
 
+(* The shrink order, and the target it descends toward, in ONE place.
+
+   These used to be two definitions in two files: [compare_choice] here
+   said what "smaller" means, while [choice_at_target] and
+   [trivial_choice] in tape_engine.ml independently said what the
+   minimum IS. Nothing tied them together, so they could disagree
+   silently -- and a shrinker whose notion of "smaller" and notion of
+   "smallest" disagree walks past its own answer.
+
+   [Domain] is the single statement of both, and test_domain_laws/
+   property-tests the relationship rather than trusting it:
+
+     target is a lower bound       compare (target c) c <= 0
+     at_target agrees with compare at_target c  <->  compare c (target c) = 0
+     target is idempotent          target (target c) = target c
+
+   Note what is deliberately NOT claimed: this is a total PREORDER, not
+   a total order. Two distinct floats equidistant from the target
+   compare equal, because [float_key] is a distance. That is fine for
+   the shrinker -- acceptance requires a STRICT decrease, so equal
+   proposals are rejected and the descent still terminates -- but
+   "compare = 0" must not be read as "structurally equal". *)
+module Domain = struct
+  let target = function
+    | Integer { lo; hi; _ } ->
+      Integer { value = clamp_int64 0L ~lo ~hi; lo; hi }
+    | Float { lo; hi; _ } -> Float { value = clamp_float 0. ~lo ~hi; lo; hi }
+    | Bool _ -> Bool false
+    | Marker -> Marker
+
+  let at_target = function
+    | Integer { value; lo; hi } -> Int64.equal value (clamp_int64 0L ~lo ~hi)
+    | Float { value; lo; hi } ->
+      let t = clamp_float 0. ~lo ~hi in
+      (* Not [Float.equal]: a NaN value is never at target, and
+         [nan = nan] is already false, so plain [=] is what is wanted
+         here. Spelled out because the opposite is the usual bug. *)
+      value = t
+    | Bool b -> not b
+    | Marker -> true
+
+  let compare = compare_choice
+end
+
 let compare_shortlex (a : choice array) (b : choice array) =
   let la = Array.length a and lb = Array.length b in
   if la <> lb then compare la lb
@@ -748,7 +792,14 @@ let compare_shortlex (a : choice array) (b : choice array) =
 (* Image order: total choice count first (a deleted stream is a smaller
    tape), then the main stream shortlex, then fewer streams, then the
    sorted stream lists pairwise (key order, then per-stream shortlex).
-   A total order, so shrink acceptance stays a strict descent. *)
+   A total PREORDER, not a total order, and the difference is worth
+   being exact about: [compare_choice] on floats compares a DISTANCE
+   from the target, so -1.0 and 1.0 about a target of 0.0 compare equal
+   while being different tapes. Shrink acceptance is still a strict
+   descent, because it requires [< 0] and therefore rejects the equal
+   case -- the preorder is enough for termination, which is all the
+   engine needs. What it does not license is reading [compare_image = 0]
+   as "the same tape". Pinned in test_domain_laws/. *)
 let image_size (img : image) =
   Array.fold_left
     (fun acc (_, arr) -> acc + Array.length arr)
