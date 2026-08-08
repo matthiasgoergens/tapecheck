@@ -165,7 +165,15 @@ on `Generator.fixed_point`/`recursive_union` memoize through OCaml's
 `Lazy`, which is not concurrency-safe, and a race surfaces as a raised
 exception (never a hang or corruption; the engine re-raises worker
 exceptions on the calling domain). On a rare-failure workload with a
-~100us test body the pool is a 4.6x wall-clock win at 8-16 domains.
+~100us test body the pool is a 6.3x wall-clock win at 8 domains and
+11.9x at 16 — but only while the run is dominated by GENERATION. When
+shrinking dominates it is a net **loss**: 0.86x at 8 domains and 0.70x
+at 32, because speculative batch evaluation raises the attempt count
+(582 sequential to 1618 at 32 domains) without shortening the critical
+path. `bench_domains/` measures all three cases; raw output in
+`../tapecheck-notes/bench-domains-20260809.txt`. A single "parallel
+speedup" number for this engine would be a choice of workload rather
+than a property of the pool.
 
 ## How the interception works
 
