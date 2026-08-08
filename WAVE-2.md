@@ -139,7 +139,26 @@ the format is explicitly versioned already (`ct1`, `ct2`).
 - **Not `Marshal` for the wire format.** Tapes get pasted between
   versions and machines; the format stays explicit and versioned.
 
-## A cheaper win that needs no wave-2 change at all
+## A cheaper win that needs no wave-2 change at all — SUPERSEDED, the premise is false
+
+**Measured and withdrawn, 2026-08-09.** The idea below assumed a string
+appears on the tape as a run of *consecutive* integers sharing character
+bounds. It does not. Dumping the tape for a 30-element list of short
+strings gives 206 choices of which only 13 are character draws; the rest
+is `[0,0]`/`[1,1]`/`[0,1]` bookkeeping plus a Fisher-Yates permutation
+loop that emits one draw per element ahead of any content. Character
+draws are interleaved with that, not contiguous.
+
+Chasing it also produced the better finding: the failing "list of
+strings" case is not about strings at all — its outer list length never
+comes down, because `sizes` redistributes freed length into the
+surviving elements. See the reproducer, and the fix on
+`wave2/monotone-list-sizes`.
+
+The paragraph is kept rather than deleted because the *reasoning* about
+where inference could work is still worth having if spans ever land, and
+because a design note that quietly loses its wrong turns is less useful
+than one that records them.
 
 Strings are already *inferable* from the existing tape.
 `char_uniform_inclusive lo hi` is `Splittable_random.int ~lo:(Char.to_int
