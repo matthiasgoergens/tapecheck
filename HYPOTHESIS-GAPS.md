@@ -60,12 +60,40 @@ because two of them point at the same structural cause as §3:
 
 `sort_siblings` is the interesting one and it is not simply missing.
 `engine/tape_engine.ml:1792` sets `sort_siblings_enabled = false`, with a
-measured reason: against *stock* `base_quickcheck` the pass is a net
-negative (bound5 12.5% against 15.9%, `large_union_list` 23% dearer for
-no gain), and it only pays once `proposals/base_quickcheck-non_uniform.patch`
-equalises sibling draw counts — at which point `distinct` goes 11.6% to
-69.5%. So one of our shrinker gaps is **downstream of an upstream
-encoding defect**, and is unblocked by a patch that has not been filed.
+recorded reason — which I re-measured at n=1000 on 2026-08-09 rather
+than quoting, and **the reason is partly stale**:
+
+| challenge | stock, off | stock, on | +patch, off | +patch, on |
+|---|---|---|---|---|
+| distinct | 0 | 0 | 116 | **649** |
+| reverse | 0 | 0 | 452 | 487 |
+| binheap | 93 | **110** | 93 | **110** |
+| bound5 | 158 | 159 | 52 | **0** |
+| calculator | 16 | 12 | 14 | 14 |
+| large_union_list evals | 1338.8 | **1671.1** | 1306.2 | 1560.9 |
+
+What reproduces: the `large_union_list` cost penalty (the comment says
+23%, I measure 24.8%), and the large `distinct` gain once the patch
+equalises sibling draw counts (the comment says 11.6% → 69.5%, I measure
+11.6% → 64.9%, and 69.5 sits outside my 61.9–67.8 interval).
+
+What does **not** reproduce is the headline reason for keeping it off.
+The comment cites bound5 at 12.5% against 15.9% on stock; at n=1000 both
+arms are 15.8–15.9% and the pass makes no difference there. The comment
+was measured at n=100 and admits its intervals overlapped — so that half
+of the justification was noise, and it has been carrying the decision
+since.
+
+Two effects the comment does not record, both real at n=1000: binheap
+improves 93 → 110 on stock (and 299 → 327 at-or-below optimal size),
+and bound5 collapses 52 → 0 on the patched arm. So the trade is not
+"nothing on stock, everything with the patch"; it is a genuine trade in
+both arms.
+
+The structural point stands regardless: one of our shrinker gaps is
+**downstream of an upstream encoding defect**, and the biggest single
+win available (distinct, 0 → 649/1000) needs a patch that has not been
+filed.
 
 Pass *scheduling* is also weaker: `shrink` runs a fixed order, where
 Hypothesis's `fixate_shrink_passes` reorders by productivity and uses
@@ -92,6 +120,20 @@ domain includes NaN and the infinities as first-class shrink targets.
 Underneath all of it is the known one: no spans, so no labels, no
 nesting, no discard flags. `SPANS-THE-ROOT-CAUSE.md` has the full
 argument and `test_poison` prices it.
+
+**The source-constant pool.** Hypothesis's provider scans the test's own
+source for literals and biases generation toward them
+(`_get_local_constants`, `_maybe_draw_constant`). `biased_int` and
+`biased_float` here have fixed boundary heuristics only — the ends of
+the range, one step in, the shrink target, a weighted bit-size — and
+`tape/tape.ml:272` says the omission is deliberate: the pool "has no
+OCaml analogue (and is a separate, heavier feature ... deliberately not
+ported here)". Deliberate is not the same as absent-from-the-list: a
+property that fails only on a magic number appearing in the test source
+is one Hypothesis can reach and this cannot.
+
+(Both external reviewers raised this and I dropped it from the first
+draft of this document, which is a good argument for running them.)
 
 ## 4. Built, but not wired into the normal path
 
@@ -208,5 +250,16 @@ Worth recording, since the disagreements were the informative part.
   the counter being a live defect, for the reason above.
 - Both missed the choice-IR alphabet gap in §3, which came from diffing
   `providers.py`'s `draw_*` methods against `Tape.choice`.
+- Both raised the source-constant pool and I dropped it from the first
+  draft. A second DeepSeek pass — given the actual source instead of the
+  markdown, and told explicitly which stale claims to avoid — refuted
+  this document on exactly that omission. That is the single clearest
+  argument in this session for running the external passes at all.
+
+One item was proposed and is **rejected**: DeepSeek suggested that
+`sampled_from`/enum not being a first-class choice is a gap. It is not a
+gap *versus Hypothesis*, whose IR alphabet is the same five types with
+no enum among them — `sampled_from` there is an integer index too. It
+may still be a good idea; it is not a place Hypothesis is ahead.
 
 No single pass would have produced this list.
