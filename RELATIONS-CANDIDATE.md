@@ -1,14 +1,20 @@
 # Could tapecheck use the relations library?
 
-> **Nudge: candidate 1 is ready to go.** The rewrite below is verified
-> equivalent (property-tested with tapecheck itself, at a pinned commit),
-> asymptotically better, and about ten lines. The only open decision is the
-> pair-ordering caveat — the relational form yields candidates sorted rather
-> than in position order, so a given seed selects a different mutation. Sorting
-> back is cheap if recorded regressions matter. Say the word and it becomes a
-> PR; the dependency direction has already been shown to work, since `rel` is
-> installable and `base`-only, so tapecheck can consume it with no vendoring
-> and no `base_quickcheck` collision.
+> **Nudge: candidate 1 is ready to go, and the one open decision turned out
+> not to be a decision.** The rewrite below is verified equivalent,
+> asymptotically better, and about ten lines. The dependency direction has
+> already been shown to work, since `rel` is installable and `base`-only, so
+> tapecheck can consume it with no vendoring and no `base_quickcheck`
+> collision.
+>
+> **The pair-ordering caveat was wrong and is withdrawn** (issue #14). It
+> claimed the relational form yields candidates sorted rather than in position
+> order, so a given seed would select a different mutation. Both halves of
+> that check out false: the loop prepends `(i, j)` scanning `i` outermost and
+> ends with `List.rev`, so it already emits ascending lexicographic order; and
+> `rel`'s `to_list` is documented "Sorted, so it is a canonical form" under
+> structural comparison, which on `int * int` *is* lexicographic. The two
+> orders coincide. Nothing needs sorting back.
 
 A survey, prompted by the observation that the tell-tale sign is **wanting to
 look data up by more than one key**. tapecheck has that in two places, and both
@@ -47,8 +53,26 @@ Relation.diff
   (Relation.compose values (Relation.converse values))
 ```
 
-**Verified equivalent**, property-tested with tapecheck itself at `4b9a619`
-over randomly generated choice lists: no counterexample. (Driver notes below.)
+**Verified equivalent**, and the driver is in the repo rather than described:
+`test_relations/`, run by `dune test`. It property-tests with tapecheck itself
+over randomly generated choice lists (6863 cases, 2462 of them with a
+non-empty candidate set — the generator draws bounds from a three-element pool
+precisely so that sharing is common rather than rare) and then goes exhaustive
+over every shape with n ≤ 4 from two values and two bound pairs.
+
+It asserts LIST equality, not set equality, because `correlate_image` selects
+with `pick mod length` and indexes the result — so the order is part of the
+contract, and that assertion is what settles the withdrawn caveat above.
+
+Both halves are kill-tested, since a verification driver that cannot fail is
+worth nothing: dropping the `diff` makes the diagonal reappear and the test
+fails with `loop= rel=(0,0)`; reversing the relational order fails with
+`loop=(0,1) (1,0) rel=(1,0) (0,1)`.
+
+The previous version of this line claimed the same result "property-tested
+with tapecheck itself at `4b9a619` ... (Driver notes below.)" — with no driver
+notes below and no relation test anywhere in the repo. The result was right;
+the evidence for it did not exist.
 
 **The performance is a footnote at tape sizes.** For the record the loop is
 Θ(n²) and the relational form groups through an index — 2 800 tuples against
@@ -80,13 +104,27 @@ reviewer has to stop and check it. If the intent is to be obviously correct
 rather than merely correct, writing the diagonal removal explicitly is the
 better trade even though it is longer.
 
-**One migration caveat, and it is not cosmetic.** `pick` selects among the
-candidate pairs by index, so the *order* of the list is part of the observable
-behaviour. The loop yields pairs in position order; the relational form yields
-them sorted as a set. Same pairs, different order, so a given seed would select
-a different mutation. That is a behaviour change, not a bug, but it would
-invalidate recorded regressions and any measurement taken against the old
-order. Sorting the result back into the old order is cheap if that matters.
+**A migration caveat that dissolved on inspection.** `pick` selects among the
+candidate pairs by index, so the *order* of the list is genuinely part of the
+observable behaviour — that much stands, and it is why `test_relations`
+asserts list rather than set equality. What does not stand is the conclusion
+drawn from it. This section used to say the loop yields pairs "in position
+order" against the relational form's "sorted as a set", and therefore that a
+given seed would select a different mutation and recorded regressions would be
+invalidated.
+
+The two orders are the same. The loop prepends `(i, j)` with `i` outermost and
+finishes with `List.rev`, so what comes out is ascending lexicographic —
+"position order" and "sorted" are the same thing here. `rel`'s `to_list` is
+documented "Sorted, so it is a canonical form" under structural comparison,
+and structural comparison on `int * int` is lexicographic. No re-sorting, no
+invalidated regressions, no behaviour change.
+
+Worth noting how the error was made, since it is a cheap one to repeat: the
+loop *looks* like it emits position order because the nested loops are written
+in position order, and the `List.rev` that makes the claim true is on a
+different line from the `::` that makes it false. Neither this document nor
+the issue that questioned it settled the matter by reading `rel`; the test did.
 
 ## Candidate 2 — signature grouping in the shrink loop (`engine/tape_engine.ml`)
 
@@ -160,9 +198,11 @@ for that reason.
 
 Candidate 1 is worth doing, but for readability rather than speed: at tape
 sizes the performance only has to stay competitive, and it does. The
-pair-ordering caveat should be handled deliberately rather than discovered, and
-the implicit diagonal removal should probably be made explicit — being
-*obviously* right matters more here than being short.
+pair-ordering caveat has been settled — the orders coincide, so there is
+nothing to handle — and the implicit diagonal removal should probably be made
+explicit: being *obviously* right matters more here than being short, and it
+is the one place where the kill test had to tell me what the code was doing
+rather than the code telling me.
 
 Candidate 2 is illustration more than optimisation. Both are the same finding:
 *tapecheck stores tapes in arrays keyed by position, and two of its passes want
