@@ -154,6 +154,9 @@ let () =
   let raise_raised =
     try Tape_db.save db_raise ~key img; false with _ -> true
   in
+  (* The blocker file is ours, so remove it: under dune test it lands in
+     the sandbox, but a direct [dune exec] run litters the worktree. *)
+  (try Stdlib.Sys.remove blocker with Stdlib.Sys_error _ -> ());
   Stdio.printf "  default Warn survives a bad dir:     %b\n" warn_survived;
   Stdio.printf "  Silent survives a bad dir:           %b\n" silent_survived;
   Stdio.printf "  Raise turns it into an error:        %b\n" raise_raised;
