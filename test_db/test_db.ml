@@ -70,6 +70,67 @@ let () =
     | Tape_engine.Failed { image; _ } -> Some image
     | _ -> None
   in
+  (* Two processes saving the same key must never share a temporary path.
+     Synchronise their first write, then repeat enough times to exercise the
+     atomic replacement path; [Raise] turns any lost-temp race into a child
+     failure instead of a warning. *)
+  let race_image =
+    match
+      Tape_engine.run
+        (G.list_with_length G.bool ~length:2_000)
+        ~test:(fun _ -> false) ~seed:91 ~count:1 ~budget:0
+    with
+    | Tape_engine.Failed { image; _ } -> image
+    | Tape_engine.Passed _ -> failwith "race fixture did not fail"
+  in
+  let race_key = "concurrent-save" in
+  let race_db = Tape_db.create ~dir:tmpdir ~on_write_error:Tape_db.Raise () in
+  let reader, writer = Unix.pipe ~cloexec:true () in
+  let spawn_writer () =
+    match Unix.fork () with
+    | 0 ->
+      Unix.close writer;
+      let byte = Bytes.create 1 in
+      ignore (Unix.read reader byte 0 1 : int);
+      Unix.close reader;
+      (try
+         for i = 1 to 30 do
+           Tape_db.save race_db ~key:race_key ~size:i race_image
+         done;
+         Unix._exit 0
+       with _ -> Unix._exit 2)
+    | pid -> pid
+  in
+  let writer_a = spawn_writer () in
+  let writer_b = spawn_writer () in
+  Unix.close reader;
+  ignore (Unix.write_substring writer "xx" 0 2 : int);
+  Unix.close writer;
+  let child_ok pid =
+    match snd (Unix.waitpid [] pid) with
+    | Unix.WEXITED 0 -> true
+    | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> false
+  in
+  let concurrent_writes_ok = child_ok writer_a && child_ok writer_b in
+  let concurrent_entry_parseable =
+    Option.is_some (Tape_db.load_sized race_db ~key:race_key)
+  in
+  let no_temporary_left =
+    Array.for_all (Stdlib.Sys.readdir tmpdir) ~f:(fun name ->
+      not (String.is_suffix name ~suffix:".tmp"))
+  in
+  Stdio.printf "  concurrent same-key writes succeed:  %b\n"
+    concurrent_writes_ok;
+  Stdio.printf "  concurrent result is complete:       %b\n"
+    concurrent_entry_parseable;
+  Stdio.printf "  concurrent writes leave no temp:     %b\n"
+    no_temporary_left;
+  if
+    not
+      (concurrent_writes_ok && concurrent_entry_parseable
+       && no_temporary_left)
+  then Stdlib.exit 1;
+
   Stdio.printf "run 1 (cold):        %s, %d test calls\n"
     (match r1 with Tape_engine.Failed _ -> "failed" | _ -> "passed")
     t1;

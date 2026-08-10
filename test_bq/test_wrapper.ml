@@ -6,6 +6,15 @@ open Base_quickcheck.Export
 
 type pair = int * int [@@deriving quickcheck, sexp_of, compare]
 
+(* Compile-time coverage for the module type in Base_quickcheck.Test's public
+   surface, not just its five value-level entry points. *)
+module Pair_testable : Tape_test.S with type t = pair = struct
+  type t = pair [@@deriving sexp_of]
+
+  let quickcheck_generator = quickcheck_generator_pair
+  let quickcheck_shrinker = Base_quickcheck.Shrinker.atomic
+end
+
 let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
 let () =
@@ -33,6 +42,13 @@ let () =
   check "with_sample preserves examples and test_count"
     (List.length !samples = 5
      && List.equal Int.equal (List.take !samples 2) [ 41; 42 ]);
+  let base_samples = ref [] in
+  Base_quickcheck.Test.with_sample_exn
+    ~f:(fun xs -> base_samples := Sequence.to_list xs)
+    ~config:sample_config ~examples:[ 41; 42 ]
+    (Base_quickcheck.Generator.int_uniform_inclusive 0 10);
+  check "with_sample preserves base_quickcheck sampling semantics"
+    (List.equal Int.equal !samples !base_samples);
   let with_sample_exn_called = ref false in
   Tape_test.with_sample_exn
     ~f:(fun xs ->
@@ -42,6 +58,16 @@ let () =
     ~config:sample_config
     (Base_quickcheck.Generator.int_uniform_inclusive 0 10);
   check "with_sample_exn invokes callback" !with_sample_exn_called;
+  check "with_sample_exn propagates callback failure"
+    (match
+       Or_error.try_with (fun () ->
+         Tape_test.with_sample_exn
+           ~f:(fun _ -> failwith "sample callback")
+           ~config:sample_config
+           (Base_quickcheck.Generator.int_uniform_inclusive 0 10))
+     with
+     | Error _ -> true
+     | Ok () -> false);
 
   (* result: typed failure carries the tape-minimal input. *)
   (match

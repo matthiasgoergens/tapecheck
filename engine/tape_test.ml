@@ -6,6 +6,7 @@
 
 open! Base
 module Config = Base_quickcheck.Test.Config
+module type S = Base_quickcheck.Test.S
 
 (* Raised when a failure was observed but its minimal example no longer
    reproduces. Distinct from an ordinary test failure: the run is
@@ -15,10 +16,11 @@ exception Flaky_test of string
 
 let default_config = Base_quickcheck.Test.default_config
 
-(* Sampling does not shrink, so the tape engine has nothing to add here.
-   Delegate to base_quickcheck to preserve its precise lazy-sequence semantics,
-   in particular for generators of functions whose observations can happen in
-   the callback rather than while the value itself is generated. *)
+(* Sampling does not shrink.  These two functions deliberately retain
+   base_quickcheck's stock sample sequence and precise lazy semantics; they are
+   source-compatible utilities, not a preview of [Tape_test.run]'s taped,
+   edge-biased generation schedule.  In particular, generators of functions
+   may be observed in the callback rather than while the value is generated. *)
 let with_sample = Base_quickcheck.Test.with_sample
 let with_sample_exn = Base_quickcheck.Test.with_sample_exn
 

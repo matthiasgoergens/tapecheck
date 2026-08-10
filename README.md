@@ -119,7 +119,9 @@ same `(module S)`, and `run`, `run_exn`, `result`, `with_sample`, and
 `with_sample_exn`); existing property calls switch by replacing the module
 name. The `quickcheck_shrinker` your types already declare is accepted and
 ignored. Sampling itself delegates to base_quickcheck because it does not
-shrink; the three test-running entry points use tape generation and shrinking.
+shrink; it preserves the stock sample sequence and is not a preview of the
+edge-biased tape generation schedule used by the three test-running entry
+points.
 
 ```ocaml
 Tape_test.run_exn

@@ -188,19 +188,26 @@ let save t ~key ?size (img : Tape.image) : unit =
          keeps the final rename atomic without assuming [/tmp] shares a
          filesystem with the database. *)
       let tmp, oc =
-        Stdlib.Filename.open_temp_file ~temp_dir:t.dir
+        Stdlib.Filename.open_temp_file ~mode:[ Open_binary ] ~temp_dir:t.dir
           (key_to_filename key ^ ".") ".tmp"
       in
       tmp_path := Some tmp;
       (* Same reason as [load]: a disk-full or quota error during
          [output_string] or the implicit flush used to skip [close_out]
          entirely, leaking the channel into the error path. *)
-      Exn.protect
-        ~finally:(fun () -> Stdlib.close_out_noerr oc)
-        ~f:(fun () ->
-        Stdlib.Out_channel.output_string oc
-          (Printf.sprintf "%d\n" (Option.value size ~default:(-1)));
-        Stdlib.Out_channel.output_string oc (Tape.serialize_image img));
+      (match
+         Stdlib.Out_channel.output_string oc
+           (Printf.sprintf "%d\n" (Option.value size ~default:(-1)));
+         Stdlib.Out_channel.output_string oc (Tape.serialize_image img);
+         (* [close_out] flushes and can report a disk-full/quota error.  It
+            must succeed before the rename, or a partial temporary could
+            replace the last good entry. *)
+         Stdlib.close_out oc
+       with
+       | () -> ()
+       | exception e ->
+         Stdlib.close_out_noerr oc;
+         raise e);
       Stdlib.Sys.rename tmp file;
       tmp_path := None
     with e ->
