@@ -19,8 +19,10 @@ half-configured database, reports explicit-example failures, and database
 writes use unique same-directory temporary files.
 
 This is local integration status, not publication status: nothing in this
-branch has been pushed by the Wave 1 close-out. The full forced suite and API
-surface guard are the acceptance checks.
+branch has been pushed by the Wave 1 close-out. The full forced suite and the
+top-level engine-name guard are acceptance checks. The latter protects the
+specific class of merge loss it was written for; it is not a complete OCaml
+API-compatibility proof.
 
 ## Deliberately outside Wave 1
 

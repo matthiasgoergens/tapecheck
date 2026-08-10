@@ -15,6 +15,10 @@ the plan below:
   reported function said 298). A live tape keeps the counterexample's
   observed behaviour for as long as the value lives, and per-call
   cursor rewinds keep it pure.
+- The initially implemented whole-stream deletion pass was removed on
+  2026-08-09 after its purpose-built favourable case showed the same minimum
+  at 63 rather than 39 attempts. Streams that an accepted replay never
+  touches are still omitted naturally; there is no explicit deletion pass.
 
 Original note follows. It grew out of the 2026-07-16 discussion of
 whether `Generator.fn`'s split-off streams can be brought under tape
@@ -120,10 +124,9 @@ New shrink moves this unlocks:
 
 - Per-choice passes (lowering, bisection) inside each function stream:
   simplify what `f` returns for the arguments the test actually used.
-- Whole-stream deletion: drop a function stream entirely so those calls
-  resample fresh; accepted only if still failing and shortlex-smaller,
-  which in practice pushes towards functions whose observed behaviour
-  is constant.
+- Whole-stream deletion was initially implemented here, then removed after
+  measurement showed it added cost even on a purpose-built favourable case.
+  Untouched streams still disappear from the replay output naturally.
 
 What this fixes beyond shrinking: replay stability. Function draws come
 from the tape, so a replayed attempt evaluates the same function
@@ -163,9 +166,9 @@ follow-up revision; folding it in now would grow the PR under review.
 3. `vendor/splittable_random` shim: `For_tape.attach` builds hooks
    closing over a key; `on_split` allocates the child key and returns
    child hooks; `on_perturb` extends the key.
-4. Engine: extend lower-and-delete and bisection to iterate streams;
-   add whole-stream deletion as a pass between block deletion and
-   redistribution.
+4. Engine: extend lower-and-delete and bisection to iterate streams. The
+   original plan also added whole-stream deletion between block deletion and
+   redistribution; that pass was later measured and removed.
 5. Tests:
    - determinism: replaying the same multi-stream tape twice yields
      functions with identical observed behaviour;

@@ -75,8 +75,7 @@ type policy =
    of appending duplicates. [input]/[rpos] is the replay side; [known]
    distinguishes a stream present in the replay image (exhausting it is
    an overrun) from a brand-new stream (all draws fresh, no flags: new
-   salts appear whenever an edit changes an argument's hash, and
-   whole-stream deletion relies on absent streams sampling fresh). *)
+   salts appear whenever an edit changes an argument's hash). *)
 type stream = {
   mutable written : choice array;
   mutable wlen : int;

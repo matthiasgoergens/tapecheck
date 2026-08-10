@@ -1,5 +1,5 @@
 #!/bin/sh
-# Guard against silently DROPPING a public function.
+# Guard against silently DROPPING a top-level engine function.
 #
 # Written after a merge resolver quietly discarded resume_result,
 # resume_run and resume_run_exn -- 73 lines of one side against 1 line of
@@ -56,7 +56,7 @@ ADDED=$(comm -13 "$SB" "$SC")
 status=0
 
 if [ -n "$REMOVED" ]; then
-  echo "api-surface: FAIL -- these public names disappeared:"
+  echo "api-surface: FAIL -- these tracked engine names disappeared:"
   echo "$REMOVED" | sed --expression='s/^/  - /'
   echo ""
   echo "  If the removal is deliberate, run with --update and commit."
@@ -65,7 +65,7 @@ if [ -n "$REMOVED" ]; then
 fi
 
 if [ -n "$ADDED" ]; then
-  echo "api-surface: FAIL -- these public names are not in the baseline:"
+  echo "api-surface: FAIL -- these tracked engine names are not in the baseline:"
   echo "$ADDED" | sed --expression='s/^/  + /'
   echo ""
   echo "  Additions are fine, but the baseline has to record them or they"
@@ -75,6 +75,6 @@ if [ -n "$ADDED" ]; then
 fi
 
 if [ "$status" -eq 0 ]; then
-  echo "api-surface: ok, $(wc -l < "$BASE") public names"
+  echo "api-surface: ok, $(wc -l < "$BASE") tracked top-level engine names"
 fi
 exit "$status"

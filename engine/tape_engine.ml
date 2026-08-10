@@ -5,9 +5,9 @@
 
    Pass schedule ported from the proptest tape engine
    (proptest-rs/proptest#658): one all-choices-to-target attempt, then
-   rounds of lower-and-delete (the length-prefix pass), whole-stream
-   deletion, redistribution, and per-choice minimization with
-   bisection, to a fixpoint under an attempt budget.
+   rounds of lower-and-delete (the length-prefix pass), redistribution,
+   and per-choice minimization with bisection, to a fixpoint under an
+   attempt budget.
 
    Streams (design/stream-keyed-tapes.md): a tape is an image (main
    stream plus keyed sub-streams for split-off PRNG states, i.e.
@@ -1500,10 +1500,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     !improved
   in
 
-  (* Delete an entire sub-stream: those draws resample fresh on replay
-     (an absent stream is not an overrun), which in practice pushes
-     generated functions toward constant observed behaviour. The main
-     stream (segment 0) is never deleted. *)
   (* Move weight from an earlier integer choice to the next integer
      after it in the same stream, preserving their sum: [27, 23]
      becomes [0, 50], after which lower-and-delete can drop the zero.

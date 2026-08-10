@@ -194,8 +194,8 @@ entire integration. Details and design history:
 `Generator.fn` splits the random state. Split-off streams used to be
 untaped, so generated functions did not shrink at all; stream-keyed
 tapes fixed that, and `test_bq/test_fn_shrink.ml` pins it — `fn/point`
-reaches `f(0)=100` in 16 attempts, `fn/sum` reaches `f(1)+f(2)=100` in
-22, and no orphan seed shrinks to a stuck result (the test asserts
+reaches `f(0)=100`, `fn/sum` reaches `f(1)+f(2)=100`,
+and no orphan seed shrinks to a stuck result (the test asserts
 that, plus that more than 15 of the 40 seeds find a failure at all; the
 run behind this paragraph found 40 of 40).
 
