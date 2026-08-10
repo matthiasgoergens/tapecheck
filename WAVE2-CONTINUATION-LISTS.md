@@ -115,3 +115,37 @@ regressions as well as the poison-list score.
 The recursive-complexity contract remains separate.  Following Hypothesis
 means introducing an explicit local cap (analogous to `max_leaves`) rather
 than making list length carry a global, implicitly shared size resource.
+
+## Adversarial-review boundary
+
+The current commit is a seam, not span-aware shrinking.  `List_element`
+surrounds only the draws made by the element generator.  Base still draws the
+final length and all size-allocation/permutation choices before those spans.
+Deleting one current span alone therefore leaves the generator expecting the
+same number of elements and normally overruns.  A useful list representation
+must put the continuation decision and element in the same structural unit,
+as Hypothesis does, or define an explicit compound edit.  Merely recording the
+new callbacks would not close the quality gap.
+
+The provisional weighted Boolean records only its result, not the probability
+parameter.  For probabilities strictly between zero and one, either Boolean
+remains a valid replay choice even if a preceding edit changes the requested
+probability; zero and one are forced and consume no choice.  This is sufficient
+for the continuation probe, but an upstream API should decide explicitly
+whether probability is sampling metadata only or part of replay validity.
+
+`with_span` guarantees a stop callback when the body raises, and tests nested
+and exceptional bodies.  It assumes observer callbacks themselves do not
+raise; otherwise a failing stop callback may mask the body's exception.  Make
+that callback contract explicit before publishing the seam.
+
+Finally, the benchmark's tight interval depends on CPU affinity.  Without
+affinity, processor-frequency transitions made the result unresolved.  The
+reproducible command used here was:
+
+```sh
+nice -n 10 ionice -c 2 -n 7 taskset --cpu-list 31 \
+  _build/default/bench_spans/bench_spans.exe
+```
+
+Logical CPU 31 is a machine-specific choice, not a portable default.

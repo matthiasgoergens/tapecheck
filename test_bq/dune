@@ -1,8 +1,8 @@
 (tests
  (names test_roundtrip test_shrink test_wrapper test_fn_shrink test_explain
-   test_resume test_stats)
+   test_resume test_stats test_sr_seam)
  (build_if
   (<> %{profile} oxcaml))
- (libraries base unix base_quickcheck splittable_random tape tape_engine)
+ (libraries base unix base_quickcheck splittable_random sr_real tape tape_engine)
  (preprocess
   (pps ppx_quickcheck ppx_sexp_conv ppx_compare ppx_let)))

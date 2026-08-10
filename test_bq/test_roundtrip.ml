@@ -21,6 +21,14 @@ let generate_with ~tape ~seed =
   Base_quickcheck.Generator.generate quickcheck_generator_point ~size:10
     ~random
 
+let legacy_list_generic ?min_length ?max_length elt_gen =
+  Base_quickcheck.Generator.bind
+    (Base_quickcheck.Generator.sizes ?min_length ?max_length ())
+    ~f:(fun sizes ->
+      List.map sizes ~f:(fun size ->
+        Base_quickcheck.Generator.with_size ~size elt_gen)
+      |> Base_quickcheck.Generator.all)
+
 let () =
   let tape = Tape.create () in
 
@@ -86,6 +94,30 @@ let () =
   let replayed_out = Tape.finish tape in
   check "weighted bool replay is editable" (not replayed);
   check "weighted bool replay does not overrun" (not replayed_out.Tape.overrun);
+
+  (* The unused span bracket must not change values or consume randomness.
+     Compare with the exact pre-span [list_generic] definition. *)
+  let compare_list_generators ~name current legacy =
+    List.iter [ 0; 1; 10; 30 ] ~f:(fun size ->
+      for seed = 0 to 249 do
+        let generate generator =
+          Base_quickcheck.Generator.generate
+            generator
+            ~size
+            ~random:(Splittable_random.of_int seed)
+        in
+        check name (List.equal Int.equal (generate current) (generate legacy))
+      done)
+  in
+  let int_gen = Base_quickcheck.Generator.int_uniform_inclusive (-100) 100 in
+  compare_list_generators
+    ~name:"list spans preserve default same-seed generation"
+    (Base_quickcheck.Generator.list int_gen)
+    (legacy_list_generic int_gen);
+  compare_list_generators
+    ~name:"list spans preserve bounded same-seed generation"
+    (Base_quickcheck.Generator.list_with_length int_gen ~length:5)
+    (legacy_list_generic int_gen ~min_length:5 ~max_length:5);
 
   Stdlib.print_endline "test_roundtrip: all passed";
   Stdlib.Printf.printf "tape length for one point: %d choices\n"

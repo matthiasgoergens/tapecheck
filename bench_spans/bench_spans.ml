@@ -61,7 +61,11 @@ let () =
   let order_random = Splittable_random.of_int 0x5a17 in
   let without_times = Array.create ~len:blocks 0. in
   let with_times = Array.create ~len:blocks 0. in
-  let without_first = Array.create ~len:blocks false in
+  let without_first = Array.init blocks ~f:(fun i -> i < blocks / 2) in
+  for i = blocks - 1 downto 1 do
+    let j = Splittable_random.int order_random ~lo:0 ~hi:i in
+    Array.swap without_first i j
+  done;
   let checksum_without = ref 0 and checksum_with = ref 0 in
   for block = 0 to blocks - 1 do
     let measure_without () =
@@ -74,7 +78,6 @@ let () =
       with_times.(block) <- elapsed;
       checksum_with := checksum
     in
-    without_first.(block) <- Splittable_random.bool order_random;
     if without_first.(block)
     then (measure_without (); measure_with ())
     else (measure_with (); measure_without ())
@@ -102,10 +105,20 @@ let () =
   let relative_effect = Float.exp average_log_ratio -. 1. in
   let effect_lo = Float.exp (average_log_ratio -. margin_95) -. 1. in
   let effect_hi = Float.exp (average_log_ratio +. margin_95) -. 1. in
+  let by_order wanted =
+    Array.filter_mapi log_ratios ~f:(fun i ratio ->
+      if Bool.equal without_first.(i) wanted then Some ratio else None)
+    |> mean
+    |> Float.exp
+    |> fun ratio -> ratio -. 1.
+  in
+  let without_first_effect = by_order true in
+  let with_first_effect = by_order false in
   Stdio.printf
     "randomised paired blocks: %d blocks x %d lists/treatment\n\
      without %.3f ns/element; with %.3f\n\
      paired geometric effect %+.2f%%, 95%% t CI [%+.2f%%, %+.2f%%]\n\
+     by order: without-first %+.2f%%, with-first %+.2f%%\n\
      mean absolute delta %+.3f ns/element (secondary)\n\
      checksum %d\n"
     blocks
@@ -115,6 +128,8 @@ let () =
     (100. *. relative_effect)
     (100. *. effect_lo)
     (100. *. effect_hi)
+    (100. *. without_first_effect)
+    (100. *. with_first_effect)
     average_delta
     !checksum_without
   ;
