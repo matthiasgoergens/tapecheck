@@ -1,8 +1,10 @@
-(* Drop-in replacement for Base_quickcheck.Test: same Config, same
-   (module S) argument, and the full run/run_exn/result/with_sample API. The
-   module's quickcheck_shrinker is accepted and ignored; shrinking is
-   the tape engine's replay-based search over quickcheck_generator.
-   Existing suites switch by replacing the module name. *)
+(* Source-compatible replacement for ordinary Base_quickcheck.Test calls:
+   same Config and (module S) shape, and the same five callable entry points.
+   It is not a semantic implementation of the Base Test module type:
+   [with_sample] retains Base's stock sequence rather than previewing this
+   module's taped, edge-biased [run] sequence, and [quickcheck_shrinker] is
+   accepted but ignored. Shrinking is the tape engine's replay-based search
+   over [quickcheck_generator]. *)
 
 open! Base
 module Config = Base_quickcheck.Test.Config

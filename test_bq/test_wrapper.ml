@@ -18,9 +18,10 @@ end
 let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
 let () =
-  (* [with_sample] and [with_sample_exn] complete the
-     [Base_quickcheck.Test] source-compatible surface.  Examples precede the
-     configured number of generated values, just as they do upstream. *)
+  (* [with_sample] and [with_sample_exn] complete the callable, source-level
+     surface. They deliberately retain Base's stock sampler rather than
+     previewing Tape_test.run. Examples precede the configured number of
+     generated values, just as they do upstream. *)
   let sample_config =
     { Tape_test.default_config with
       seed = Deterministic "with-sample"

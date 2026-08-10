@@ -114,14 +114,16 @@ as well as reducers. It no longer does.
 
 ## Usage
 
-`Tape_test` mirrors the full `Base_quickcheck.Test` surface (same `Config`,
-same `(module S)`, and `run`, `run_exn`, `result`, `with_sample`, and
-`with_sample_exn`); existing property calls switch by replacing the module
-name. The `quickcheck_shrinker` your types already declare is accepted and
-ignored. Sampling itself delegates to base_quickcheck because it does not
-shrink; it preserves the stock sample sequence and is not a preview of the
-edge-biased tape generation schedule used by the three test-running entry
-points.
+`Tape_test` exposes the same five callable entry points as
+`Base_quickcheck.Test` (plus the same `Config` and `(module S)` shape), so
+ordinary property calls switch by replacing the module name. This is
+source-level compatibility, not identical semantics: the
+`quickcheck_shrinker` your types already declare is accepted and ignored.
+Likewise, `with_sample` and `with_sample_exn` delegate to base_quickcheck and
+preserve its stock sample sequence. They are useful sampling utilities, but do
+**not** satisfy Base's promise to preview the values that this module's `run`
+would see: Tapecheck's three test-running entry points use their own taped,
+edge-biased generation schedule.
 
 ```ocaml
 Tape_test.run_exn
