@@ -151,12 +151,27 @@ measurement, leaving two.
 
   So this is not a free win, and it is a bigger change than it first
   looks: it needs matching shrinker work, not just a generator change.
-  One encouraging detail — tapecheck already has a `delete_streams` pass
-  that measures **0 attempts on every property**, dormant only because
-  nothing ever splits. Under split generators it becomes the
-  element-deletion primitive, and `pass_to_descendant` becomes
-  promote-a-substream. The machinery is half-built for a world that does
-  not currently exist.
+  There *was* an encouraging detail here: tapecheck had a
+  `delete_streams` pass measuring 0 attempts on every property, dormant
+  only because nothing ever splits, which under split generators would
+  become the element-deletion primitive.
+
+  **It was removed on 2026-08-09 (issue #8), and the encouraging reading
+  did not survive being measured.** It is not that the pass had no
+  workload; it is that on the workload built specifically to favour it —
+  a generated function probed at twelve arguments where only one decides
+  the verdict, so eleven whole streams are removable noise — it reached
+  the *same* minimal while costing 38% more attempts (63 against 39).
+  The existing fn tests agree: identical minimals, 16→15, 22→18 and 7→5
+  attempts without it, and the whole challenge suite at n=1000 is
+  byte-identical with it gone. A pass that cannot pay on its own best
+  case is not half-built machinery, it is cost.
+
+  If split generators ever land, the element-deletion primitive should
+  be written against the structure that actually exists then, rather
+  than resurrected from this one on the strength of the name matching.
+  `probe_deadpasses/` is kept so that argument can be re-run rather than
+  re-remembered.
 
   Whether the change is a good idea remains open. It is a breaking change
   to generated values (versionable, per the discussion below), it costs
