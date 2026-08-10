@@ -4,8 +4,8 @@ Research note, 2026-07-31. Two questions from Matthias, both answered by
 reading Hypothesis rather than inventing:
 
 1. Should the budget count *successful* shrinks differently from failed ones?
-2. Can the ~5.5x shrink-attempt overhead be reduced by trying candidates in a
-   better order?
+2. Can the tape engine's repeated, unsuccessful proposals be reduced by trying
+   candidates in a better order?
 
 Yes to both, and Hypothesis has developed answers to each. Source references
 are to `~/prog/python/hypothesis/hypothesis-python/src/hypothesis/internal/conjecture/`.
@@ -17,10 +17,11 @@ roughly fifteen shrink loops gate on `!attempts < budget`. Successful and failed
 attempts are charged identically, and there is a single flat ceiling. That is
 the opposite of Hypothesis on every axis below.
 
-Measured consequence (`head_to_head/VERIFICATION.md`): 77.3 attempts vs
-qcheck-stm's 13.9 on a property where the tape reaches the *same* minimal answer
-— about 5.5x for no benefit. On the adversarial scenario the extra attempts are
-the mechanism rather than waste, but the ordinary case is a real cost.
+Measured consequence (`head_to_head/VERIFICATION.md`): the tape arm makes 77.3
+proposals on a property where both arms reach the same minimal answer. The old
+document divided that by qcheck-stm's 13.9 accepted shrink steps, but accepted
+steps and all proposals are different units. The 77.3 still motivates reducing
+duplicate and unproductive tape work; it does not support a cross-engine ratio.
 
 ## Question 1: budget accounting
 
@@ -58,7 +59,7 @@ There is also a floor (`shrinker.py:705-708`) guaranteeing enough budget to
 complete one full pass of `fixate_shrink_passes`, so the stall heuristic cannot
 cut off before every pass has been tried at least once.
 
-## Question 2: the 5.5x overhead
+## Question 2: unproductive proposal overhead
 
 Reordering is the right idea and Hypothesis does exactly it, plus three more.
 
@@ -87,8 +88,8 @@ remainder of the loop if it stops working — retried on the next loop.
 
 ## Suggested order of work
 
-1. **Exhaustion tracking (ChoiceTree analogue).** Biggest expected win on the
-   5.5x, and independent of the budget change.
+1. **Exhaustion tracking (ChoiceTree analogue).** Biggest expected win on
+   repeated proposals, and independent of the budget change.
 2. **Success-only shrink cap + refunded, adaptive stall.** Replaces the flat
    `!attempts < budget` in every loop with one `keep_going ()` predicate
    checking total ceiling, stall, and success count together. Mechanical but

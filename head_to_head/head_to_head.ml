@@ -526,7 +526,7 @@ let run_handle_stm_trial_boosted ~passes ~seed : arm_result option =
       | _ -> Some first
     end
 
-(* ---------- Run both arms over the same seeds, report ---------- *)
+(* ---------- Run both arms over the same integer seed labels, report ---------- *)
 
 type summary =
   { mutable found : int
@@ -556,14 +556,14 @@ let note (s : summary) (r : arm_result) =
   s.total_cost <- s.total_cost + r.cost;
   s.max_op_count <- max s.max_op_count r.op_count
 
-let print_summary name (s : summary) =
+let print_summary name cost_label (s : summary) =
   printf
     "  %-10s found %3d/%d, exact minimal %3d/%d, avg ops in minimal %.2f, \
-     max ops %d, avg shrink cost %.1f\n"
+     max ops %d, avg %s %.1f\n"
     name s.found trials s.exact_minimal trials
     (if s.found > 0 then Float.of_int s.total_op_count /. Float.of_int s.found
      else 0.)
-    s.max_op_count
+    s.max_op_count cost_label
     (if s.found > 0 then Float.of_int s.total_cost /. Float.of_int s.found
      else 0.);
   Option.iter s.worst ~f:(fun w -> printf "  %-10s worst non-minimal: %s\n" name w)
@@ -576,8 +576,8 @@ let run_scenario ~title ~run_tape ~run_stm =
     Option.iter (run_tape ~seed) ~f:(note tape_summary);
     Option.iter (run_stm ~seed) ~f:(note stm_summary)
   done;
-  print_summary "tapecheck" tape_summary;
-  print_summary "qcheck-stm" stm_summary
+  print_summary "tapecheck" "tape proposals" tape_summary;
+  print_summary "qcheck-stm" "accepted qcheck shrink steps" stm_summary
 
 let () =
   run_scenario

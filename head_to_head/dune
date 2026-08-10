@@ -1,6 +1,7 @@
 ; This executable is the head-to-head measurement: tapecheck's Bisim
 ; engine versus qcheck-stm, same bug (queue_fixture/fast_queue.ml),
-; same seeds. It needs qcheck/qcheck-core/qcheck-stm, which are NOT
+; the same integer seed labels (different PRNGs, so not paired inputs). It
+; needs qcheck/qcheck-core/qcheck-stm, which are NOT
 ; installed in any shared opam switch (see the task's constraint on
 ; opam install against shared switches) -- only in a local switch
 ; created under this worktree (`opam switch create ./ 5.3.0`). The

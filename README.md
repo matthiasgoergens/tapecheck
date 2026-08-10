@@ -114,10 +114,12 @@ as well as reducers. It no longer does.
 
 ## Usage
 
-`Tape_test` mirrors `Base_quickcheck.Test` (same `Config`, same
-`(module S)`, same `run`/`run_exn`/`result`); existing suites switch
-by replacing the module name. The `quickcheck_shrinker` your types
-already declare is accepted and ignored.
+`Tape_test` mirrors the full `Base_quickcheck.Test` surface (same `Config`,
+same `(module S)`, and `run`, `run_exn`, `result`, `with_sample`, and
+`with_sample_exn`); existing property calls switch by replacing the module
+name. The `quickcheck_shrinker` your types already declare is accepted and
+ignored. Sampling itself delegates to base_quickcheck because it does not
+shrink; the three test-running entry points use tape generation and shrinking.
 
 ```ocaml
 Tape_test.run_exn
@@ -239,10 +241,17 @@ integer draw on top of the ~110ns a recording tape already costs (vs.
 
 ## Building
 
+This proof-of-concept is currently consumed as a source workspace, not as an
+installable opam package. The patched `splittable_random` must sit underneath a
+recompiled `base_quickcheck`; upstream
+[splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)
+is the seam that removes that constraint. `tape.opam` is therefore a dependency
+manifest for contributors, and `opam install . --deps-only` is intentional.
+
 ```
 opam switch create 5.3.0
-opam install dune base stdio ppx_jane
-dune test
+opam install . --deps-only --with-test
+dune runtest --force
 ```
 
 (No opam install of splittable_random or base_quickcheck is needed or
@@ -251,7 +260,7 @@ used: the workspace's vendored copies shadow them; see Vendoring.)
 Building and testing need the 5.3.0 switch created above: on a switch
 missing `stdio`/`ppx_sexp_conv` and the other ppx deps, most test
 directories fail to build and dune silently runs only what remains.
-Also, plain `dune test`/`dune runtest` can exit 0 without running
+Also, plain `dune test`/`dune runtest` can exit 0 without re-running
 anything, because dune caches test actions and replays a cached success
 instead of re-executing. The reliable way to actually run the suite is
 

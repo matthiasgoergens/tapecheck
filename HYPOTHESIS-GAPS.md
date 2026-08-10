@@ -1,7 +1,8 @@
 # Where Hypothesis is still ahead
 
-Compiled 2026-08-09 at `3aa0a47`. Every number here was measured in this
-tree on that commit, or is a `grep` you can re-run; nothing is carried
+Measurements compiled 2026-08-09 at `3aa0a47`; status text refreshed during
+the Wave 1 close-out on 2026-08-10. Every number was measured in that
+tree, or is a `grep` you can re-run; nothing is carried
 over from an older write-up, because carrying numbers over is exactly
 how `CHALLENGE.md` came to report 716/1000 for a row that measures
 1000/1000.
@@ -60,8 +61,8 @@ because two of them point at the same structural cause as §3:
 
 `sort_siblings` is the interesting one and it is not simply missing.
 `engine/tape_engine.ml:1792` sets `sort_siblings_enabled = false`, with a
-recorded reason — which I re-measured at n=1000 on 2026-08-09 rather
-than quoting, and **the reason is partly stale**:
+recorded reason, re-measured at n=1000 on 2026-08-09 rather than merely
+quoted. The live engine comment now records the full trade:
 
 | challenge | stock, off | stock, on | +patch, off | +patch, on |
 |---|---|---|---|---|
@@ -77,8 +78,8 @@ What reproduces: the `large_union_list` cost penalty (the comment says
 equalises sibling draw counts (the comment says 11.6% → 69.5%, I measure
 11.6% → 64.9%, and 69.5 sits outside my 61.9–67.8 interval).
 
-What does **not** reproduce is the headline reason for keeping it off.
-The comment cites bound5 at 12.5% against 15.9% on stock; at n=1000 both
+What did **not** reproduce was the original headline reason for keeping it off.
+The old comment cited bound5 at 12.5% against 15.9% on stock; at n=1000 both
 arms are 15.8–15.9% and the pass makes no difference there. The comment
 was measured at n=100 and admits its intervals overlapped — so that half
 of the justification was noise, and it has been carrying the decision
@@ -102,8 +103,10 @@ here has an adaptive rule (earned patience).
 
 ## 3. The choice IR is narrower than Hypothesis's
 
-This is the gap I had not seen written down anywhere, and it explains
-the string result above.
+This is a real longer-term gap, though the later list-size probe showed that
+the poor list-of-strings result above is primarily caused by
+`base_quickcheck`'s anti-monotone list budget redistribution, not by the lack
+of a first-class string choice.
 
 Hypothesis's provider draws five choice types —
 `draw_boolean`, `draw_integer`, `draw_float`, `draw_string`,
@@ -150,15 +153,15 @@ and it is correct.
 - **Example database**: `engine/tape_db.ml` exists. It stores one image
   per key and a new failure overwrites it, where Hypothesis keeps
   primary/secondary/Pareto corpora. It is opt-in and manually keyed —
-  `Tape_test.result` silently does nothing unless *both* `?db` and
-  `?db_key` are passed — where Hypothesis has a default database and
+  `Tape_test.result` requires both `?db` and `?db_key` (and rejects a
+  half-configured pair) — where Hypothesis has a default database and
   derives test identity itself.
 - **Multiple bugs**: `run_multi` exists and is referenced 0 times in
   `engine/tape_test.ml`. Hypothesis reports multiple bugs on the normal
   path, under `report_multiple_bugs`.
 
-**`MINING-BACKLOG.md` is stale on the first two** — it lists `target()`
-as "queued and unstarted" and the database as absent. Both landed.
+`MINING-BACKLOG.md` now distinguishes these partial integrations from the
+richer Hypothesis surfaces that remain.
 
 ## 5. Exhaustion and determinism
 
@@ -211,15 +214,14 @@ state-dependent command generator, one initial state. Hypothesis's
 with `consumes`, `multiple()`, and rule targets. The port is coherent
 and deliberately narrow; it is not parity.
 
-## Two claims in this repo that the code does not support
+## Two audit defects fixed during the Wave 1 close-out
 
 Found while checking the above, and worth fixing regardless of the
 comparison:
 
-**`truncated_passes` is a dead counter.** Declared at
-`tape_engine.ml:575`, reset at 865, incremented at 1507, and **never
-read**. The comment at 1816 says "Report converged only if no pass was
-ever truncated", and the code at 1845 is `let converged = budget_ok ()`.
+**`truncated_passes` was a dead counter.** It was declared, reset and
+incremented but never read. A nearby comment also contradicted the deliberate
+settling semantics implemented by `let converged = budget_ok ()`.
 
 That looks like a bug and codex reported it as one. It is not: the
 longer comment immediately below (1822-1844) deliberately reverses the
@@ -227,15 +229,12 @@ earlier one, on the reasoning that a pass stopping after
 `max_pass_failures` *has* settled, so more budget would change nothing —
 and records that an earlier version which kept the flag true cost 3.6x
 down to 2x. The code implements the later decision. What is wrong is
-that the superseded comment was left sitting above it, contradicting it,
-next to a counter that no longer does anything. It misled a careful
-reader on its first encounter, which is the definition of a comment
-worth deleting.
+that the superseded comment and dead counter were left behind. Both are now
+removed.
 
-**`Tape_db.save` uses a fixed temporary name.** `tape_db.ml:185` writes
-`file ^ ".tmp"` then renames. Two processes saving the same key race on
-that one path. The rename-for-atomicity is right; the fixed name defeats
-it.
+**`Tape_db.save` used a fixed temporary name.** It now creates a unique
+temporary file in the database directory before the atomic rename, so two
+writers no longer share a staging path.
 
 ## How the three passes disagreed
 

@@ -1,56 +1,40 @@
-# What is on master, and what is not
+# Integration status
 
-Updated 2026-07-31 after upstreaming.
+Updated 2026-08-10 on `wave1/finish`.
 
-## Merged and pushed
+## Wave 1 integrated locally
 
-- **`budgets-and-resume`** (34 commits) — the shrinker investigation and
-  everything that came out of it: the per-pass failure cutoff,
-  `find_integer`, `lower_together` (the zig-zag defence), the failure
-  database (`tape_db.ml`), non-deterministic generator detection (**available but NOT wired into `run`/`resume`/`Tape_test` — only diagnostic tests call it**), the
-  `~domains` clamp, the regression guard, all the diagnostic probes, and
-  the write-ups.
-- **`stateful-testing`** (10 commits) — `Stateful`, `Bisim`, the
-  per-operation mutual-raise health check and its adversarial tests, and
-  the head-to-head against `qcheck-stm` with its independent
-  verification.
+The unchanged-generator path is complete in this integration branch. It
+contains budgets and resumable shrinking, database replay, determinism checks,
+statistics and health checks, generated-function streams, parallel execution,
+stateful and bisimulation testing, targeting and multi-failure kernels, plus
+the domain identity/order correction and their property laws.
 
-Both merged cleanly. Full `dune test` passes on the merged tree: all
-nine regression guards, the bisim health and adversarial assertions,
-stateful shrink-coherence, resume, explain, round-trip, fn-shrink.
+The remaining Wave 1 topic branches were consolidated here: the dead-pass
+cleanup, challenge refresh and two-sided guard, documentation/test fixes,
+`non_uniform` proposal evidence, relation verification, structural identity
+laws, `sort_siblings` evidence, and the current Hypothesis-gap inventory.
+`Tape_test` now also exposes `with_sample` and `with_sample_exn`, rejects a
+half-configured database, reports explicit-example failures, and database
+writes use unique same-directory temporary files.
 
-## NOT merged: `statistics-and-health`
+This is local integration status, not publication status: nothing in this
+branch has been pushed by the Wave 1 close-out. The full forced suite and API
+surface guard are the acceptance checks.
 
-Conflicts in three files, aborted rather than resolved at the end of a
-long session:
+## Deliberately outside Wave 1
 
-```
-CONFLICT (content): engine/tape_test.ml
-CONFLICT (content): test_bq/dune
-Recorded preimage for 'engine/tape_engine.ml'
-```
+- `docs/wave-2-design`: generator-aware spans and the later pass work.
+- `bug/nested-list-length`: the reproducer for anti-monotone list budgeting.
+- `wave2/monotone-list-sizes`: the list-generator rewrite and its unresolved
+  size-bound/distribution trade-off.
+- `hypothesis-baseline`: the separate Python comparison harness.
 
-The branch is RO6 work — `event()`/discard counting and Hypothesis's four
-health checks — plus two real bug fixes made while building it:
-`assume`'s exception being swallowed by `Or_error` wrapping (every
-discard became a false failure), and `data_too_large` unreachable via
-double-counting.
+## External publication dependency
 
-It conflicts because `tape_engine.ml` has changed a great deal on master
-since that branch was cut — the cutoff, `find_integer`, `lower_together`,
-the database hooks and the determinism check all landed after it. The
-merge wants doing deliberately, with the guard suite as the check, not
-squeezed in at the tail of a session.
-
-Worth noting the ordering cost, which is the same one flagged in
-`MULTI-BUG.md`: branches cut before the engine work get dearer to merge
-the longer they wait. This one should go next, before anything else
-touches `tape_engine.ml`.
-
-## Also unmerged
-
-- `experiment/try-both-realign` — 0 commits ahead of master; already in.
-- `hypothesis-baseline` — deliberately separate, unrelated history. It is
-  the Python comparison harness and does not belong in the OCaml tree;
-  people who just want to use tapecheck should not get the Python
-  baggage.
+The repository remains a source-workspace proof of concept rather than an opam
+package. A linked consumer needs the patched `splittable_random` underneath a
+recompiled `base_quickcheck`; upstream `janestreet/splittable_random#2` is still
+open. Vendoring proves the unchanged-generator integration, but publishing the
+vendored libraries under the same findlib names would conflict with the normal
+packages rather than constitute a safe drop-in release.

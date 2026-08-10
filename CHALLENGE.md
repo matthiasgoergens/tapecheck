@@ -30,6 +30,18 @@ first:
   and everything about a generation budget two thousand times too
   small. At matched budget it is 100/100. **The corrected numbers are
   the ones below.**
+- The current tapecheck harness uses that one-million generation budget by
+  default, but overrides `calculator` to 20,000 and `bound5` to 200,000.
+  Those lower caps make failures harder to find and therefore do not flatter
+  tapecheck's normalisation score, but they are an asymmetry and are now stated
+  explicitly. `calculator` also runs at size 8 because the corresponding
+  `recursive_union` grows exponentially at the default size 30.
+- Tapecheck shrinking is capped at 20,000 total replay proposals, 500 accepted
+  shrinks, and 20 consecutive failures within a pass. Hypothesis uses its own
+  accepted-shrink and stall limits rather than those exact controls. The total
+  tape budget was non-binding in these measurements (the largest observed run
+  used 3,584 proposals), but the protocols are not identical and the table
+  should be read as comparative evidence, not a controlled timing benchmark.
 
 ## Results
 
@@ -90,7 +102,8 @@ at-or-below against 93 exact.
 headline and it is not close. It is also better than their own 2020
 report, so it is current work rather than legacy.
 
-**tapecheck reaches full normalisation on three of nine** — the three `difference` variants.
+**tapecheck reaches full normalisation on four of nine** — `lengthlist` and the
+three `difference` variants.
 
 **bound5's score is not a shrink-quality result at all, in either
 column.** Measured directly over 1000 runs (`diag2/probe_bound5.ml`):
@@ -227,7 +240,8 @@ arrangement for a recursive generator.
 
 `binheap` is the eleventh upstream case, a GENERATION challenge rather
 than a shrinking one, and is implemented in `challenge/challenge.ml`.
-Measured at n=100 a side, same seeds:
+Measured at n=100 a side, using the same integer seed labels (the different
+engines do not thereby receive paired generated inputs):
 
 | | exact | 95% CI | <= optimal size | distinct | mean evaluations |
 |---|---|---|---|---|---|
