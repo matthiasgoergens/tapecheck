@@ -160,7 +160,7 @@ let () =
   let bytes = Tape.serialize_image main_only in
   check "serial/main-only emits v1" (Char.equal bytes.[0] '\001');
   (match Tape.deserialize bytes with
-   | Some arr -> check "serial/v1 readable" (Tape.compare_shortlex arr img.Tape.main = 0)
+   | Some arr -> check "serial/v1 readable" (Tape.equal_choices arr img.Tape.main)
    | None -> check "serial/v1 readable" false)
 
 let () =

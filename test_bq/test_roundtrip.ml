@@ -37,8 +37,11 @@ let () =
   let out2 = Tape.finish tape in
   check "replay reproduces the exact value" (equal_point v1 v2);
   check "replay is not overrun" (not out2.Tape.overrun);
+  (* This asserts identity of the recording, not equality in the shrink
+     preorder. Distinct choices can have the same distance from their targets
+     and therefore compare equal under [compare_shortlex]. *)
   check "replay re-records the same tape"
-    (Tape.compare_shortlex out1.Tape.choices out2.Tape.choices = 0);
+    (Tape.equal_choices out1.Tape.choices out2.Tape.choices);
 
   (* Sanity: different seeds without a tape give different values
      (so the reproduction above is not vacuous). *)
