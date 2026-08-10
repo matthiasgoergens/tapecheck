@@ -95,11 +95,13 @@ libraries have no `public_name`, blocked on
 (the intercept-seam PR). The `pkgs/` packaging here is a proof of concept for
 what the installable shape could look like: the shim *is* the
 `splittable_random` package (with `Tape` as an extra module), so downstream
-opam builds get tape recording for free once the seam lands upstream. Remaining
-questions for integration:
+opam builds get tape recording for free once the seam lands upstream. Current
+integration shape and remaining questions:
 
-- Should `pkgs/` be generated from `vendor/` (single source of truth) instead
-  of checked in as copies?
+- `pkgs/` is a generated snapshot of the canonical `engine/`, `tape/`, and
+  `vendor/` sources. Refresh it with
+  `scripts/sync_consumer_snapshot.sh --update`; the root `runtest` alias and CI
+  compare every copied `.ml`/`.mli`, including the ppx sources.
 - The engine (`Tape_test` and friends) still needs its own public names and an
   opam package; here it is just copied into the consumer workspace.
 - Version alignment: the shims are v0.17-based while the Jane Street bleeding

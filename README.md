@@ -298,29 +298,48 @@ swap a library underneath it. For base_quickcheck to draw through the
 tape shim it must be recompiled against the shim, and a dune
 workspace with vendored sources is the only way to arrange that
 without touching your opam switch. It doubles as the proof of the
-zero-changes claim: the vendored copies are pristine release
-tarballs, and the short list of exceptions is right here. (Two paths
+zero-changes claim: the vendored copies are pinned release sources
+plus the short, reviewed patches in `vendor/patches/`. (Two paths
 make the copies unnecessary later: an `opam pin` of a patched
 splittable_random, which would rebuild the whole switch against the
 shim, or upstreaming the tape hooks, a dozen functions defaulting to
 no-ops.)
 
 This repo is MIT (LICENSE.md). `vendor/` contains Jane Street code,
-also MIT, vendored from the v0.17 opam release tarballs with a
-LICENSE.md in each directory:
+also MIT. `vendor/upstream.lock` pins both the release tag and peeled
+Git commit: base_quickcheck v0.17.1 at `f8035fdf...` and
+splittable_random v0.17.0 at `0f4a6ef5...`. Their LICENSE.md is kept
+with each copied component:
 
 - `vendor/base_quickcheck`: unmodified except the dune file (dropped
   `public_name`) and one portability fix in `generator.ml`
   (deduplication via `Set.Using_comparator` instead of a `Comparator`
   record field, for Base v0.17/v0.18 compatibility).
 - `vendor/sr_real`: `splittable_random`'s implementation, module
-  renamed, with a small Base v0.17/v0.18 compat block and upstream's
-  inline test/bench blocks stripped (they use APIs that drifted in
-  v0.18 previews; originals in the release tarball).
+  renamed, with the interception seam and split/perturb hook propagation,
+  a small Base v0.17/v0.18 compat block, and upstream's inline test/bench
+  blocks stripped (they use APIs that drifted in v0.18 previews; originals
+  are recoverable by reversing the declared patch).
 - `vendor/splittable_random`: OUR shim, implementing the upstream
   public interface over `sr_real` plus the tape hooks.
 - `vendor/ppx_quickcheck{,_expander,_runtime}`: unmodified except dune
   files (names, workspace-local runtime deps, oxcaml profile gate).
+
+The source provenance is executable rather than documentary:
+
+```
+./scripts/check_vendor_provenance.sh
+./scripts/refresh_vendor.sh
+./scripts/sync_consumer_snapshot.sh --check
+```
+
+The check fetches each pinned tag, rejects a changed tag-to-commit mapping,
+applies the declared patches to a temporary checkout, and byte-compares every
+upstream-derived vendored `.ml`, `.mli`, and licence. The locally authored
+`vendor/splittable_random` shim is covered by normal tests and snapshot checks,
+not by upstream provenance. The refresh command regenerates the canonical
+upstream-derived copies and then the package-shaped Core consumer; it does not
+copy dune/opam packaging templates. CI runs both check-only paths.
 
 ## Status
 

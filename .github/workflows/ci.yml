@@ -11,6 +11,20 @@ on:
 # built here.
 
 jobs:
+  vendor-provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Resolve each claimed release tag, verify its peeled commit, apply the
+      # reviewed patches, and byte-compare every upstream-derived vendored
+      # OCaml source. This job intentionally needs no OCaml installation.
+      - run: ./scripts/check_vendor_provenance.sh
+
+      # The Core-dependent dogfood has package-shaped generated copies. Check
+      # all of them, including the ppx sources, rather than a sample.
+      - run: ./scripts/sync_consumer_snapshot.sh --check
+
   build-and-test:
     strategy:
       fail-fast: false

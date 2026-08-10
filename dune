@@ -14,30 +14,21 @@
  (alias runtest)
  (deps
   scripts/check_consumer_snapshot.sh
-  engine/tape_db.ml
-  engine/tape_engine.ml
-  engine/tape_explain.ml
-  engine/tape_health.ml
-  engine/tape_stats.ml
-  engine/tape_test.ml
-  tape/tape.ml
-  vendor/splittable_random/splittable_random.ml
-  vendor/sr_real/sr_real.ml
-  vendor/sr_real/sr_real.mli
-  vendor/base_quickcheck/generator.ml
-  vendor/base_quickcheck/generator.mli
-  bonsai-tapecheck-hunt/engine/tape_db.ml
-  bonsai-tapecheck-hunt/engine/tape_engine.ml
-  bonsai-tapecheck-hunt/engine/tape_explain.ml
-  bonsai-tapecheck-hunt/engine/tape_health.ml
-  bonsai-tapecheck-hunt/engine/tape_stats.ml
-  bonsai-tapecheck-hunt/engine/tape_test.ml
-  bonsai-tapecheck-hunt/pkgs/splittable_random/src/tape.ml
-  bonsai-tapecheck-hunt/pkgs/splittable_random/src/splittable_random.ml
-  bonsai-tapecheck-hunt/pkgs/splittable_random/src/sr_real.ml
-  bonsai-tapecheck-hunt/pkgs/splittable_random/src/sr_real.mli
-  bonsai-tapecheck-hunt/pkgs/base_quickcheck/src/generator.ml
-  bonsai-tapecheck-hunt/pkgs/base_quickcheck/src/generator.mli)
+  scripts/sync_consumer_snapshot.sh
+  (source_tree engine)
+  (source_tree tape)
+  (source_tree vendor/splittable_random)
+  (source_tree vendor/sr_real)
+  (source_tree vendor/base_quickcheck)
+  (source_tree vendor/ppx_quickcheck)
+  (source_tree vendor/ppx_quickcheck_expander)
+  (source_tree vendor/ppx_quickcheck_runtime)
+  (source_tree bonsai-tapecheck-hunt/engine)
+  (source_tree bonsai-tapecheck-hunt/pkgs/splittable_random/src)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/src)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/ppx_quickcheck)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/expander)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/runtime))
  (action (run sh %{dep:scripts/check_consumer_snapshot.sh})))
 
 ; Fail fast on profile/compiler mismatches: an OxCaml switch without
