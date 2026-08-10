@@ -71,8 +71,14 @@ let () =
   (* Regression persistence: a shrunk failure saves a tape; a rerun
      replays the exact value before generating anything; a corrupt
      line fails loudly. *)
-  let reg_file = Stdlib.Filename.temp_file "tape_test_regressions" ".txt" in
-  Stdlib.Sys.remove reg_file;
+  (* In the test's own directory, not /tmp. Same reasoning as
+     test_db_wired.ml: dune gives each test a private directory, whereas
+     a shared /tmp path is a predictable name that two concurrent
+     checkouts can collide on. Filename.temp_file also LEAVES the file
+     behind on the shared path, which this test then immediately removes
+     only to recreate -- a window another run can land in. *)
+  let reg_file = "test_wrapper_regressions.txt" in
+  (try Stdlib.Sys.remove reg_file with Sys_error _ -> ());
   let gen_module =
     (module struct
       type t = pair [@@deriving sexp_of]

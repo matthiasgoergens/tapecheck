@@ -31,7 +31,9 @@
    same 34 leaf positions:
 
      Hypothesis 6.152.9   34/34   (their own test, 6 cases, all pass)
-     tapecheck            10/34
+     tapecheck            12/34   (10/34 when first measured; the two
+                                   extra positions came with later
+                                   shrink passes, re-measured 2026-08-08)
 
    And the failure has a shape rather than being noise. Positions 0 and
    1 reduce fully; from position 2 on, the surviving tree grows
@@ -197,17 +199,24 @@ let () =
   let total = List.sum (module Int) results ~f:snd in
   Stdio.printf "\n  overall: %d/%d\n\n" ok total;
   (* The floor is a recorded measurement, not an aspiration. Hypothesis
-     passes this at 34/34; we measured 10/34. The assertion exists so
+     passes this at 34/34; we measured 12/34. The assertion exists so
      the number cannot silently get worse -- and so that if it gets
      BETTER, someone is told, because that would mean a pass landed that
-     we did not think we had. *)
-  Test_support.report "poison-position rate has not regressed" (ok >= 10)
-    (Printf.sprintf "%d/%d (floor 10, Hypothesis 34/34)" ok total);
+     we did not think we had.
+
+     Raised 10 -> 12 on 2026-08-08 (issue #12). The NOTE below had been
+     firing on every run since the passes that earned the extra two
+     positions landed, which is the failure mode this whole file exists
+     to avoid: a guard that prints "raise the floor" indefinitely is
+     protecting the OLD number, so a regression from 12 back to 10 would
+     have passed silently. *)
+  Test_support.report "poison-position rate has not regressed" (ok >= 12)
+    (Printf.sprintf "%d/%d (floor 12, Hypothesis 34/34)" ok total);
   Test_support.report "the benchmark actually ran" (total = 34)
     (Printf.sprintf "%d testable positions (expected 34)" total);
-  if ok > 10 then
+  if ok > 12 then
     Stdio.printf
-      "\n  NOTE: %d/%d beats the recorded 10/34. If a shrink pass changed,\n\
+      "\n  NOTE: %d/%d beats the recorded 12/34. If a shrink pass changed,\n\
       \        raise the floor and update the header measurement.\n"
       ok total;
   Test_support.finish ~name:"test_poison" ()

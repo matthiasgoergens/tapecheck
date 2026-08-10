@@ -127,8 +127,19 @@ let () =
   Stdio.printf "  ~replay:false reads nothing:         %b\n"
     (not replay_off_reads);
   (* Write-failure policy. An unwritable directory is simulated with a
-     path under a regular FILE, so mkdir and open both fail. *)
-  let blocked = "/etc/hostname/nope" in
+     path under a regular FILE, so mkdir and open both fail.
+
+     The file is one we create in the test's own directory, which dune
+     gives each test to itself. This used to be "/etc/hostname/nope",
+     which assumes /etc/hostname exists AND is a regular file -- true on
+     Linux, not guaranteed anywhere else, and the test would have
+     reported a spurious pass on a system where the path simply does not
+     exist, because then mkdir fails for a different reason and the
+     assertions below still hold. Making the file ourselves means the
+     precondition is established rather than assumed. *)
+  let blocker = "blocker_not_a_directory" in
+  Stdio.Out_channel.write_all blocker ~data:"";
+  let blocked = Stdlib.Filename.concat blocker "nope" in
   let warned = ref false in
   let db_warn = Tape_db.create ~dir:blocked () in
   let db_silent = Tape_db.create ~dir:blocked ~on_write_error:Tape_db.Silent () in
@@ -143,6 +154,9 @@ let () =
   let raise_raised =
     try Tape_db.save db_raise ~key img; false with _ -> true
   in
+  (* The blocker file is ours, so remove it: under dune test it lands in
+     the sandbox, but a direct [dune exec] run litters the worktree. *)
+  (try Stdlib.Sys.remove blocker with Stdlib.Sys_error _ -> ());
   Stdio.printf "  default Warn survives a bad dir:     %b\n" warn_survived;
   Stdio.printf "  Silent survives a bad dir:           %b\n" silent_survived;
   Stdio.printf "  Raise turns it into an error:        %b\n" raise_raised;

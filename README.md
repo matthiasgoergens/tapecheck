@@ -165,7 +165,15 @@ on `Generator.fixed_point`/`recursive_union` memoize through OCaml's
 `Lazy`, which is not concurrency-safe, and a race surfaces as a raised
 exception (never a hang or corruption; the engine re-raises worker
 exceptions on the calling domain). On a rare-failure workload with a
-~100us test body the pool is a 4.6x wall-clock win at 8-16 domains.
+~100us test body the pool is a 6.3x wall-clock win at 8 domains and
+11.9x at 16 — but only while the run is dominated by GENERATION. When
+shrinking dominates it is a net **loss**: 0.86x at 8 domains and 0.70x
+at 32, because speculative batch evaluation raises the attempt count
+(582 sequential to 1618 at 32 domains) without shortening the critical
+path. `bench_domains/` measures all three cases; raw output in
+`../tapecheck-notes/bench-domains-20260809.txt`. A single "parallel
+speedup" number for this engine would be a choice of workload rather
+than a property of the pool.
 
 ## How the interception works
 
@@ -179,9 +187,13 @@ base_quickcheck compiles against the shim unmodified; that is the
 entire integration. Details and design history:
 [design/choice-tape-for-base-quickcheck.md](design/choice-tape-for-base-quickcheck.md).
 
-Known limitation: `Generator.fn` splits the random state; split-off
-streams are untaped, so generated functions do not shrink (Hypothesis
-has the same limitation).
+`Generator.fn` splits the random state. Split-off streams used to be
+untaped, so generated functions did not shrink at all; stream-keyed
+tapes fixed that, and `test_bq/test_fn_shrink.ml` pins it — `fn/point`
+reaches `f(0)=100` in 16 attempts, `fn/sum` reaches `f(1)+f(2)=100` in
+22, and no orphan seed shrinks to a stuck result (the test asserts
+that, plus that more than 15 of the 40 seeds find a failure at all; the
+run behind this paragraph found 40 of 40).
 
 ## Edge-case-biased generation
 
@@ -193,7 +205,7 @@ towards in the first place — an exact bound, zero, or (famously,
 one number being an exact multiple of another. This is a direct port
 of [Python Hypothesis](https://hypothesis.readthedocs.io/)'s
 Conjecture provider
-([`draw_integer`/`draw_float`](outreach/hypothesis-sources/providers_hypothesis.py)):
+([`draw_integer`/`draw_float`](https://github.com/HypothesisWorks/hypothesis/blob/master/hypothesis-python/src/hypothesis/internal/conjecture/providers.py)):
 a fresh draw (nothing recorded on the tape yet to replay) rolls a
 biased distribution instead of a plain uniform one — a boundary
 candidate (the range's ends, one step in from each, the shrink target)
