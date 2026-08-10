@@ -1753,16 +1753,40 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let improved = minimize_choices () || improved in
     pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
     let improved = lower_together () || improved in
-    (* OFF by default. Measured on the Shrinking Challenge: against the
-       STOCK vendored base_quickcheck this pass is a net negative --
-       bound5 12.5% (8.6-17.8) against 15.9% (13.7-18.3), overlapping
-       or slightly worse, and large_union_list costs 23% more (1296 ->
-       1590 evaluations) for no gain. It only pays once
-       proposals/base_quickcheck-non_uniform.patch equalises sibling
-       draw counts, and then it pays a lot: distinct goes 11.6% -> 69.5%
-       with distinct answers collapsing from 34 to 4. Since we ship
-       against stock, it stays off until that lands or the signature
-       heuristic is sharpened. See SORT-SIBLINGS.md. *)
+    (* OFF by default. See SORT-SIBLINGS.md.
+
+       RE-MEASURED 2026-08-09 at n=1000 on both arms, because the
+       original justification was taken at n=100 and half of it turned
+       out to be noise. Exact scores per 1000 runs:
+
+                        stock off  stock on  +patch off  +patch on
+         distinct               0         0         116        649
+         reverse                0         0         452        487
+         binheap               93       110          93        110
+         bound5               158       159          52          0
+         calculator            16        12          14         14
+         large_union_list  1338.8    1671.1      1306.2     1560.9   (evals)
+
+       What held up: the large_union_list cost penalty (~25%, for no
+       gain in either arm), and the big distinct win once the patch
+       equalises sibling draw counts.
+
+       What did NOT hold up, and was the stated reason for keeping this
+       off: bound5 was recorded as 12.5% against 15.9% on stock. At
+       n=1000 both arms are 15.8-15.9% -- the pass does nothing there.
+       The original note admits its intervals overlapped; it should not
+       have been load-bearing.
+
+       Two effects the original missed: binheap gains 93 -> 110 on stock
+       (299 -> 327 at-or-below optimal size), and bound5 collapses
+       52 -> 0 on the patched arm.
+
+       So the honest summary is a trade in BOTH arms, not "inert on
+       stock, decisive with the patch". On stock it is now +17 binheap
+       against -4 calculator at ~25% more evaluations on one challenge,
+       which is no longer obviously negative. Left OFF pending a
+       decision rather than flipped, because that is a shipping default
+       and the call is not mine to make silently. *)
     let sort_siblings_enabled = false in
     let improved =
       if sort_siblings_enabled then begin
