@@ -154,7 +154,8 @@ let () =
   (match Tape.deserialize_image (Tape.serialize_image img) with
    | None -> check "serial/v2 round-trip parses" false
    | Some img' ->
-     check "serial/v2 round-trip equal" (Tape.compare_image img img' = 0));
+     (* Structural identity, not shrink-order rank: see test_resume. *)
+     check "serial/v2 round-trip equal" (Tape.equal_image img img'));
   let main_only = Tape.image_of_main img.Tape.main in
   let bytes = Tape.serialize_image main_only in
   check "serial/main-only emits v1" (Char.equal bytes.[0] '\001');
