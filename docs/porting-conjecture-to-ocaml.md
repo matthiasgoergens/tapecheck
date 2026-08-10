@@ -104,20 +104,24 @@ substantially since (`reverse` went from mean 45.95 evaluations to
 
 | challenge | Hypothesis 6.164.0 | tapecheck |
 |---|---|---|
-| reverse | **1000/1000**, 17.7 | 0/1000, 285.5 |
-| distinct | **1000/1000**, 49.1 | 0/1000, 424.4 |
-| large_union_list | **1000/1000**, 211.3 | 0/1000, 1295.6 |
-| calculator | **1000/1000**, 103.3 | 17/1000, 886.1 |
-| bound5 | **1000/1000**, 154.8 | 159/1000, 266.9 |
-| lengthlist | **1000/1000**, 87.9 | 683/1000, 283.3 |
-| difference (= 0) | 1000/1000, 40.5 | 1000/1000, 94.0 |
-| difference (small) | 1000/1000, 721.6 | 1000/1000, **93.5** |
-| difference (= 1) | 1000/1000, 885.2 | 1000/1000, **94.6** |
+| reverse | **1000/1000**, 17.7 | 0/1000, 293.8 |
+| distinct | **1000/1000**, 49.1 | 0/1000, 436.7 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1338.8 |
+| calculator | **1000/1000**, 103.3 | 16/1000, 912.0 |
+| bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 |
+| lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 |
+| difference (= 0) | 1000/1000, 40.5 | 1000/1000, 98.0 |
+| difference (small) | 1000/1000, 721.6 | 1000/1000, **97.5** |
+| difference (= 1) | 1000/1000, 885.2 | 1000/1000, **98.6** |
 
-Cells are `normalised / mean evaluations`, 1000 runs each.
+Cells are `normalised / mean evaluations`, 1000 runs each. tapecheck
+column re-measured 2026-08-08 at `3aa0a47`; see `CHALLENGE.md` for the
+patched arm and the four later-ported cases.
 
-Hypothesis normalises all nine at 1000/1000. tapecheck reaches full normalisation on three — the difference family. That
-is the headline and it is not close.
+Hypothesis normalises all nine at 1000/1000. tapecheck reaches full
+normalisation on four — the difference family, and lengthlist, which
+was 683/1000 when this was written and is the one row the computed
+repair moved. That is still the headline and it is still not close.
 
 The rest of this post is what happened when I went through the losses
 one at a time, because each turned out to have a different cause and

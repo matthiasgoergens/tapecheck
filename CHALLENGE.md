@@ -40,19 +40,49 @@ change to `base_quickcheck` described in
 
 | challenge | Hypothesis 6.164.0 | tapecheck | tapecheck +patch |
 |---|---|---|---|
-| reverse | **1000/1000**, 17.7 | 0/1000, 285.5 | 452/1000, 275.6 |
-| distinct | **1000/1000**, 49.1 | 0/1000, 424.4 | 116/1000, 421.6 |
-| large_union_list | **1000/1000**, 211.3 | 0/1000, 1295.6 | 0/1000, 1255.5 |
-| calculator | **1000/1000**, 103.3 | 17/1000, 886.1 | 15/1000, 874.9 |
-| bound5 | **1000/1000**, 154.8 | 159/1000, 266.9 | 52/1000, 281.9 |
-| lengthlist | **1000/1000**, 87.9 | 716/1000, 261.0 | 716/1000, 261.0 |
-| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, 94.0 | 1000/1000, 94.0 |
-| difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **93.5** | 1000/1000, **93.5** |
-| difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **94.6** | 1000/1000, **94.6** |
+| reverse | **1000/1000**, 17.7 | 0/1000, 293.8 | 452/1000, 284.4 |
+| distinct | **1000/1000**, 49.1 | 0/1000, 436.7 | 116/1000, 437.1 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1338.8 | 0/1000, 1306.2 |
+| calculator | **1000/1000**, 103.3 | 16/1000, 912.0 | 14/1000, 910.0 |
+| bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 | 52/1000, 293.0 |
+| lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 | **1000/1000**, 82.8 |
+| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, 98.0 | 1000/1000, 98.0 |
+| difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **97.5** | 1000/1000, **97.5** |
+| difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **98.6** | 1000/1000, **98.6** |
 
 Cells are `normalised / mean evaluations`, **1000 runs each**. 95%
 Wilson intervals are in the raw output; the ones that matter are quoted
 inline below.
+
+Both tapecheck columns re-measured 2026-08-08 at `3aa0a47`; raw output
+in `../tapecheck-notes/challenge-1000-20260808.txt` and
+`challenge-1000-patched-20260808.txt`. The Hypothesis column is not
+re-measured here — it comes from the separate `hypothesis-baseline`
+harness.
+
+**lengthlist now normalises, which is the row that moved.** It was
+716/1000 at 261.0 when this table was first written and is 1000/1000 at
+82.8 now: three times the quality at a third of the cost, from the
+computed repair rather than from any budget increase. That makes
+tapecheck 4/9 rather than 3/9. The discussion further down still
+describes it as an open frontier in places; that text is kept as the
+history of how it was reached, not as a current description.
+
+The four challenges ported later are measured too, and are the honest
+remainder of the suite rather than a separate category:
+
+| challenge | tapecheck | tapecheck +patch |
+|---|---|---|
+| deletion | 17/1000, 2158.2 | 295/1000, 2248.4 |
+| nestedlists | 18/1000, 640.9 | 18/1000, 640.9 |
+| coupling | 18/1000, 2335.8 | 18/1000, 2335.8 |
+| binheap | 93/1000, 1175.6 | 93/1000, 1175.6 |
+
+`<= optimal size` is worth reading alongside `exact` for these: bound5
+reaches 998/1000 and 1000/1000 at-or-below optimal size in the two arms
+while scoring 158 and 52 exact, because the challenge scores one exact
+permutation of five symmetric slots. Same for binheap, 299/1000
+at-or-below against 93 exact.
 
 ## Reading it
 
@@ -137,10 +167,25 @@ prevent. Measured at divisors 3, 4, 6, 8: at 3 it binds and poison
 breaks; at 4 and above it never binds and nothing changes. No window.
 
 The real fix is *earned* patience — a pass's allowance scaled by its own
-success rate, in the spirit of `fixate_shrink_passes` — which is a
-design change rather than a constant, and is not done. lengthlist is
-recorded as a frontier in `test_regression/regression_guard.ml` so it
-cannot silently get worse, and an improvement is flagged too.
+success rate, in the spirit of `fixate_shrink_passes`.
+
+**Superseded, 2026-08-08.** Earned patience landed, and then the
+computed repair took lengthlist to 1000/1000 at 82.8 without raising
+any bound and without costing `test_poison`, which went 10/34 to 12/34
+rather than down. Everything above this paragraph is the record of a
+problem that is now solved; it is kept because the *reasoning* about
+why the flat cutoff and the proportional floor both fail is still
+correct and still worth not rediscovering.
+
+lengthlist is guarded in `test_regression/regression_guard.ml` so it
+cannot silently get worse — and, since 2026-08-08, so that an
+improvement cannot silently pass either. The claim that "an improvement
+is flagged too" was made here long before anything implemented it, and
+the gap is exactly how the 716 → 1000 move went unnoticed in this file:
+`check` applied a one-sided floor, so a property that had reached
+100/100 kept printing `ok` under a name asserting it had not. There is
+now a `high_minimal` bound that fails on improvement, kill-tested by
+lowering it and confirming the failure.
 
 **Where we win, we win on what the suite calls hardest.** The
 `difference` family requires holding a dependency between two
