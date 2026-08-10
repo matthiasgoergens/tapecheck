@@ -22,6 +22,11 @@ It property-tests two libraries copied out of
 engine. It is excluded from the root build (see the root `dune`); treat it as
 its own project.
 
+Because this workspace is package-shaped, it contains copies of the engine
+and tape seam rather than referencing the parent libraries. The root
+`runtest` alias runs `scripts/check_consumer_snapshot.sh` to prevent a green
+consumer run from silently validating an older snapshot.
+
 ## Layout
 
 - `bonsai-tapecheck-hunt/pkgs/splittable_random/` — the shim as an

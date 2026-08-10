@@ -5,9 +5,9 @@
 
    Pass schedule ported from the proptest tape engine
    (proptest-rs/proptest#658): one all-choices-to-target attempt, then
-   rounds of lower-and-delete (the length-prefix pass), whole-stream
-   deletion, redistribution, and per-choice minimization with
-   bisection, to a fixpoint under an attempt budget.
+   rounds of lower-and-delete (the length-prefix pass), redistribution,
+   and per-choice minimization with bisection, to a fixpoint under an
+   attempt budget.
 
    Streams (design/stream-keyed-tapes.md): a tape is an image (main
    stream plus keyed sub-streams for split-off PRNG states, i.e.
@@ -25,12 +25,13 @@ type 'a failure =
   ; image : Tape.image (* the winning tape, for replay/persistence *)
   ; trail : Tape.image list
       (* Every image accepted during shrinking, oldest first, ending
-         just before [image] (an accept always overwrites [best], so
-         the trail's last element is the second-to-last accepted image,
-         not [image] itself; empty when the first failure was already
-         fully trivial, so shrinking never ran). Hypothesis reports
-         intermediate examples alongside the minimal one; this is the
-         same idea, cheap to keep because a [Tape.image] is just the
+         with [image] itself: [search_attempt] pushes each accepted
+         image, including the final one. Empty when no proposal was ever
+         accepted -- either the first failure was already fully trivial
+         and shrinking never ran, or no pass found anything smaller.
+         Hypothesis reports intermediate examples alongside the minimal
+         one; this is the same idea, cheap to keep because a
+         [Tape.image] is just the
          compact recording, not a materialized value -- replay it with
          [replay_image_and_apply] to see what it built. Secondary output:
          the free-variation analysis in [Tape_explain] is what actually
@@ -60,25 +61,26 @@ type 'a result =
 
 let clamp64 = Tape.clamp_int64
 
+(* Total, like [clamp64]: a hand-edited tape can carry CROSSED float
+   bounds ([lo > hi]) -- nothing at deserialize rejects them -- and
+   [Float.clamp_exn] answers those with [Assert_failure], which is how
+   [resume] used to crash on such an image (tapecheck#11).
+   [Tape.clamp_float] clamps instead of asserting, so the engine treats
+   a crossed-bounds choice as merely odd data, not a fatal one. *)
+let clampf = Tape.clamp_float
+
 (* Fresh draws during replay (misaligned or overrun positions) sample
    from this fixed seed so every attempt, sequential or pooled, sees
    the same fallback stream. *)
 let replay_fresh_seed = 0x7ea9e
 
-let choice_at_target = function
-  | Tape.Integer { value; lo; hi } -> Int64.(value = clamp64 0L ~lo ~hi)
-  | Tape.Float { value; lo; hi } ->
-    Float.( = ) value (Float.clamp_exn 0. ~min:lo ~max:hi)
-  | Tape.Bool b -> not b
-  | Tape.Marker -> true
-
-let trivial_choice = function
-  | Tape.Integer { lo; hi; _ } ->
-    Tape.Integer { value = clamp64 0L ~lo ~hi; lo; hi }
-  | Tape.Float { lo; hi; _ } ->
-    Tape.Float { value = Float.clamp_exn 0. ~min:lo ~max:hi; lo; hi }
-  | Tape.Bool _ -> Tape.Bool false
-  | Tape.Marker -> Tape.Marker
+(* Both delegate to [Tape.Domain], which states the target next to the
+   comparison it has to agree with. They were independent definitions
+   here, in a different file from [compare_choice], with nothing
+   checking that "smallest" matched "smaller". Kept as names because
+   they are the vocabulary the passes below are written in. *)
+let choice_at_target = Tape.Domain.at_target
+let trivial_choice = Tape.Domain.target
 
 let with_choice tape_choices i c =
   let copy = Array.copy tape_choices in
@@ -106,11 +108,6 @@ let seg_set (img : Tape.image) s arr : Tape.image =
         Array.mapi img.streams ~f:(fun i (k, a) ->
           if i = s - 1 then (k, arr) else (k, a))
     }
-
-let without_stream (img : Tape.image) s : Tape.image =
-  { img with
-    streams = Array.filteri img.streams ~f:(fun i _ -> i <> s - 1)
-  }
 
 let image_all_trivial (img : Tape.image) =
   Array.for_all img.main ~f:choice_at_target
@@ -331,10 +328,32 @@ module Pool = struct
     List.iter t.workers ~f:Stdlib.Domain.join
 end
 
+(* Shrink-phase accounting for one evaluated proposal, mirroring the
+   updates [search_candidate] makes on the sequential path (one replay;
+   one test iff the case ran; one misalign on a kind mismatch; one
+   discard on an [assume]-rejected case). A pooled worker computes this
+   locally and hands it back as data -- [stats] is plain mutable state
+   on the main domain and several domains would race on it, the same
+   constraint [pool_payload] documents for generate-phase verdicts. The
+   main domain folds the contributions in after [Pool.run_batch].
+
+   Without this the pooled arm of [attempt_batch] evaluated every
+   proposal invisibly: [attempts] moved while
+   [replays]/[tests]/[misaligns] did not (tapecheck#6). *)
+type eval_stats =
+  { e_replays : int
+  ; e_tests : int
+  ; e_misaligns : int
+  ; e_discards : int
+  }
+
+let no_eval_stats =
+  { e_replays = 0; e_tests = 0; e_misaligns = 0; e_discards = 0 }
+
 (* Evaluate one proposal in isolation: own tape, own RNG, no shared
    state. Safe to run in a separate domain when the generator and test
    are thread-safe. One replay under [policy]; returns (misaligned,
-   still-failing-candidate). *)
+   stats contribution, still-failing-candidate). *)
 let eval_once (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~policy proposal =
   let tape = Tape.create () in
@@ -342,21 +361,29 @@ let eval_once (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
   let _value, tested, out =
     run_and_test ~tape ~gen ~size ~seed:replay_fresh_seed ~test
   in
-  match tested with
-  | None -> (out.Tape.misaligned, None)
-  | Some verdict ->
-    if out.Tape.overrun then (out.Tape.misaligned, None)
-    else (
-      match verdict with
-      | Tape_stats.Case_failed ->
-        (out.Tape.misaligned, Some (out.Tape.image, _value))
-      | Tape_stats.Case_passed | Tape_stats.Case_invalid ->
-        (out.Tape.misaligned, None))
+  let estats =
+    { e_replays = 1
+    ; e_tests = (match tested with None -> 0 | Some _ -> 1)
+    ; e_misaligns = (if out.Tape.misaligned then 1 else 0)
+    ; e_discards =
+        (match tested with
+         | Some Tape_stats.Case_invalid -> 1
+         | None | Some (Tape_stats.Case_passed | Tape_stats.Case_failed) -> 0)
+    }
+  in
+  let candidate =
+    match tested with
+    | Some Tape_stats.Case_failed when not out.Tape.overrun ->
+      Some (out.Tape.image, _value)
+    | _ -> None
+  in
+  (out.Tape.misaligned, estats, candidate)
 
 (* Pool-side proposal evaluation honouring the realign policy, so a
    pooled run reaches the SAME result as the sequential engine at any
    ?domains (only [`Both] on a misaligned proposal does the second
-   replay). *)
+   replay). Returns the candidate alongside the summed [eval_stats] of
+   the replay(s) it made, for the main domain to fold into [stats]. *)
 let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) ~(realign : [ `Consume | `Freeze | `Both ]) proposal =
   let primary, secondary =
@@ -364,16 +391,22 @@ let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
     | `Freeze -> (Tape.Freeze, Tape.Consume)
     | `Consume | `Both -> (Tape.Consume, Tape.Freeze)
   in
-  let mis1, c1 = eval_once ~gen ~size ~test ~policy:primary proposal in
-  let cands =
+  let mis1, es1, c1 = eval_once ~gen ~size ~test ~policy:primary proposal in
+  let estats, cands =
     match realign with
     | `Both when mis1 ->
-      let _mis2, c2 = eval_once ~gen ~size ~test ~policy:secondary proposal in
-      [ c1; c2 ]
-    | _ -> [ c1 ]
+      let _mis2, es2, c2 = eval_once ~gen ~size ~test ~policy:secondary proposal in
+      ( { e_replays = es1.e_replays + es2.e_replays
+        ; e_tests = es1.e_tests + es2.e_tests
+        ; e_misaligns = es1.e_misaligns + es2.e_misaligns
+        ; e_discards = es1.e_discards + es2.e_discards
+        }
+      , [ c1; c2 ] )
+    | _ -> (es1, [ c1 ])
   in
-  List.filter_opt cands
-  |> List.min_elt ~compare:(fun (a, _) (b, _) -> Tape.compare_image a b)
+  ( List.filter_opt cands
+    |> List.min_elt ~compare:(fun (a, _) (b, _) -> Tape.compare_image a b)
+  , estats )
 
 (* Realignment strategy for kind mismatches during shrink replay.
    [`Consume] and [`Freeze] use one fixed policy; [`Both] replays a
@@ -485,7 +518,7 @@ let no_stats () =
    on a property Hypothesis finishes in 27 (see
    ../tapecheck-hypothesis-baseline/README.md). *)
 let pass_names =
-  [| "lower_and_delete"; "delete_streams"; "redistribute_pairs"
+  [| "lower_and_delete"; "(removed: delete_streams)"; "redistribute_pairs"
    ; "minimize_choices"; "pre-loop"; "sort_siblings" |]
 
 let pass_costs = Array.create ~len:6 0
@@ -527,7 +560,6 @@ let cr_probes = ref 0
 let cr_hits = ref 0
 let cr_probe_budget = 8
 let last_computed_repair () = (!cr_probes, !cr_hits)
-let truncated_passes = ref 0
 let last_shape () =
   ( !sweeps, !initial_choices, !final_choices, !scan_i_visits, !scan_jk_visits
   , !lad_successes )
@@ -537,15 +569,20 @@ let last_shape () =
    it is created, and ONE pool serves both the generate phase and the
    shrink phase, so the payload has to satisfy both.
 
-   The second component exists because pooled generate-phase cases used
+   The verdict component exists because pooled generate-phase cases used
    to be uncounted entirely: the worker returned only "did this fail",
    the verdict was dropped on the floor, and [run] reported
    [Passed {cases = 300}] while the statistics said 0 valid and 0
    invalid (tapecheck#1). Counting inside the worker is not an option --
    [stats] is plain mutable state on the main domain and several domains
    would race on it -- so the verdict travels back as data and the main
-   domain does the arithmetic. Shrinking passes [None]. *)
-type 'a pool_payload = 'a * Tape_stats.verdict option
+   domain does the arithmetic. Shrinking passes [None].
+
+   The [eval_stats] half is the same arrangement for pooled SHRINK
+   evaluations (tapecheck#6): the worker sums what the replay did, the
+   main domain folds it into [stats]. The generate phase has no shrink
+   accounting to report and passes [no_eval_stats]. *)
+type 'a pool_payload = ('a * eval_stats) * Tape_stats.verdict option
 
 (* Mutable state for a tape SEARCH -- shared by shrinking today, and by
    anything else that proposes edits and keeps the best result.
@@ -574,7 +611,9 @@ type 'a search =
            the same pool and needs to report each case's verdict back to
            the main domain -- worker domains cannot safely touch [stats]
            themselves. Shrinking has no verdict to report and passes
-           [None]; see [pool_payload]. *)
+           [None], but it DOES have accounting to report: each evaluated
+           proposal's [eval_stats] rides the first component; see
+           [pool_payload]. *)
   ; s_domains : int
   ; s_budget : int
   ; s_max_shrinks : int
@@ -790,8 +829,10 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      metering that does not exist yet. Making passes first class is the
      real prerequisite -- and it is the same prerequisite as
      Hypothesis's productivity-based pass reordering (shrinker.py:742),
-     which is the mechanism that would actually address the ~5.5x
-     shrink-cost overhead measured in head_to_head/VERIFICATION.md.
+     which is the mechanism that would actually address repeated,
+     unproductive proposals measured in the tape arm of
+     head_to_head/VERIFICATION.md.  Its proposal count is not a ratio
+     against qcheck-stm's accepted-step count; those are different units.
 
      So: [max_shrinks] is ported and on, [max_stall] is available but
      off, and the cost work is deferred to a change that makes passes
@@ -810,7 +851,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   lad_successes := 0;
   cr_probes := 0;
   cr_hits := 0;
-  truncated_passes := 0;
   final_choices := 0;
   initial_choices :=
     Array.length initial_tape.Tape.main
@@ -910,11 +950,20 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                  (eval_proposal ~gen ~size ~test ~realign p, None)))
         in
         attempts := !attempts + List.length kept;
+        (* Workers report what their replays did as data -- they cannot
+           touch [stats] without racing, see [pool_payload] -- and the
+           fold happens here so pooled evaluations count exactly as the
+           sequential [search_candidate] path counts them (tapecheck#6). *)
+        List.iter results ~f:(fun ((_, e), _) ->
+          stats.replays <- stats.replays + e.e_replays;
+          stats.tests <- stats.tests + e.e_tests;
+          stats.misaligns <- stats.misaligns + e.e_misaligns;
+          stats.shrink_discards <- stats.shrink_discards + e.e_discards);
         let accepted =
           List.foldi results ~init:None ~f:(fun i acc r ->
             match (acc, r) with
-            | Some _, _ | _, (None, _) -> acc
-            | None, (Some (image, value), _) ->
+            | Some _, _ | _, ((None, _), _) -> acc
+            | None, ((Some (image, value), _), _) ->
               if Tape.compare_image image !best < 0 then
                 (* Map back to the position in the ORIGINAL batch. *)
                 Some (fst (List.nth_exn kept i), image, value)
@@ -1443,26 +1492,10 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
              exactly lengthlist's shape. *)
           if !accepted then i := 0 else Int.incr i
         | _ -> Int.incr i);
-        if not (live ()) then Int.incr truncated_passes;
         (* An acceptance may change the stream layout; keep s valid. *)
         if !s >= seg_count !best then s := seg_count !best
       done;
       Int.incr s
-    done;
-    !improved
-  in
-
-  (* Delete an entire sub-stream: those draws resample fresh on replay
-     (an absent stream is not an overrun), which in practice pushes
-     generated functions toward constant observed behaviour. The main
-     stream (segment 0) is never deleted. *)
-  let delete_streams () =
-    let improved = ref false in
-    let s = ref 1 in
-    while !s < seg_count !best && budget_ok () do
-      if attempt (without_stream !best !s) then improved := true
-        (* the array shifted left; stay at the same index *)
-      else Int.incr s
     done;
     !improved
   in
@@ -1651,7 +1684,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   in
 
   let minimize_float s i value lo hi =
-    let target = Float.clamp_exn 0. ~min:lo ~max:hi in
+    let target = clampf 0. ~lo ~hi in
     let try_value v =
       attempt
         (seg_set !best s
@@ -1708,9 +1741,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a0 = !attempts in
     let improved = lower_and_delete () in
     pass_costs.(0) <- pass_costs.(0) + (!attempts - a0);
-    let a1 = !attempts in
-    let improved = delete_streams () || improved in
-    pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
     let a2 = !attempts in
     let improved = redistribute_pairs () || improved in
     pass_costs.(2) <- pass_costs.(2) + (!attempts - a2);
@@ -1718,16 +1748,40 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let improved = minimize_choices () || improved in
     pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
     let improved = lower_together () || improved in
-    (* OFF by default. Measured on the Shrinking Challenge: against the
-       STOCK vendored base_quickcheck this pass is a net negative --
-       bound5 12.5% (8.6-17.8) against 15.9% (13.7-18.3), overlapping
-       or slightly worse, and large_union_list costs 23% more (1296 ->
-       1590 evaluations) for no gain. It only pays once
-       proposals/base_quickcheck-non_uniform.patch equalises sibling
-       draw counts, and then it pays a lot: distinct goes 11.6% -> 69.5%
-       with distinct answers collapsing from 34 to 4. Since we ship
-       against stock, it stays off until that lands or the signature
-       heuristic is sharpened. See SORT-SIBLINGS.md. *)
+    (* OFF by default. See SORT-SIBLINGS.md.
+
+       RE-MEASURED 2026-08-09 at n=1000 on both arms, because the
+       original justification was taken at n=100 and half of it turned
+       out to be noise. Exact scores per 1000 runs:
+
+                        stock off  stock on  +patch off  +patch on
+         distinct               0         0         116        649
+         reverse                0         0         452        487
+         binheap               93       110          93        110
+         bound5               158       159          52          0
+         calculator            16        12          14         14
+         large_union_list  1338.8    1671.1      1306.2     1560.9   (evals)
+
+       What held up: the large_union_list cost penalty (~25%, for no
+       gain in either arm), and the big distinct win once the patch
+       equalises sibling draw counts.
+
+       What did NOT hold up, and was the stated reason for keeping this
+       off: bound5 was recorded as 12.5% against 15.9% on stock. At
+       n=1000 both arms are 15.8-15.9% -- the pass does nothing there.
+       The original note admits its intervals overlapped; it should not
+       have been load-bearing.
+
+       Two effects the original missed: binheap gains 93 -> 110 on stock
+       (299 -> 327 at-or-below optimal size), and bound5 collapses
+       52 -> 0 on the patched arm.
+
+       So the honest summary is a trade in BOTH arms, not "inert on
+       stock, decisive with the patch". On stock it is now +17 binheap
+       against -4 calculator at ~25% more evaluations on one challenge,
+       which is no longer obviously negative. Left OFF pending a
+       decision rather than flipped, because that is a shipping default
+       and the call is not mine to make silently. *)
     let sort_siblings_enabled = false in
     let improved =
       if sort_siblings_enabled then begin
@@ -1752,12 +1806,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     Array.length (!best).Tape.main
     + Array.fold (!best).Tape.streams ~init:0 ~f:(fun a (_, c) ->
         a + Array.length c);
-  (* [converged] must account for the per-pass failure cutoff. Without
-     the cutoff, exiting the sweep loop with budget to spare meant every
-     pass ran to completion and found nothing -- a genuine fixpoint.
-     With it, a pass may have stopped after [max_pass_failures]
-     consecutive failures, so "nothing smaller exists" is no longer
-     established. Report converged only if no pass was ever truncated. *)
   (* What [converged] means, stated precisely, because it is easy to
      read more into it than is there.
 
@@ -1882,11 +1930,18 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
       ; converged = true
       }
   else begin
+    (* Wall-clock the whole shrink phase: [stats.shrink_time] is printed
+       in the `Full report's three-way time split and was previously
+       never assigned, so the split always read shrink 0.0000s
+       (tapecheck#7). *)
+    let shrink_start = Unix.gettimeofday () in
     let _minimal, attempts, image, trail, converged =
       shrink ~tape ~gen ~size ~test ~budget ~max_seconds ~max_shrinks
         ~max_stall ~max_pass_failures ~domains ~pool ~realign ~stats
         ~initial_tape:image0 ~initial_value:value
     in
+    stats.shrink_time
+      <- stats.shrink_time +. (Unix.gettimeofday () -. shrink_start);
     Failed
       { minimal = live_value image
       ; original = value
@@ -1960,7 +2015,12 @@ let check_generator_determinism (type a) ?(replays = 8)
   let first = replay_once () in
   let rec go k =
     if k <= 1 then true
-    else if Tape.compare_image (replay_once ()) first <> 0 then false
+    (* [Tape.equal_image], not [compare_image = 0]. The order is a
+       PREORDER: float choices compare by distance from their target, so
+       0.0 drawn from [0,1] and 5.0 drawn from [5,6] are indistinguishable
+       to it. A generator alternating between two such draws is
+       nondeterministic and this check passed it. *)
+    else if not (Tape.equal_image (replay_once ()) first) then false
     else go (k - 1)
   in
   go replays
@@ -2385,7 +2445,12 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     let consecutive_repeats = ref 0 in
     let exhausted_after = ref None in
     let repeats_before_giving_up = 64 in
-    let first_failure =
+    (* [cases_run] is what [Passed {cases}] reports: the number of cases
+       actually executed, which the exhaustion early-stop can leave well
+       below [count]. Reporting [count] there claimed work that never
+       happened -- the summary line said 66 valid while the result said
+       Passed {cases = 200} (tapecheck#11). *)
+    let first_failure, cases_run =
       match pool with
       | None ->
         let found = ref None in
@@ -2511,9 +2576,10 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
            Stdlib.flush Stdlib.stderr
          | _ -> ());
         stats.warnings <- health.Tape_health.fired;
-        (match !found with
-         | Some _ as f -> f
-         | None -> !first_correlated_failure)
+        ( (match !found with
+           | Some _ as f -> f
+           | None -> !first_correlated_failure)
+        , !case )
       | Some pool ->
         let found = ref None in
         let batch_start = ref 0 in
@@ -2535,13 +2601,15 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
 
                     The verdict is also returned, not just consumed: the
                     main domain needs it to count the case. See
-                    [pool_payload] for why this cannot be counted here. *)
+                    [pool_payload] for why this cannot be counted here.
+                    [no_eval_stats]: this phase has no shrink accounting
+                    to report. *)
                  let failure =
                    match tested with
                    | Some Tape_stats.Case_failed -> Some (out.Tape.image, value)
                    | _ -> None
                  in
-                 (failure, tested)))
+                 ((failure, no_eval_stats), tested)))
           in
           (* Count every case the workers actually ran, on this domain.
              Without this the pooled path reported [Passed {cases = N}]
@@ -2553,11 +2621,11 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
              so a later case in the same batch ran but is not part of
              the run the engine reports. *)
           let stop_at =
-            match List.findi results ~f:(fun _ (f, _) -> Option.is_some f) with
+            match List.findi results ~f:(fun _ ((f, _), _) -> Option.is_some f) with
             | Some (i, _) -> i + 1
             | None -> List.length results
           in
-          List.iteri results ~f:(fun i (_, tested) ->
+          List.iteri results ~f:(fun i ((_, _), tested) ->
             if i < stop_at then
               match tested with
               | Some Tape_stats.Case_passed ->
@@ -2571,10 +2639,10 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                 ());
           (* run_batch preserves task order, so the first Some is the
              lowest failing case index. *)
-          found := List.find_map results ~f:(fun (f, _) -> f);
+          found := List.find_map results ~f:(fun ((f, _), _) -> f);
           batch_start := !batch_start + n
         done;
-        !found
+        (!found, !batch_start)
     in
     (* The reported minimal is regenerated from the winning image on a
        tape left in replay mode, so a counterexample containing functions
@@ -2587,7 +2655,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
        exception and retries accumulates leaked domains until the process
        dies. Found in review of 061923e. *)
     match first_failure with
-      | None -> Passed { cases = count }
+      | None -> Passed { cases = cases_run }
       | Some (image0, value) ->
         (* Check determinism ONCE, on the failure path, before shrinking.
            This existed but nothing outside diagnostic tests called it --

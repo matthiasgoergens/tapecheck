@@ -8,6 +8,38 @@
 ; would otherwise still pull it into this build as a second project.
 (data_only_dirs bonsai-tapecheck-hunt)
 
+; The consumer is intentionally a copied, package-shaped workspace. A green
+; run there is evidence about this tree only while those source copies match.
+(rule
+ (alias runtest)
+ (deps
+  scripts/check_consumer_snapshot.sh
+  engine/tape_db.ml
+  engine/tape_engine.ml
+  engine/tape_explain.ml
+  engine/tape_health.ml
+  engine/tape_stats.ml
+  engine/tape_test.ml
+  tape/tape.ml
+  vendor/splittable_random/splittable_random.ml
+  vendor/sr_real/sr_real.ml
+  vendor/sr_real/sr_real.mli
+  vendor/base_quickcheck/generator.ml
+  vendor/base_quickcheck/generator.mli
+  bonsai-tapecheck-hunt/engine/tape_db.ml
+  bonsai-tapecheck-hunt/engine/tape_engine.ml
+  bonsai-tapecheck-hunt/engine/tape_explain.ml
+  bonsai-tapecheck-hunt/engine/tape_health.ml
+  bonsai-tapecheck-hunt/engine/tape_stats.ml
+  bonsai-tapecheck-hunt/engine/tape_test.ml
+  bonsai-tapecheck-hunt/pkgs/splittable_random/src/tape.ml
+  bonsai-tapecheck-hunt/pkgs/splittable_random/src/splittable_random.ml
+  bonsai-tapecheck-hunt/pkgs/splittable_random/src/sr_real.ml
+  bonsai-tapecheck-hunt/pkgs/splittable_random/src/sr_real.mli
+  bonsai-tapecheck-hunt/pkgs/base_quickcheck/src/generator.ml
+  bonsai-tapecheck-hunt/pkgs/base_quickcheck/src/generator.mli)
+ (action (run sh %{dep:scripts/check_consumer_snapshot.sh})))
+
 ; Fail fast on profile/compiler mismatches: an OxCaml switch without
 ; --profile oxcaml would miscompile the ppx pieces against a divergent
 ; parsetree, and --profile oxcaml on a stock switch would silently drop
