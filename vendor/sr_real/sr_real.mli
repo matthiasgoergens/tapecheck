@@ -81,6 +81,11 @@ module Intercept : sig
         -> float
     ; unit_float : state -> default:(state -> float) -> float
     ; bool : state -> default:(state -> bool) -> bool
+    ; bool_with_probability :
+        state
+        -> probability:float
+        -> default:(state -> probability:float -> bool)
+        -> bool
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }
@@ -109,6 +114,10 @@ end
 
 (** Produces a random, fair boolean. *)
 val bool : t -> bool
+
+(** [bool_with_probability t ~probability] is true with the given probability.
+    [probability] must be finite and between zero and one, inclusive. *)
+val bool_with_probability : t -> probability:float -> bool
 
 (** Produce a random number uniformly distributed in the given inclusive range.  (In the
     case of [float], [hi] may or may not be attainable, depending on rounding.)  *)
