@@ -48,13 +48,18 @@ branches lo / general / hi:
 
 ```ocaml
 let non_uniform f lo hi =
+  let general = f lo hi in
   let selector =
     create (fun ~size:_ ~random -> Splittable_random.float random ~lo:0. ~hi:1.)
   in
   bind selector ~f:(fun p ->
-    map (f lo hi) ~f:(fun v ->
+    map general ~f:(fun v ->
       if Float.( < ) p 0.05 then lo else if Float.( < ) p 0.95 then v else hi))
 ```
+
+`general` is bound outside the `bind` deliberately: `f lo hi` is a
+generator, and building it once when `non_uniform` is applied rather
+than once per draw is what keeps the claim about allocation below true.
 
 Both properties are needed and neither alone suffices:
 
@@ -70,10 +75,33 @@ compared before the selector ever is.
 
 ## Distribution is unchanged
 
-By construction: the selector is independent of the value, so this is a
-pure reassociation of the same three-way choice.
+Not "by construction" — counted. `unit_float` returns `k / 2^53` for
+`k` in `[0, 2^53)`, so the selector has a known finite grid and the
+branch split can just be enumerated exactly. Both formulations give:
 
-Verified rather than asserted, over 400 000 draws of `Generator.int`:
+| branch | selectors | |
+|---|---|---|
+| `lo` | 450359962737050 | |
+| `hi` | 450359962737050 | |
+| general | 8106479329266892 | |
+
+The same three numbers either way. (Neither is exactly 5/5/90: `0.05`
+as a binary64 is a shade over, so the true split is 0.0500000000000000444
+/ 0.0500000000000000444 / 0.8999999999999999. Stock is wrong by the
+identical amount, since it is the same constant.)
+
+What *does* change is which selector reaches which branch, and on whole
+intervals rather than at the boundaries: stock's cumulative weights are
+`[0.05; 0.10; 1.0]`, so `hi` occupies `(0.05, 0.10]`, where after the
+change it occupies `[0.95, 1)`. That remapping is the point of the
+change rather than a side effect — it is exactly what lets position 0
+impose `lo < general < hi`. I mention it because it is visible to
+anything that *forces* a selector rather than sampling one: a forced
+`1.0` lands on general before and `hi` after. `unit_float` never
+returns `1.0`, so nothing in `base_quickcheck` can see this; a
+replay-based harness that pins float draws can.
+
+Also verified empirically, over 400 000 draws of `Generator.int`:
 
 | | before | after |
 |---|---|---|
@@ -87,10 +115,18 @@ degrees of freedom. Statistically indistinguishable.
 
 ## Cost
 
-`f lo hi` is now always evaluated, so the 10% of draws that previously
-took a shortcut pay two extra PRNG calls. Nothing else changes: no
-allocation on the fast path, no change to any signature, no change to
-any `.mli`.
+`f lo hi` is now always generated from, so the 10% of draws that
+previously took a shortcut pay two extra PRNG calls. The generator
+itself is still built once per `non_uniform` application, so there is no
+per-draw allocation; no signature changes and no `.mli` changes.
+
+One thing that *does* change, and which "distribution unchanged" can
+hide: every path now draws the selector plus the general value, so for a
+given seed the sequence of draws differs from stock. Anyone pinning a
+fixed seed in `Test.run` and expecting the same concrete cases will see
+different ones. The distribution is preserved; per-seed reproducibility
+across this change is not, in the same way it is not across any change
+to draw structure.
 
 ## Effect
 
