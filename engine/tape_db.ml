@@ -182,12 +182,22 @@ let save t ~key ?size (img : Tape.image) : unit =
     try
       ensure_dir t;
       let file = path t ~key in
-      let tmp = file ^ ".tmp" in
+      (* The temporary must be unique as well as same-directory.  A fixed
+         [file ^ ".tmp"] let two test processes writing the same property
+         truncate or rename each other's temporary file.  Same-directory
+         keeps the final rename atomic without assuming [/tmp] shares a
+         filesystem with the database. *)
+      let tmp, oc =
+        Stdlib.Filename.open_temp_file ~temp_dir:t.dir
+          (key_to_filename key ^ ".") ".tmp"
+      in
       tmp_path := Some tmp;
       (* Same reason as [load]: a disk-full or quota error during
          [output_string] or the implicit flush used to skip [close_out]
          entirely, leaking the channel into the error path. *)
-      Stdlib.Out_channel.with_open_bin tmp (fun oc ->
+      Exn.protect
+        ~finally:(fun () -> Stdlib.close_out_noerr oc)
+        ~f:(fun () ->
         Stdlib.Out_channel.output_string oc
           (Printf.sprintf "%d\n" (Option.value size ~default:(-1)));
         Stdlib.Out_channel.output_string oc (Tape.serialize_image img));

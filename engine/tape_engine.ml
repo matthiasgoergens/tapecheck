@@ -560,7 +560,6 @@ let cr_probes = ref 0
 let cr_hits = ref 0
 let cr_probe_budget = 8
 let last_computed_repair () = (!cr_probes, !cr_hits)
-let truncated_passes = ref 0
 let last_shape () =
   ( !sweeps, !initial_choices, !final_choices, !scan_i_visits, !scan_jk_visits
   , !lad_successes )
@@ -830,8 +829,10 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
      metering that does not exist yet. Making passes first class is the
      real prerequisite -- and it is the same prerequisite as
      Hypothesis's productivity-based pass reordering (shrinker.py:742),
-     which is the mechanism that would actually address the ~5.5x
-     shrink-cost overhead measured in head_to_head/VERIFICATION.md.
+     which is the mechanism that would actually address repeated,
+     unproductive proposals measured in the tape arm of
+     head_to_head/VERIFICATION.md.  Its proposal count is not a ratio
+     against qcheck-stm's accepted-step count; those are different units.
 
      So: [max_shrinks] is ported and on, [max_stall] is available but
      off, and the cost work is deferred to a change that makes passes
@@ -850,7 +851,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   lad_successes := 0;
   cr_probes := 0;
   cr_hits := 0;
-  truncated_passes := 0;
   final_choices := 0;
   initial_choices :=
     Array.length initial_tape.Tape.main
@@ -1492,7 +1492,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
              exactly lengthlist's shape. *)
           if !accepted then i := 0 else Int.incr i
         | _ -> Int.incr i);
-        if not (live ()) then Int.incr truncated_passes;
         (* An acceptance may change the stream layout; keep s valid. *)
         if !s >= seg_count !best then s := seg_count !best
       done;
@@ -1811,12 +1810,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     Array.length (!best).Tape.main
     + Array.fold (!best).Tape.streams ~init:0 ~f:(fun a (_, c) ->
         a + Array.length c);
-  (* [converged] must account for the per-pass failure cutoff. Without
-     the cutoff, exiting the sweep loop with budget to spare meant every
-     pass ran to completion and found nothing -- a genuine fixpoint.
-     With it, a pass may have stopped after [max_pass_failures]
-     consecutive failures, so "nothing smaller exists" is no longer
-     established. Report converged only if no pass was ever truncated. *)
   (* What [converged] means, stated precisely, because it is easy to
      read more into it than is there.
 

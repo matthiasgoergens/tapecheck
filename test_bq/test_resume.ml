@@ -296,4 +296,25 @@ let () =
      check "regression-entry failure prints the summary line"
        (String.is_substring printed_regression ~substring:"tapecheck:"));
 
+  (* User-supplied examples bypass the engine's generated-case loop.  They
+     must still take the same reporting exit as every other failure. *)
+  let no_generated_cases =
+    { Tape_test.default_config with test_count = 0; sizes = Sequence.empty }
+  in
+  let printed_example =
+    capture_stdout (fun () ->
+      match
+        Tape_test.result
+          ~f:(fun v -> if test v then Ok () else Error "too big")
+          ~config:no_generated_cases ~examples:[ 123_457 ]
+          (module M : Base_quickcheck.Test.S with type t = int)
+      with
+      | Ok () -> failwith "expected the explicit example to fail"
+      | Error _ -> ())
+  in
+  check "explicit-example failure prints the summary line"
+    (String.is_substring printed_example ~substring:"tapecheck:");
+  check "explicit-example failure is counted"
+    (String.is_substring printed_example ~substring:"1 failing");
+
   Stdlib.print_endline "test_resume: all passed"

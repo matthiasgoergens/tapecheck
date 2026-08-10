@@ -9,6 +9,40 @@ type pair = int * int [@@deriving quickcheck, sexp_of, compare]
 let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
 let () =
+  (* [with_sample] and [with_sample_exn] complete the
+     [Base_quickcheck.Test] source-compatible surface.  Examples precede the
+     configured number of generated values, just as they do upstream. *)
+  let sample_config =
+    { Tape_test.default_config with
+      seed = Deterministic "with-sample"
+    ; test_count = 3
+    ; sizes = Sequence.of_list [ 0; 1; 2 ]
+    }
+  in
+  let samples = ref [] in
+  (match
+     Tape_test.with_sample
+       ~f:(fun xs ->
+         samples := Sequence.to_list xs;
+         Ok ())
+       ~config:sample_config ~examples:[ 41; 42 ]
+       (Base_quickcheck.Generator.int_uniform_inclusive 0 10)
+   with
+   | Ok () -> ()
+   | Error _ -> failwith "with_sample callback unexpectedly failed");
+  check "with_sample preserves examples and test_count"
+    (List.length !samples = 5
+     && List.equal Int.equal (List.take !samples 2) [ 41; 42 ]);
+  let with_sample_exn_called = ref false in
+  Tape_test.with_sample_exn
+    ~f:(fun xs ->
+      with_sample_exn_called := true;
+      check "with_sample_exn gets configured sample"
+        (Sequence.length xs = 3))
+    ~config:sample_config
+    (Base_quickcheck.Generator.int_uniform_inclusive 0 10);
+  check "with_sample_exn invokes callback" !with_sample_exn_called;
+
   (* result: typed failure carries the tape-minimal input. *)
   (match
      Tape_test.result
@@ -92,6 +126,22 @@ let () =
     end : Base_quickcheck.Test.S
       with type t = pair)
   in
+  (* A half-configured database used to be silently disabled, making a typo
+     look like persistence was active. *)
+  let dummy_db = Tape_db.create ~dir:"unused-wrapper-db" () in
+  let rejects_half_database thunk =
+    match Or_error.try_with thunk with
+    | Error _ -> true
+    | Ok _ -> false
+  in
+  check "?db without ?db_key is rejected"
+    (rejects_half_database (fun () ->
+       Tape_test.result ~f:(fun (_ : pair) -> Ok ()) ~db:dummy_db
+         ~report:`Silent gen_module));
+  check "?db_key without ?db is rejected"
+    (rejects_half_database (fun () ->
+       Tape_test.result ~f:(fun (_ : pair) -> Ok ()) ~db_key:"property"
+         ~report:`Silent gen_module));
   let f (a, b) = if a + b >= 100 then Error "too big" else Ok () in
   (match Tape_test.result ~f ~regressions:reg_file gen_module with
   | Error ((0, 100), _) -> ()

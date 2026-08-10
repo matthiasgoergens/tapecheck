@@ -1,5 +1,5 @@
 (* Drop-in replacement for Base_quickcheck.Test: same Config, same
-   (module S) argument, same run/run_exn/result signatures. The
+   (module S) argument, and the full run/run_exn/result/with_sample API. The
    module's quickcheck_shrinker is accepted and ignored; shrinking is
    the tape engine's replay-based search over quickcheck_generator.
    Existing suites switch by replacing the module name. *)
@@ -14,6 +14,13 @@ module Config = Base_quickcheck.Test.Config
 exception Flaky_test of string
 
 let default_config = Base_quickcheck.Test.default_config
+
+(* Sampling does not shrink, so the tape engine has nothing to add here.
+   Delegate to base_quickcheck to preserve its precise lazy-sequence semantics,
+   in particular for generators of functions whose observations can happen in
+   the callback rather than while the value itself is generated. *)
+let with_sample = Base_quickcheck.Test.with_sample
+let with_sample_exn = Base_quickcheck.Test.with_sample_exn
 
 (* RO6 (outreach/ro-roadmap.md): re-exported here, alongside [run]/
    [run_exn]/[result], because this is the module a suite actually
@@ -315,6 +322,12 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
      not just its first generated case. *)
   let stats = match stats with Some s -> s | None -> Tape_engine.no_stats () in
   let health = Tape_health.create () in
+  (match (db, db_key) with
+   | Some _, None ->
+     Error.raise_s
+       [%message "?db requires ?db_key (use a stable, property-specific key)"]
+   | None, Some _ -> Error.raise_s [%message "?db_key requires ?db"]
+   | Some _, Some _ | None, None -> ());
   let print_report () =
     match report with
     | `Silent -> ()
@@ -415,7 +428,9 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
         None)
   in
   match example_failure with
-  | Some err -> err
+  | Some err ->
+    print_report ();
+    err
   | None ->
     let base_seed = seed_int config.seed in
     let sizes =
@@ -441,7 +456,8 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
     let db_entry =
       match (db, db_key) with
       | Some d, Some k -> Some (d, k)
-      | Some _, None | None, Some _ | None, None -> None
+      | None, None -> None
+      | Some _, None | None, Some _ -> assert false
     in
     (match db_entry with
      | None -> ()
@@ -458,7 +474,8 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
          let replay_size =
            match saved_size with
            | Some n when n >= 0 -> n
-           | _ -> sizes.(0)
+           | _ when Array.length sizes > 0 -> sizes.(0)
+           | _ -> 30
          in
          match
            Tape_engine.resume M.quickcheck_generator ~test ~realign
