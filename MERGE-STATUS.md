@@ -1,8 +1,8 @@
 # Integration status
 
-Updated 2026-08-10 on `wave1/finish`.
+Updated 2026-08-10 after Wave 1 was merged into local `master`.
 
-## Wave 1 integrated locally
+## Wave 1 merged locally
 
 The unchanged-generator path is complete in this integration branch. It
 contains budgets and resumable shrinking, database replay, determinism checks,
@@ -18,10 +18,10 @@ laws, `sort_siblings` evidence, and the current Hypothesis-gap inventory.
 half-configured database, reports explicit-example failures, and database
 writes use unique same-directory temporary files.
 
-This is local integration status, not publication status: nothing in this
-branch has been pushed by the Wave 1 close-out. The full forced suite and the
-top-level engine-name guard are acceptance checks. The latter protects the
-specific class of merge loss it was written for; it is not a complete OCaml
+This is local `master` status, not publication status: the Wave 1 commits have
+not been pushed to `origin/master`. The full forced suite and the top-level
+engine-name guard are acceptance checks. The latter protects the specific
+class of merge loss it was written for; it is not a complete OCaml
 API-compatibility proof.
 
 ## Deliberately outside Wave 1
