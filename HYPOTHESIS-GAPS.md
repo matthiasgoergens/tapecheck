@@ -60,7 +60,7 @@ because two of them point at the same structural cause as §3:
 | string/unicode character passes | absent, and unrepresentable (§3) |
 
 `sort_siblings` is the interesting one and it is not simply missing.
-`engine/tape_engine.ml:1792` sets `sort_siblings_enabled = false`, with a
+`engine/tape_engine.ml:1789` sets `sort_siblings_enabled = false`, with a
 recorded reason, re-measured at n=1000 on 2026-08-09 rather than merely
 quoted. The live engine comment now records the full trade:
 
@@ -73,10 +73,10 @@ quoted. The live engine comment now records the full trade:
 | calculator | 16 | 12 | 14 | 14 |
 | large_union_list evals | 1338.8 | **1671.1** | 1306.2 | 1560.9 |
 
-What reproduces: the `large_union_list` cost penalty (the comment says
-23%, I measure 24.8%), and the large `distinct` gain once the patch
-equalises sibling draw counts (the comment says 11.6% → 69.5%, I measure
-11.6% → 64.9%, and 69.5 sits outside my 61.9–67.8 interval).
+What reproduces from the earlier justification: the `large_union_list` cost
+penalty (24.8%), and the large `distinct` gain once the patch equalises sibling
+draw counts (11.6% → 64.9%). The live comment has been refreshed to record
+these n=1000 measurements.
 
 What did **not** reproduce was the original headline reason for keeping it off.
 The old comment cited bound5 at 12.5% against 15.9% on stock; at n=1000 both
@@ -85,11 +85,11 @@ was measured at n=100 and admits its intervals overlapped — so that half
 of the justification was noise, and it has been carrying the decision
 since.
 
-Two effects the comment does not record, both real at n=1000: binheap
-improves 93 → 110 on stock (and 299 → 327 at-or-below optimal size),
-and bound5 collapses 52 → 0 on the patched arm. So the trade is not
-"nothing on stock, everything with the patch"; it is a genuine trade in
-both arms.
+Two effects the old comment did not record, both real at n=1000: binheap
+improves 93 → 110 on stock (and 299 → 327 at-or-below optimal size), and
+bound5 collapses 52 → 0 on the patched arm. The live comment now includes
+both. So the trade is not "nothing on stock, everything with the patch"; it is
+a genuine trade in both arms.
 
 The structural point stands regardless: one of our shrinker gaps is
 **downstream of an upstream encoding defect**, and the biggest single
@@ -103,10 +103,11 @@ here has an adaptive rule (earned patience).
 
 ## 3. The choice IR is narrower than Hypothesis's
 
-This is a real longer-term gap, though the later list-size probe showed that
-the poor list-of-strings result above is primarily caused by
-`base_quickcheck`'s anti-monotone list budget redistribution, not by the lack
-of a first-class string choice.
+This is a real longer-term gap. External Wave 2 evidence on the deliberately
+unmerged `bug/nested-list-length` branch (PR #28) shows that the poor
+list-of-strings result above is primarily caused by `base_quickcheck`'s
+anti-monotone list budget redistribution, not by the lack of a first-class
+string choice. That reproducer is not part of this Wave 1 tree.
 
 Hypothesis's provider draws five choice types —
 `draw_boolean`, `draw_integer`, `draw_float`, `draw_string`,

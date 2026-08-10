@@ -57,8 +57,8 @@ opam install --switch=tapecheck-hunt --yes \
   core core_kernel ppx_sexp_conv ppx_compare ppx_let ppx_fields_conv \
   ppx_sexp_message ppx_sexp_value ppx_base ppxlib_jane
 cd bonsai-tapecheck-hunt
-opam exec --switch=tapecheck-hunt -- dune build
-opam exec --switch=tapecheck-hunt -- dune runtest
+opam exec --switch=tapecheck-hunt -- dune build --root .
+opam exec --switch=tapecheck-hunt -- dune runtest --root . --force
 ```
 
 Everything depending on the shimmed interfaces (`core` v0.17.2, `core_kernel`
@@ -68,7 +68,13 @@ problem (janestreet/bonsai#47) does not affect it.
 
 ## Evidence
 
-`dune runtest` prints one tape-engine summary line per property run:
+The explicit `--root .` is essential: without it, dune discovers the parent
+tapecheck workspace, where this nested project is marked `data_only`, and a
+nominally successful test command runs no consumer tests. `--force` makes the
+seven actions execute again rather than replaying dune's cache.
+
+The real nested `dune runtest --root . --force` prints one tape-engine summary
+line per property run:
 
 ```
 tapecheck: 10000 cases (10000 valid, 0 discarded, 0 failing)

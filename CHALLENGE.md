@@ -21,9 +21,9 @@ first:
 
 - Their published Hypothesis numbers are from **5.23.11, in 2020**.
   Quoting them against a 2026 tapecheck would be unfair in both
-  directions, so current Hypothesis (6.164.0) is re-measured under the
-  same harness. It has improved a lot: `reverse` went from mean 45.95
-  evaluations to 17.65.
+  directions, so current Hypothesis (6.164.0) is re-measured from ported
+  challenge definitions with the same evaluation-count convention. It has
+  improved a lot: `reverse` went from mean 45.95 evaluations to 17.65.
 - Their harness runs with `max_examples = 10**6`. An earlier tapecheck
   run used `count = 500` and reported 11/100 found on
   `difference_must_not_be_one` — which says nothing about the shrinker
@@ -36,12 +36,25 @@ first:
   tapecheck's normalisation score, but they are an asymmetry and are now stated
   explicitly. `calculator` also runs at size 8 because the corresponding
   `recursive_union` grows exponentially at the default size 30.
-- Tapecheck shrinking is capped at 20,000 total replay proposals, 500 accepted
-  shrinks, and 20 consecutive failures within a pass. Hypothesis uses its own
-  accepted-shrink and stall limits rather than those exact controls. The total
-  tape budget was non-binding in these measurements (the largest observed run
-  used 3,584 proposals), but the protocols are not identical and the table
-  should be read as comparative evidence, not a controlled timing benchmark.
+- Tapecheck shrinking is capped at 20,000 total replay proposals and 500
+  accepted shrinks. Selected passes start with a 20-failure allowance;
+  `lower_and_delete` can earn additional patience after successes. Hypothesis
+  uses its own accepted-shrink and stall limits rather than those exact
+  controls. The total tape budget was non-binding in these measurements (the
+  largest observed run used 7,881 proposals), but the protocols are not
+  identical and the table should be read as comparative evidence, not a
+  controlled timing benchmark.
+
+The OCaml harness defaults to 100 runs for quick local use. Reproduce the
+reported sample size with:
+
+```
+TAPECHECK_RUNS=1000 dune exec challenge/challenge.exe
+```
+
+The `+patch` column requires applying
+`proposals/base_quickcheck-non_uniform.patch` first. The Hypothesis column
+comes from the separate `hypothesis-baseline` branch, not this executable.
 
 ## Results
 
@@ -68,9 +81,7 @@ inline below.
 
 Both tapecheck columns re-measured 2026-08-08 at `3aa0a47`; raw output
 in `../tapecheck-notes/challenge-1000-20260808.txt` and
-`challenge-1000-patched-20260808.txt`. The Hypothesis column is not
-re-measured here — it comes from the separate `hypothesis-baseline`
-harness.
+`challenge-1000-patched-20260808.txt`.
 
 **lengthlist now normalises, which is the row that moved.** It was
 716/1000 at 261.0 when this table was first written and is 1000/1000 at

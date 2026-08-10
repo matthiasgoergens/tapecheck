@@ -96,10 +96,14 @@ challenge, what the shrinker *normalises* to (does it reach the same
 canonical answer regardless of where it started?) and what that costs in
 test evaluations. Quality and cost together.
 
-1000 runs per challenge, their harness's protocol and budget. Their
-published Hypothesis numbers are from 5.23.11 in 2020, so I re-measured
-against current Hypothesis rather than citing them — it has improved
-substantially since (`reverse` went from mean 45.95 evaluations to
+1000 runs per challenge, using ported challenge definitions and the same
+evaluation-count convention. The execution controls are not identical:
+tapecheck uses lower generation caps for `calculator` and `bound5`, a smaller
+size for the exponentially growing calculator generator, and different shrink
+limits. [CHALLENGE.md](../CHALLENGE.md) records the exact protocol and rerun
+command. The published Hypothesis numbers are from 5.23.11 in 2020, so I
+re-measured against current Hypothesis rather than citing them — it has
+improved substantially since (`reverse` went from mean 45.95 evaluations to
 17.65).
 
 | challenge | Hypothesis 6.164.0 | tapecheck |

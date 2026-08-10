@@ -43,7 +43,7 @@ observed hash, and generates the result from that. So each distinct
 argument reads a deterministic stream keyed by (split state, salt), and
 the function is pure within a run.
 
-Under the tape engine today (vendor/splittable_random shim), split-off
+Before this implementation, under the original tape engine shim, split-off
 states are hook-free: `on_split` records a `Marker` for alignment and
 that is all. Consequences:
 
@@ -68,8 +68,8 @@ that is all. Consequences:
 Note on prior art: Hypothesis's `functions()` does NOT share this
 limitation. It draws lazily from the live choice sequence at call time,
 memoised per argument, so function results participate in shrinking.
-QuickCheck-style CoArbitrary (and our current shim) is the model that
-does not shrink.
+QuickCheck-style CoArbitrary (and our pre-stream shim) is the model that did
+not shrink.
 
 ## The design: streams as first-class tape citizens
 
@@ -98,7 +98,7 @@ Tape shape:
   tape is the `streams = empty` special case.
 - Serialization: the existing format for `main`, then length-prefixed
   keyed sections, keys sorted. Bump the version byte; old tapes load as
-  main-only (prefix-tolerant, like today).
+  main-only (prefix-tolerant, like the pre-stream format).
 - Shortlex order: compare `main` first, then streams in sorted key
   order, each by the existing per-choice order; fewer streams beats
   more streams. Total order, so acceptance stays a strict descent.
@@ -110,7 +110,7 @@ draws pop from their own stream under the usual kind-match rules.
 Realignment: unchanged machinery, applied per stream. A shrink edit
 that changes an argument's observed hash moves the salt, so the call
 reads a stream key with no recorded entries: those draws fall back to
-fresh sampling (the same overrun rule as today), and the orphaned
+fresh sampling (the same overrun rule as before this implementation), and the orphaned
 stream's records die with the next accepted tape (garbage-collect
 streams that the accepted replay never touched, the multi-stream
 analogue of truncating the unused tail). Freeze/Consume/`Both` apply
@@ -128,7 +128,7 @@ New shrink moves this unlocks:
 What this fixes beyond shrinking: replay stability. Function draws come
 from the tape, so a replayed attempt evaluates the same function
 behaviour for the same arguments, killing the hidden coin-flip in
-today's attempts. (The split-off PRNG seed still differs under replay,
+the old engine's attempts. (The split-off PRNG seed still differs under replay,
 but it only feeds unrecorded positions, where fresh randomness is the
 intended semantics.)
 
@@ -139,10 +139,10 @@ both without upstream):
 
 1. `on_split : unit -> t option` in place of `unit -> unit`: the
    parent's hook returns the intercept to install on the child state,
-   or `None` for today's hook-free child. `split` becomes:
+   or `None` for the old hook-free child. `split` becomes:
    attach the returned hooks to the freshly built child.
 2. `on_perturb : int -> unit` in place of `unit -> unit`: the hook
-   needs the salt to extend the stream key. (Today the salt is dropped,
+   needs the salt to extend the stream key. (In the old shim the salt was dropped,
    and the marker only serves main-stream alignment.)
 
 Both are backward-compatible for engines that want the old behaviour
