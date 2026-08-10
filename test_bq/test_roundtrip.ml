@@ -59,6 +59,34 @@ let () =
   let out3 = Tape.finish tape in
   check "untaped states record nothing" (Array.length out3.Tape.choices = 0);
 
+  (* Weighted structural decisions retain their sampling law outside the tape,
+     but are represented by a first-class Bool choice when attached.  Forced
+     probabilities consume no randomness and need no tape entry. *)
+  let random = Splittable_random.of_int 7 in
+  check "probability zero is forced"
+    (not (Splittable_random.bool_with_probability random ~probability:0.));
+  check "probability one is forced"
+    (Splittable_random.bool_with_probability random ~probability:1.);
+  Tape.start_recording tape;
+  let attached = Splittable_random.For_tape.attach random tape in
+  ignore
+    (Splittable_random.bool_with_probability attached ~probability:0.75 : bool);
+  let weighted = Tape.finish tape in
+  check "weighted decision records one choice"
+    (Array.length weighted.Tape.choices = 1);
+  check "weighted decision records a bool"
+    (match weighted.Tape.choices.(0) with
+     | Tape.Bool _ -> true
+     | Tape.Integer _ | Tape.Float _ | Tape.Marker -> false);
+  Tape.start_replay tape [| Tape.Bool false |];
+  let attached = Splittable_random.For_tape.attach random tape in
+  let replayed =
+    Splittable_random.bool_with_probability attached ~probability:0.75
+  in
+  let replayed_out = Tape.finish tape in
+  check "weighted bool replay is editable" (not replayed);
+  check "weighted bool replay does not overrun" (not replayed_out.Tape.overrun);
+
   Stdlib.print_endline "test_roundtrip: all passed";
   Stdlib.Printf.printf "tape length for one point: %d choices\n"
     (Array.length out1.Tape.choices);

@@ -42,6 +42,36 @@ result as a real `Bool` tape choice while retaining the requested generation
 probability.  This is the right *kind* of choice; the exact API and probability
 metadata still need adversarial review before an upstream proposal.
 
+## Span-hook cost
+
+The first implementation used separate start/stop calls and paid an
+`Exn.protect` for every list element, even when no engine was attached.  That
+was measurably noisy and sometimes several per cent slower.  The revised seam
+is one bracket:
+
+```ocaml
+Splittable_random.with_span random List_element ~f
+```
+
+Its `None` fast path calls `f` directly; only an attached observer pays for the
+callbacks and exception-safe closing.
+
+The original min-of-repetitions benchmark was withdrawn.  On a shared machine
+it hid roughly two-fold changes in processor speed, so its apparent 0--2%
+effect was not trustworthy.  `bench_spans/` now uses 60 randomised paired
+blocks, with short treatment arms, warm-up, identical deterministic workloads,
+and all observations retained.  The primary estimate is the mean paired log
+ratio with a 95% Student-t interval.
+
+Pinned to logical CPU 31, 60 blocks of 30,000 size-30 lists estimated the
+unused bracket at -0.23%, with a 95% interval from -0.63% to +0.17%.  The
+un-pinned control run had an interval from -3.29% to +4.08% and several gross
+within-block frequency transitions, demonstrating why affinity and blocking
+matter here.  The evidence therefore rules out a large steady-state cost on
+this machine, but does not establish a literal zero cost or a speed-up.  An
+upstream proposal should report the design and interval, not merely a point
+estimate; repeat it on the maintainers' target hardware.
+
 ## Results
 
 At size 10 over 20,000 raw (unattached) samples, stock and continuation

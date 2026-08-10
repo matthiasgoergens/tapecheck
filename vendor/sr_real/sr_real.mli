@@ -19,6 +19,9 @@ open! Base
 
 type t
 
+(** Extensible structural labels for property-testing engines. *)
+type span_label = ..
+
 (** Create a new [t] seeded from the given random state. This allows nondeterministic
     initialization, for example in the case that the input state was created using
     [Random.make_self_init].
@@ -86,6 +89,8 @@ module Intercept : sig
         -> probability:float
         -> default:(state -> probability:float -> bool)
         -> bool
+    ; on_span_start : span_label -> unit
+    ; on_span_stop : unit -> unit
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }
@@ -118,6 +123,10 @@ val bool : t -> bool
 (** [bool_with_probability t ~probability] is true with the given probability.
     [probability] must be finite and between zero and one, inclusive. *)
 val bool_with_probability : t -> probability:float -> bool
+
+(** [with_span t label ~f] notifies an attached observer of a structurally
+    deletable region around [f].  With no interceptor it calls [f] directly. *)
+val with_span : t -> span_label -> f:(unit -> 'a) -> 'a
 
 (** Produce a random number uniformly distributed in the given inclusive range.  (In the
     case of [float], [hi] may or may not be attainable, depending on rounding.)  *)

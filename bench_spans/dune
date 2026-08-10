@@ -1,0 +1,7 @@
+(executable
+ (name bench_spans)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio unix base_quickcheck)
+ (ocamlopt_flags
+  (:standard -O3)))
