@@ -18,11 +18,11 @@ laws, `sort_siblings` evidence, and the current Hypothesis-gap inventory.
 half-configured database, reports explicit-example failures, and database
 writes use unique same-directory temporary files.
 
-This is local `master` status, not publication status: the Wave 1 commits have
-not been pushed to `origin/master`. The full forced suite and the top-level
-engine-name guard are acceptance checks. The latter protects the specific
-class of merge loss it was written for; it is not a complete OCaml
-API-compatibility proof.
+Wave 1 was published to `origin/master` at `2904855` on 2026-08-10. The
+resulting GitHub Actions run passed the full forced suite, regression guard,
+top-level engine-name guard, and deterministic vendor-provenance check. The
+engine-name guard protects the specific class of merge loss it was written
+for; it is not a complete OCaml API-compatibility proof.
 
 ## Deliberately outside Wave 1
 
