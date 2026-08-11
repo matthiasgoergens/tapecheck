@@ -77,6 +77,15 @@ let () =
     (Splittable_random.bool_with_probability random ~probability:1.);
   Tape.start_recording tape;
   let attached = Splittable_random.For_tape.attach random tape in
+  check "attached probability zero is forced"
+    (not (Splittable_random.bool_with_probability attached ~probability:0.));
+  check "attached probability one is forced"
+    (Splittable_random.bool_with_probability attached ~probability:1.);
+  let forced = Tape.finish tape in
+  check "forced probabilities record no choices"
+    (Array.length forced.Tape.choices = 0);
+  Tape.start_recording tape;
+  let attached = Splittable_random.For_tape.attach random tape in
   ignore
     (Splittable_random.bool_with_probability attached ~probability:0.75 : bool);
   let weighted = Tape.finish tape in
@@ -94,6 +103,50 @@ let () =
   let replayed_out = Tape.finish tape in
   check "weighted bool replay is editable" (not replayed);
   check "weighted bool replay does not overrun" (not replayed_out.Tape.overrun);
+
+  (* Exercise the list combinator itself, not merely [with_span].  A fixed
+     length avoids conflating element spans with the draws used to choose and
+     allocate a variable length. *)
+  let starts = ref 0 in
+  let stops = ref 0 in
+  let depth = ref 0 in
+  let max_depth = ref 0 in
+  let rec span_hooks : Splittable_random.Intercept.t =
+    { int64 = (fun state ~lo ~hi ~default -> default state ~lo ~hi)
+    ; float = (fun state ~lo ~hi ~default -> default state ~lo ~hi)
+    ; unit_float = (fun state ~default -> default state)
+    ; bool = (fun state ~default -> default state)
+    ; bool_with_probability =
+        (fun state ~probability ~default -> default state ~probability)
+    ; on_span_start =
+        (fun _ ->
+          Int.incr starts;
+          Int.incr depth;
+          max_depth := Int.max !max_depth !depth)
+    ; on_span_stop =
+        (fun () ->
+          check "list span stop has a matching start" (!depth > 0);
+          Int.decr depth;
+          Int.incr stops)
+    ; on_split = (fun () -> Some span_hooks)
+    ; on_perturb = (fun _ -> Some span_hooks)
+    }
+  in
+  let span_random =
+    Splittable_random.with_intercept (Splittable_random.of_int 91) span_hooks
+  in
+  let spanned_values =
+    Base_quickcheck.Generator.generate
+      (Base_quickcheck.Generator.list_with_length
+         (Base_quickcheck.Generator.int_uniform_inclusive 0 100)
+         ~length:5)
+      ~size:10
+      ~random:span_random
+  in
+  check "fixed list generated five values" (List.length spanned_values = 5);
+  check "list emits one span per element" (!starts = 5 && !stops = 5);
+  check "list element spans are balanced" (!depth = 0);
+  check "flat list element spans are not nested" (!max_depth = 1);
 
   (* The unused span bracket must not change values or consume randomness.
      Compare with the exact pre-span [list_generic] definition. *)

@@ -63,6 +63,20 @@ blocks, with short treatment arms, warm-up, identical deterministic workloads,
 and all observations retained.  The primary estimate is the mean paired log
 ratio with a 95% Student-t interval.
 
+For the fresh hardening replication, the question is whether the unattached
+bracket changes steady-state generation cost by a practically relevant amount.
+The estimand is the paired geometric mean ratio of nanoseconds per generated
+element; one randomised treatment pair is the analysis unit.  Processor
+frequency, thermal state, scheduler activity, GC state, and treatment order are
+the expected nuisances.  The fixed design is 60 balanced, randomly ordered
+blocks of 30,000 lists after warming both paths, on one pinned logical CPU.  A
+95% interval wholly inside +/-1% is the declared equivalence criterion.  No
+blocks are excluded.  Timing uses monotonic process CPU time (`Unix.times`), so
+descheduling by unrelated work is outside the estimand while clock-frequency
+changes remain a nuisance.  Because all blocks come from one process and
+machine, a positive result is machine-local and still needs fresh-process and
+upstream hardware replication before generalising.
+
 Pinned to logical CPU 31, 60 blocks of 30,000 size-30 lists estimated the
 unused bracket at -0.23%, with a 95% interval from -0.63% to +0.17%.  The
 un-pinned control run had an interval from -3.29% to +4.08% and several gross
@@ -84,14 +98,17 @@ The weighted-Boolean version gave the following 100-seed shrink results:
 
 | Property and exact minimum | Stock | Upfront length + running budget | Continuation + running budget |
 |---|---:|---:|---:|
-| `length >= 3`, `[0; 0; 0]` | 100/100, 151 proposals | 100/100, 201 | 92/100, 108 |
+| `length >= 3`, `[0; 0; 0]` | 100/100, 151 proposals/failure | 100/100, 201 | 92/100, 108 |
 | `sum >= 100`, `[100]` | 100/100, 94 | 99/100, 51 | 54/100, 114 |
-| `hd = length`, `[1]` | 47/100, 131 | 74/100, 103 | 46/100, 84 |
+| `hd = length`, `[1]` | 47/100, 134 | 74/100, 104 | 46/100, 84 |
 | ten strings, ten empty strings | 0/100, 369 | 0/100, 304 | 0/100, 380 |
 
-The proposal count is averaged over all 100 seeds.  All variants found a
-failure in every row except the stock and upfront-length `hd = length` cases,
-which found 98 and 99 respectively.
+Proposal counts are shrink attempts averaged over seeds that found a failure;
+generation work for seeds that found none is deliberately not conflated with
+shrinking work.  The earlier table divided by all 100 seeds and therefore
+understated the conditional shrinking cost when found rates differed.  All
+variants found a failure in every row except the stock and upfront-length
+`hd = length` cases, which found 98 and 99 respectively.
 
 Generation remains bounded by the corrected running budget.  At size 50 over
 10,000 samples, maximum total string payload and maximum recursive tree node
@@ -137,7 +154,16 @@ whether probability is sampling metadata only or part of replay validity.
 `with_span` guarantees a stop callback when the body raises, and tests nested
 and exceptional bodies.  It assumes observer callbacks themselves do not
 raise; otherwise a failing stop callback may mask the body's exception.  Make
-that callback contract explicit before publishing the seam.
+that callback contract explicit before publishing the seam.  The interface
+now states this contract, and the end-to-end test also verifies that
+`Generator.list_with_length` emits one balanced span per element.
+
+`Intercept.t` is itself an unpublished experimental seam: the v1 proposal in
+`splittable_random` PR #2 has not merged or shipped.  Wave 2 therefore treats
+the additional weighted-Boolean and span callbacks as a replacement proposal,
+not as a compatibility promise between two prototypes.  Before any upstream
+release, either freeze the accepted record shape or hide construction behind
+an API that can grow optional capabilities without breaking implementors.
 
 Finally, the benchmark's tight interval depends on CPU affinity.  Without
 affinity, processor-frequency transitions made the result unresolved.  The
@@ -149,3 +175,19 @@ nice -n 10 ionice -c 2 -n 7 taskset --cpu-list 31 \
 ```
 
 Logical CPU 31 is a machine-specific choice, not a portable default.
+
+## Work queue after this checkpoint
+
+Merge this seam only after its contract, end-to-end span test, measurement
+accounting, provenance check, and adversarial review are green.  It remains
+infrastructure rather than a claimed shrink-quality improvement.
+
+PR #20 is a historical Wave 2 design snapshot whose inferred-string sequence
+is explicitly superseded by the later list probe; do not merge it unchanged.
+PR #29 remains a useful measured comparator for the running-budget policy, not
+the selected public list implementation.
+
+The next implementation branch should record span boundaries at runtime and
+add one span-deletion pass, together with an experimental generator in which a
+list continuation decision and its element occupy the same span.  Compare that
+combined design with stock and PR #29 before replacing `Generator.list`.
