@@ -70,8 +70,9 @@ element; one randomised treatment pair is the analysis unit.  Processor
 frequency, thermal state, scheduler activity, GC state, and treatment order are
 the expected nuisances.  The fixed design is 60 balanced, randomly ordered
 blocks of 30,000 lists after warming both paths, on one pinned logical CPU.  A
-95% interval wholly inside +/-1% is the declared equivalence criterion.  No
-blocks are excluded.  Timing uses monotonic process CPU time (`Unix.times`), so
+95% interval wholly inside +/-1% was the predeclared symmetric equivalence
+criterion.  No blocks are excluded.  Timing uses monotonic process CPU time
+(`Unix.times`), so
 descheduling by unrelated work is outside the estimand while clock-frequency
 changes remain a nuisance.  Because all blocks come from one process and
 machine, a positive result is machine-local and still needs fresh-process and
@@ -85,6 +86,34 @@ matter here.  The evidence therefore rules out a large steady-state cost on
 this machine, but does not establish a literal zero cost or a speed-up.  An
 upstream proposal should report the design and interval, not merely a point
 estimate; repeat it on the maintainers' target hardware.
+
+The predeclared hardening replication using process CPU time estimated -0.62%,
+with a 95% interval from -0.98% to -0.27%; that interval is wholly inside the
++/-1% equivalence margin.  Two fresh-process sensitivity runs, added after
+seeing the primary result, estimated -0.59% [-0.98%, -0.20%] and -0.41%
+[-0.84%, +0.02%].
+
+Adversarial review then ran four more fresh processes.  They estimated -0.46%
+[-1.04%, +0.13%], -0.39% [-0.74%, -0.05%], -0.80%
+[-1.04%, -0.56%], and -0.68% [-1.11%, -0.24%].  Only one of those four met
+the symmetric equivalence criterion, so the original three-for-three result
+was not robust: across all seven process-CPU runs, four met it and three did
+not.  Raw reviewer observations are stored under `bench_spans/results/`.
+The first three runs predated that results directory and unfortunately survive
+only as these aggregates.
+
+Every two-sided upper confidence bound was at or below +0.13%, however.  Using that
+conservative bound, all seven runs exclude a slowdown of +1%, which is the
+actual upstream risk posed by an unused hook.  This one-sided non-inferiority
+interpretation was adopted after seeing the equivalence instability and is
+therefore labelled post-review, not predeclared.  The executable reports both
+claims separately.
+
+All eight estimates including the earlier wall-clock run are negative.  An
+added branch is not plausibly an optimisation, so the persistent direction is
+probably a binary-layout or similar systematic effect that the within-binary
+interval does not model.  Do not claim a speed-up or literal zero cost, and
+repeat on separately built binaries and upstream hardware before generalising.
 
 ## Results
 
@@ -109,6 +138,8 @@ shrinking work.  The earlier table divided by all 100 seeds and therefore
 understated the conditional shrinking cost when found rates differed.  All
 variants found a failure in every row except the stock and upfront-length
 `hd = length` cases, which found 98 and 99 respectively.
+Conditioning cost on finding a failure can itself select different seeds when
+found rates differ; here the rates are 98--100%, so that effect is negligible.
 
 Generation remains bounded by the corrected running budget.  At size 50 over
 10,000 samples, maximum total string payload and maximum recursive tree node
@@ -153,9 +184,10 @@ whether probability is sampling metadata only or part of replay validity.
 
 `with_span` guarantees a stop callback when the body raises, and tests nested
 and exceptional bodies.  It assumes observer callbacks themselves do not
-raise; otherwise a failing stop callback may mask the body's exception.  Make
-that callback contract explicit before publishing the seam.  The interface
-now states this contract, and the end-to-end test also verifies that
+raise.  A start-callback exception prevents the body; a stop-callback exception
+propagates; and if both body and stop callback raise, Base's `Exn.Finally`
+preserves both.  The interface now states and tests this contract, and the
+end-to-end test also verifies that
 `Generator.list_with_length` emits one balanced span per element.
 
 `Intercept.t` is itself an unpublished experimental seam: the v1 proposal in

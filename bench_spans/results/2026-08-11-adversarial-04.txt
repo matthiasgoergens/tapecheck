@@ -1,0 +1,67 @@
+randomised paired blocks: 60 blocks x 30000 lists/treatment
+without 232.403 ns/element; with 230.820
+paired geometric effect -0.68%, 95% t CI [-1.11%, -0.24%]
+equivalence margin +/-1.00%: not established
+by order: without-first -0.99%, with-first -0.36%
+mean signed delta -1.582 ns/element (secondary)
+checksum 216506
+  block 01 (without first): without 231.158, with 232.275, ratio 1.00484
+  block 02 (without first): without 232.206, with 229.213, ratio 0.98711
+  block 03 (with first): without 230.141, with 229.620, ratio 0.99773
+  block 04 (with first): without 235.130, with 229.971, ratio 0.97806
+  block 05 (without first): without 231.481, with 230.954, ratio 0.99773
+  block 06 (without first): without 230.017, with 229.398, ratio 0.99731
+  block 07 (with first): without 232.063, with 229.837, ratio 0.99041
+  block 08 (with first): without 230.603, with 229.781, ratio 0.99643
+  block 09 (without first): without 231.693, with 229.255, ratio 0.98947
+  block 10 (without first): without 230.987, with 228.765, ratio 0.99038
+  block 11 (with first): without 230.640, with 230.451, ratio 0.99918
+  block 12 (with first): without 231.153, with 230.026, ratio 0.99512
+  block 13 (without first): without 229.079, with 228.927, ratio 0.99933
+  block 14 (with first): without 230.797, with 234.894, ratio 1.01775
+  block 15 (without first): without 230.765, with 229.712, ratio 0.99544
+  block 16 (without first): without 230.520, with 228.710, ratio 0.99215
+  block 17 (without first): without 231.518, with 229.208, ratio 0.99002
+  block 18 (without first): without 231.218, with 230.746, ratio 0.99796
+  block 19 (with first): without 232.423, with 230.428, ratio 0.99142
+  block 20 (without first): without 240.183, with 235.102, ratio 0.97885
+  block 21 (without first): without 232.455, with 229.504, ratio 0.98730
+  block 22 (without first): without 232.141, with 229.028, ratio 0.98659
+  block 23 (with first): without 234.515, with 235.499, ratio 1.00420
+  block 24 (with first): without 248.677, with 238.575, ratio 0.95938
+  block 25 (with first): without 230.885, with 236.765, ratio 1.02547
+  block 26 (with first): without 230.192, with 228.890, ratio 0.99434
+  block 27 (without first): without 231.966, with 228.465, ratio 0.98491
+  block 28 (with first): without 230.576, with 229.980, ratio 0.99742
+  block 29 (with first): without 232.285, with 229.573, ratio 0.98833
+  block 30 (without first): without 231.370, with 228.797, ratio 0.98888
+  block 31 (without first): without 220.608, with 230.442, ratio 1.04457
+  block 32 (without first): without 231.292, with 230.580, ratio 0.99692
+  block 33 (with first): without 231.352, with 229.800, ratio 0.99329
+  block 34 (with first): without 231.213, with 233.615, ratio 1.01039
+  block 35 (with first): without 231.832, with 229.809, ratio 0.99127
+  block 36 (without first): without 231.864, with 230.201, ratio 0.99283
+  block 37 (with first): without 225.241, with 229.656, ratio 1.01960
+  block 38 (with first): without 230.793, with 231.606, ratio 1.00352
+  block 39 (without first): without 225.744, with 227.287, ratio 1.00683
+  block 40 (with first): without 236.423, with 235.453, ratio 0.99590
+  block 41 (with first): without 232.696, with 230.516, ratio 0.99063
+  block 42 (without first): without 232.137, with 218.493, ratio 0.94122
+  block 43 (with first): without 232.220, with 226.271, ratio 0.97438
+  block 44 (without first): without 231.098, with 230.368, ratio 0.99684
+  block 45 (without first): without 235.702, with 230.280, ratio 0.97699
+  block 46 (with first): without 233.776, with 230.017, ratio 0.98392
+  block 47 (with first): without 233.966, with 232.894, ratio 0.99542
+  block 48 (with first): without 238.455, with 232.964, ratio 0.97697
+  block 49 (without first): without 237.906, with 230.917, ratio 0.97063
+  block 50 (without first): without 233.379, with 233.573, ratio 1.00083
+  block 51 (with first): without 232.853, with 233.185, ratio 1.00143
+  block 52 (without first): without 239.402, with 239.259, ratio 0.99940
+  block 53 (with first): without 231.324, with 242.548, ratio 1.04852
+  block 54 (without first): without 236.164, with 229.458, ratio 0.97160
+  block 55 (with first): without 231.980, with 229.693, ratio 0.99014
+  block 56 (without first): without 232.298, with 229.102, ratio 0.98624
+  block 57 (without first): without 232.649, with 230.229, ratio 0.98960
+  block 58 (with first): without 231.841, with 229.971, ratio 0.99193
+  block 59 (with first): without 232.054, with 230.252, ratio 0.99224
+  block 60 (without first): without 237.056, with 228.428, ratio 0.96360

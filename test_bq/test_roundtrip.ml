@@ -103,6 +103,14 @@ let () =
   let replayed_out = Tape.finish tape in
   check "weighted bool replay is editable" (not replayed);
   check "weighted bool replay does not overrun" (not replayed_out.Tape.overrun);
+  Tape.start_replay tape [| Tape.Bool true |];
+  let attached = Splittable_random.For_tape.attach random tape in
+  let replayed =
+    Splittable_random.bool_with_probability attached ~probability:0.25
+  in
+  let replayed_out = Tape.finish tape in
+  check "weighted bool can replay true" replayed;
+  check "weighted true replay does not overrun" (not replayed_out.Tape.overrun);
 
   (* Exercise the list combinator itself, not merely [with_span].  A fixed
      length avoids conflating element spans with the draws used to choose and
@@ -111,8 +119,12 @@ let () =
   let stops = ref 0 in
   let depth = ref 0 in
   let max_depth = ref 0 in
+  let span_events = ref [] in
   let rec span_hooks : Splittable_random.Intercept.t =
-    { int64 = (fun state ~lo ~hi ~default -> default state ~lo ~hi)
+    { int64 =
+        (fun state ~lo ~hi ~default ->
+          span_events := "draw" :: !span_events;
+          default state ~lo ~hi)
     ; float = (fun state ~lo ~hi ~default -> default state ~lo ~hi)
     ; unit_float = (fun state ~default -> default state)
     ; bool = (fun state ~default -> default state)
@@ -120,11 +132,13 @@ let () =
         (fun state ~probability ~default -> default state ~probability)
     ; on_span_start =
         (fun _ ->
+          span_events := "start" :: !span_events;
           Int.incr starts;
           Int.incr depth;
           max_depth := Int.max !max_depth !depth)
     ; on_span_stop =
         (fun () ->
+          span_events := "stop" :: !span_events;
           check "list span stop has a matching start" (!depth > 0);
           Int.decr depth;
           Int.incr stops)
@@ -147,6 +161,20 @@ let () =
   check "list emits one span per element" (!starts = 5 && !stops = 5);
   check "list element spans are balanced" (!depth = 0);
   check "flat list element spans are not nested" (!max_depth = 1);
+  let element_events =
+    List.rev !span_events
+    |> List.drop_while ~f:(fun event -> not (String.equal event "start"))
+  in
+  check "each element draw is inside its span"
+    (List.equal
+       String.equal
+       element_events
+       [ "start"; "draw"; "stop"
+       ; "start"; "draw"; "stop"
+       ; "start"; "draw"; "stop"
+       ; "start"; "draw"; "stop"
+       ; "start"; "draw"; "stop"
+       ]);
 
   (* The unused span bracket must not change values or consume randomness.
      Compare with the exact pre-span [list_generic] definition. *)

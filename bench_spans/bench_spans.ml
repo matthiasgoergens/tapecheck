@@ -116,6 +116,7 @@ let () =
   let equivalent =
     Float.(effect_lo > -.equivalence_margin && effect_hi < equivalence_margin)
   in
+  let material_slowdown_excluded = Float.(effect_hi < equivalence_margin) in
   let by_order wanted =
     Array.filter_mapi log_ratios ~f:(fun i ratio ->
       if Bool.equal without_first.(i) wanted then Some ratio else None)
@@ -129,6 +130,7 @@ let () =
     "randomised paired blocks: %d blocks x %d lists/treatment\n\
      without %.3f ns/element; with %.3f\n\
      paired geometric effect %+.2f%%, 95%% t CI [%+.2f%%, %+.2f%%]\n\
+     slowdown margin +%.2f%%: %s (conservative two-sided upper bound)\n\
      equivalence margin +/-%.2f%%: %s\n\
      by order: without-first %+.2f%%, with-first %+.2f%%\n\
      mean signed delta %+.3f ns/element (secondary)\n\
@@ -140,6 +142,8 @@ let () =
     (100. *. relative_effect)
     (100. *. effect_lo)
     (100. *. effect_hi)
+    (100. *. equivalence_margin)
+    (if material_slowdown_excluded then "excluded" else "not excluded")
     (100. *. equivalence_margin)
     (if equivalent then "interval contained" else "not established")
     (100. *. without_first_effect)

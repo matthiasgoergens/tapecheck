@@ -95,12 +95,13 @@ module Intercept : sig
         -> default:(state -> probability:float -> bool)
         -> bool
         (** Intercepts non-forced weighted choices.  The probability controls
-            sampling only: either Boolean remains valid when replayed. *)
+            sampling only, so a replaying engine may supply either Boolean. *)
     ; on_span_start : span_label -> unit
     ; on_span_stop : unit -> unit
       (** Span callbacks must not raise.  They are notifications rather than
           recovery boundaries; an exception from a callback is propagated and
-          may prevent the body from running or mask an exception from it. *)
+          may prevent the body from running.  If both the body and stop
+          callback raise, [Exn.Finally] preserves both exceptions. *)
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }
@@ -140,8 +141,8 @@ val bool_with_probability : t -> probability:float -> bool
 (** [with_span t label ~f] notifies an attached observer of a structurally
     deletable region around [f].  With no interceptor it calls [f] directly.
     A started span is stopped even if [f] raises.  Observer callbacks must not
-    raise; if they do, their exception is propagated and a stop-callback
-    exception may mask the exception from [f]. *)
+    raise; if they do, their exception is propagated.  If both [f] and the
+    stop callback raise, [Exn.Finally] preserves both exceptions. *)
 val with_span : t -> span_label -> f:(unit -> 'a) -> 'a
 
 (** Produce a random number uniformly distributed in the given inclusive range.  (In the
