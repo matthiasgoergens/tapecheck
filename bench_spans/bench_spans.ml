@@ -11,6 +11,7 @@ type Splittable_random.span_label += Bench_element
 
 let samples = 30_000
 let blocks = 60
+let equivalence_margin = 0.01
 
 let list_with bracket elt_gen =
   G.bind (G.sizes ()) ~f:(fun sizes ->
@@ -36,9 +37,16 @@ let run generator =
 
 let elapsed generator =
   Stdlib.Gc.full_major ();
-  let started = Unix.gettimeofday () in
+  (* [Unix.times] is monotonic process CPU time.  It excludes time descheduled
+     by unrelated work, which is desirable for this steady-state CPU-cost
+     estimand on a shared development machine. *)
+  let cpu_time () =
+    let t = Unix.times () in
+    t.tms_utime +. t.tms_stime
+  in
+  let started = cpu_time () in
   let checksum = run generator in
-  Unix.gettimeofday () -. started, checksum
+  cpu_time () -. started, checksum
 ;;
 
 let mean xs = Array.sum (module Float) xs ~f:Fn.id /. Float.of_int (Array.length xs)
@@ -105,6 +113,10 @@ let () =
   let relative_effect = Float.exp average_log_ratio -. 1. in
   let effect_lo = Float.exp (average_log_ratio -. margin_95) -. 1. in
   let effect_hi = Float.exp (average_log_ratio +. margin_95) -. 1. in
+  let equivalent =
+    Float.(effect_lo > -.equivalence_margin && effect_hi < equivalence_margin)
+  in
+  let material_slowdown_excluded = Float.(effect_hi < equivalence_margin) in
   let by_order wanted =
     Array.filter_mapi log_ratios ~f:(fun i ratio ->
       if Bool.equal without_first.(i) wanted then Some ratio else None)
@@ -118,8 +130,10 @@ let () =
     "randomised paired blocks: %d blocks x %d lists/treatment\n\
      without %.3f ns/element; with %.3f\n\
      paired geometric effect %+.2f%%, 95%% t CI [%+.2f%%, %+.2f%%]\n\
+     slowdown margin +%.2f%%: %s (conservative two-sided upper bound)\n\
+     equivalence margin +/-%.2f%%: %s\n\
      by order: without-first %+.2f%%, with-first %+.2f%%\n\
-     mean absolute delta %+.3f ns/element (secondary)\n\
+     mean signed delta %+.3f ns/element (secondary)\n\
      checksum %d\n"
     blocks
     samples
@@ -128,6 +142,10 @@ let () =
     (100. *. relative_effect)
     (100. *. effect_lo)
     (100. *. effect_hi)
+    (100. *. equivalence_margin)
+    (if material_slowdown_excluded then "excluded" else "not excluded")
+    (100. *. equivalence_margin)
+    (if equivalent then "interval contained" else "not established")
     (100. *. without_first_effect)
     (100. *. with_first_effect)
     average_delta

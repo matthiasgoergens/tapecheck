@@ -47,7 +47,6 @@ val copy : t -> t
     [t], i.e., [t] will return different values than if this hadn't been called. *)
 val split : t -> t
 
-(** Legacy aliases for the preceding definitions. *)
 (** Interception hooks for property-testing engines that need to observe,
     record, or replay the stream of bounded draws (for example, choice-tape
     shrinkers in the style of Python Hypothesis's Conjecture engine).
@@ -65,7 +64,13 @@ val split : t -> t
     and may return replacement hooks for this state ([None] keeps the
     current hooks). Engines use these to key split-off streams, so that
     randomly generated functions become observable and shrinkable; see
-    design/stream-keyed-tapes.md. *)
+    design/stream-keyed-tapes.md.
+
+    This is an experimental, unreleased seam.  Its record shape may change
+    while Tapecheck is prototyping the structural information that an
+    upstream API would need.  Once published, adding required record fields
+    would break clients that construct interceptors, so the accepted API must
+    either freeze this shape or provide an abstraction that can evolve. *)
 module Intercept : sig
   type state := t
 
@@ -89,8 +94,14 @@ module Intercept : sig
         -> probability:float
         -> default:(state -> probability:float -> bool)
         -> bool
+        (** Intercepts non-forced weighted choices.  The probability controls
+            sampling only, so a replaying engine may supply either Boolean. *)
     ; on_span_start : span_label -> unit
     ; on_span_stop : unit -> unit
+      (** Span callbacks must not raise.  They are notifications rather than
+          recovery boundaries; an exception from a callback is propagated and
+          may prevent the body from running.  If both the body and stop
+          callback raise, [Exn.Finally] preserves both exceptions. *)
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }
@@ -121,11 +132,17 @@ end
 val bool : t -> bool
 
 (** [bool_with_probability t ~probability] is true with the given probability.
-    [probability] must be finite and between zero and one, inclusive. *)
+    [probability] must be finite and between zero and one, inclusive.  Zero and
+    one are forced: they do not advance [t] and bypass any interceptor because
+    no random choice was made.  For other probabilities, the probability is
+    sampling metadata only; an interceptor may replay either Boolean. *)
 val bool_with_probability : t -> probability:float -> bool
 
 (** [with_span t label ~f] notifies an attached observer of a structurally
-    deletable region around [f].  With no interceptor it calls [f] directly. *)
+    deletable region around [f].  With no interceptor it calls [f] directly.
+    A started span is stopped even if [f] raises.  Observer callbacks must not
+    raise; if they do, their exception is propagated.  If both [f] and the
+    stop callback raise, [Exn.Finally] preserves both exceptions. *)
 val with_span : t -> span_label -> f:(unit -> 'a) -> 'a
 
 (** Produce a random number uniformly distributed in the given inclusive range.  (In the

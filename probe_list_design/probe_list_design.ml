@@ -188,11 +188,11 @@ let quality ~name ~gen ~test ~is_minimal =
       if is_minimal value then Int.incr minimal
   done;
   Stdio.printf
-    "    %-16s found %3d, minimal %3d, %4d attempts\n"
+    "    %-16s found %3d, minimal %3d, %4s shrink attempts/failure\n"
     name
     !found
     !minimal
-    (!attempts / 100)
+    (if !found = 0 then "n/a" else Int.to_string (!attempts / !found))
 ;;
 
 let distribution ~name ~gen ~size ~samples =
