@@ -54,38 +54,76 @@ let () =
      the persisted image.  An observational outer span is filtered without
      disturbing its nested deletable range. *)
   Tape.start_recording tape;
-  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false;
+  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false
+    ~discardable:false;
   ignore
     (Tape.draw_int tape ~lo:0L ~hi:10L
        ~sample:(fun ~lo:_ ~hi:_ -> 4L)
      : int64);
-  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true;
+  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true
+    ~discardable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
-  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true;
-  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:false
+    ~discarded:false;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
+    ~discarded:false;
   let spanned = Tape.finish tape in
   check "only deletable nested spans are retained"
     (Array.to_list spanned.Tape.spans
      = [ { Tape.stream = Tape.root
          ; label = 23
          ; deletable = true
+         ; discarded = false
          ; start = 1
          ; stop = 2
          }
        ]);
   Tape.start_replay_image tape spanned.Tape.image;
-  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false;
+  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false
+    ~discardable:false;
   ignore
     (Tape.draw_int tape ~lo:0L ~hi:10L
        ~sample:(fun ~lo:_ ~hi:_ -> 9L)
      : int64);
-  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true;
+  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true
+    ~discardable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> false) : bool);
-  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true;
-  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:false
+    ~discarded:false;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
+    ~discarded:false;
   let respanned = Tape.finish tape in
   check "replay reconstructs span boundaries"
     (Array.to_list spanned.Tape.spans = Array.to_list respanned.Tape.spans);
+
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:29 ~deletable:false
+    ~discardable:true;
+  ignore
+    (Tape.draw_int tape ~lo:0L ~hi:10L
+       ~sample:(fun ~lo:_ ~hi:_ -> 6L)
+     : int64);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:true
+    ~discarded:true;
+  let discarded = Tape.finish tape in
+  check "exceptional discardable span is retained"
+    (match Array.to_list discarded.Tape.spans with
+     | [ span ] ->
+       span.label = 29
+       && span.start = 0
+       && span.stop = 1
+       && span.discarded
+       && not span.deletable
+     | _ -> false);
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:29 ~deletable:false
+    ~discardable:true;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> false) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:true
+    ~discarded:false;
+  let successful = Tape.finish tape in
+  check "successful discardable span is filtered"
+    (Array.length successful.Tape.spans = 0);
 
   (* Editing a choice steers generation: flip the bool to false and the
      dependent draw disappears; the output tape is shorter, hence

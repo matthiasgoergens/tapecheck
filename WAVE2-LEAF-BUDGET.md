@@ -86,6 +86,8 @@ to delimit failed recursive attempts and remove their discarded tape regions,
 then repeat the recursive quality and cost measurements. First-class string
 and bytes choices remain independently necessary for the ten-strings case.
 
+That follow-up is now complete; see `WAVE2-DISCARDED-REGIONS.md`.
+
 ## Reproduction
 
 The complete deterministic output is

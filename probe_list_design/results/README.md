@@ -19,3 +19,8 @@ Hypothesis-shaped `max_leaves=100` prototype, recursive generation tails,
 tape costs, retry counts, and a 50-seed recursive shrink-quality comparison.
 It is documented in `../../WAVE2-LEAF-BUDGET.md` and reproduced by the same
 command above.
+
+`2026-08-12-discarded-regions.txt` records the next checkpoint: exceptional
+attempt spans and the `remove_discarded` shrink pass. It reports the choices
+consumed by abandoned leaf-cap attempts and the updated recursive shrink
+quality, documented in `../../WAVE2-DISCARDED-REGIONS.md`.

@@ -1,0 +1,67 @@
+RAW LENGTH DISTRIBUTION (size 10, 20k samples)
+  stock            mean length 3.591
+  continuation     mean length 3.579
+  continuation+span mean length 3.599
+  stock vs continuation two-sample chi-square 7.68 (11 bins)
+
+TAPED LENGTH DISTRIBUTION AND COST (size 10, 20k samples)
+  stock            mean length 3.554, choices 17.11, choices/element 4.82
+  length-int       mean length 3.554, choices 8.70, choices/element 2.45
+  continuation     mean length 3.579, choices 11.26, choices/element 3.15
+  continuation+span mean length 3.580, choices 8.16, choices/element 2.28
+  stock vs continuation two-sample chi-square 30.41 (11 bins)
+  continuation-f   mean length 3.363, choices 10.82, choices/element 3.22
+  continuation-i   mean length 3.124, choices 10.29, choices/element 3.29
+
+SHRINK QUALITY (100 seeds)
+  length >= 3 (minimum [0;0;0])
+    stock            found 100, minimal 100,  151 shrink attempts/failure
+    length-int       found 100, minimal 100,  201 shrink attempts/failure
+    continuation     found 100, minimal  92,  108 shrink attempts/failure
+      first non-minima: [0; 0; 0; 0; 0]; [0; 0; 0; 0]; [0; 0; 0; 0]; [0; 0; 0; 0]; [0; 0; 0; 0]
+    continuation+span found 100, minimal 100,   41 shrink attempts/failure
+  sum >= 100 (minimum [100])
+    stock            found 100, minimal 100,   94 shrink attempts/failure
+    length-int       found 100, minimal  99,   51 shrink attempts/failure
+      first non-minima: [1; 99]
+    continuation     found 100, minimal  54,  114 shrink attempts/failure
+      first non-minima: [0; 0; 100]; [0; 0; 100]; [0; 100]; [0; 0; 100]; [0; 100]
+    continuation+span found 100, minimal 100,   25 shrink attempts/failure
+  hd = length (minimum [1])
+    stock            found  98, minimal  47,  134 shrink attempts/failure
+      first non-minima: [2; 0]; [3; 0; 0]; [7; 0; 0; 0; 0; 0; 0]; [5; 0; 0; 0; 0]; [8; 0; 0; 0; 0; 0; 0; 0]
+    length-int       found  99, minimal  74,  104 shrink attempts/failure
+      first non-minima: [9; 0; 0; 0; 0; 0; 0; 0; 0]; [9; 0; 0; 0; 0; 0; 0; 0; 0]; [9; 0; 0; 0; 0; 0; 0; 0; 0]; [8; 0; 0; 0; 0; 0; 0; 0]; [8; 0; 0; 0; 0; 0; 0; 0]
+    continuation     found 100, minimal  46,   84 shrink attempts/failure
+      first non-minima: [2; 0]; [6; 0; 0; 0; 0; 0]; [10; 0; 0; 0; 0; 0; 0; 0; 0; 0]; [2; 0]; [9; 0; 0; 0; 0; 0; 0; 0; 0]
+    continuation+span found  99, minimal  99,   13 shrink attempts/failure
+  ten strings (minimum ten empty strings)
+    stock            found 100, minimal   0,  369 shrink attempts/failure
+      first non-minima: [""; ""; ""; "\000"; ""; ""; ""; ""; ""; ""]; [""; ""; "0"; ""; " "; ""; ""; "0"; ""; ""]; [""; ""; "a"; ""; " "; ""; ""; ""; "a"; ""]; [""; "0"; ""; "a"; ""; ""; ""; ""; "a"; ""]; ["0"; ""; ""; ""; ""; "a"; "a"; "a"; ""; ""]
+    length-int       found 100, minimal   0,  304 shrink attempts/failure
+      first non-minima: [""; ""; "a"; ""; "\000"; ""; ""; ""; ""; ""]; [""; ""; "a"; ""; "a"; ""; ""; ""; ""; "0"]; ["\000"; ""; ""; "a"; ""; ""; ""; "a"; "a"; "a"]; [""; "a"; ""; ""; "a"; ""; ""; ""; ""; "a"]; [""; "a"; "a"; ""; "a"; "a"; ""; "a"; ""; "a"]
+    continuation     found 100, minimal   0,  380 shrink attempts/failure
+      first non-minima: [""; "0"; "0"; ""; ""; "a"; ""; "\000"; ""; "a"]; ["a"; ""; ""; ""; " "; ""; ""; ""; "\000"; ""]; [""; "a"; ""; ""; ""; "a"; ""; ""; ""; "a"]; [""; ""; "a"; ""; "a"; ""; "\000"; ""; " "; ""]; [" "; ""; ""; ""; ""; ""; ""; ""; " "; ""]
+    continuation+span found 100, minimal   0, 1883 shrink attempts/failure
+      first non-minima: ["      0~Z~\000"; "  #"; "\255y"; "\255ZZ"; "as"; "a \171"; "ZZZ"; "aZZ"; "2Z9"; "F9m"]; ["ZZZZ~Z~"; ":9Z"; ""; "OZZZZ~ZZZZ"; "a\195Z"; "a\135Z"; "a~J"; "qCJSB\224f0z"; "aO7noB9g"; "RAPFJ1Ac3\2554"]; ["   \000   \000~~Z"; "  #"; ""; "a\255"; "ZZZ"; ""; "0aZ"; "aaZ"; "aa9"; "Z99"]; [""; "a"; "aaa"; "\000aa"; "a0a"; "aaa"; "a\000a"; "a\000a"; "\000\000 "; "a"]; ["aaaaaa0"; "a\000a"; "a0Z"; "a\241Z"; "aZ9"; "a~Z"; " \132Z"; "aaE"; "i99"; "  \201"]
+
+RECURSIVE SHRINK QUALITY (50 seeds, fail at 20 nodes)
+  stock tree       found 50, exact 14, worst 50, 2079 attempts, 117 choices/failure, 0 discarded-pass total
+  cont+span capped found 50, exact 50, worst 20, 154 attempts, 28 choices/failure, 46 discarded-pass total
+
+GENERATION TAILS
+  stock strings    mean 27.03, max 50 (10000 samples, size 50)
+  running strings  mean 20.40, max 50 (10000 samples, size 50)
+  continuation str mean 20.19, max 50 (10000 samples, size 50)
+  cont+span str    mean 479.49, max 2179 (10000 samples, size 50)
+  stock tree       mean 9.50, max 50 (10000 samples, size 50)
+  running tree     mean 8.66, max 50 (10000 samples, size 50)
+  continuation tree mean 8.65, max 50 (10000 samples, size 50)
+  cont+span capped mean 13.21, max 120 (10000 samples, size 50)
+    capped leaves  mean 11.49, max 100 (10000 samples, size 50)
+  leaf-cap retries  15820 over 20000 successful draws, max 9; max leaves charged 100
+
+TAPED RECURSIVE COSTS
+  stock tree       mean value 8.89, max 50; mean choices 55.16, max 464; discarded 0.00 (1000 samples)
+  cont+span capped mean value 13.11, max 112; mean choices 119.41, max 933; discarded 102.96 (1000 samples)
+  taped cap retries 720 over 1000 successful draws, max 6

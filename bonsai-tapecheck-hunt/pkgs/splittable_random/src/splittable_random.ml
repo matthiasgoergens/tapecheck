@@ -47,14 +47,15 @@ module For_tape = struct
           Tape.draw_bool tape ~stream:key ?forced
             ~sample:(fun () -> default st ~probability))
     ; on_span_start =
-        (fun label ~deletable ->
-          if deletable
+        (fun label ~deletable ~discardable ->
+          if deletable || discardable
           then begin
             let label = Stdlib.Obj.Extension_constructor.(id (of_val label)) in
-            Tape.on_span_start tape ~stream:key ~label ~deletable
+            Tape.on_span_start tape ~stream:key ~label ~deletable ~discardable
           end)
     ; on_span_stop =
-        (fun ~deletable () -> Tape.on_span_stop tape ~stream:key ~deletable)
+        (fun ~deletable ~discardable ~discarded () ->
+          Tape.on_span_stop tape ~stream:key ~deletable ~discardable ~discarded)
     ; on_split =
         (fun () -> Some (hooks tape (Tape.on_split tape ~stream:key)))
     ; on_perturb =

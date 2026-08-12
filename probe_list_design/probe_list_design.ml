@@ -18,7 +18,7 @@ open! Base
 
 module G = Base_quickcheck.Generator
 
-type Splittable_random.span_label += Continuation_element
+type Splittable_random.span_label += Continuation_element | Recursive_attempt
 
 exception Leaf_limit_reached
 
@@ -68,7 +68,10 @@ let recursive_with_max_leaves ~base ~extend ~max_leaves =
     let rec attempt retries =
       remaining := max_leaves;
       try
-        let value = G.generate strategy ~size ~random in
+        let value =
+          Splittable_random.with_span ~discard_on_exception:true random
+            Recursive_attempt ~f:(fun () -> G.generate strategy ~size ~random)
+        in
         let leaves_used = max_leaves - !remaining in
         leaf_cap_stats.draws <- leaf_cap_stats.draws + 1;
         leaf_cap_stats.retries <- leaf_cap_stats.retries + retries;
@@ -413,6 +416,7 @@ let taped_generation_tail ~name ~gen ~size ~samples ~measure =
   let max_measure = ref 0 in
   let total_choices = ref 0 in
   let max_choices = ref 0 in
+  let total_discarded_choices = ref 0 in
   for seed = 0 to samples - 1 do
     (* Record exactly one fresh generation.  Going through [Tape_engine.run]
        would add its eight determinism replays and final live-value replay,
@@ -426,18 +430,29 @@ let taped_generation_tail ~name ~gen ~size ~samples ~measure =
     let out = Tape.finish tape in
     let measured = measure value in
     let choices = count_choices out.image in
+    let discarded_choices =
+      (* Recursive-attempt spans in this probe are sequential, never nested,
+         so summing their lengths counts each abandoned choice exactly once. *)
+      Array.sum
+        (module Int)
+        out.spans
+        ~f:(fun (span : Tape.span) ->
+          if span.discarded then span.stop - span.start else 0)
+    in
     total_measure := !total_measure + measured;
     max_measure := Int.max !max_measure measured;
     total_choices := !total_choices + choices;
-    max_choices := Int.max !max_choices choices
+    max_choices := Int.max !max_choices choices;
+    total_discarded_choices := !total_discarded_choices + discarded_choices
   done;
   Stdio.printf
-    "  %-16s mean value %.2f, max %d; mean choices %.2f, max %d (%d samples)\n"
+    "  %-16s mean value %.2f, max %d; mean choices %.2f, max %d; discarded %.2f (%d samples)\n"
     name
     (Float.of_int !total_measure /. Float.of_int samples)
     !max_measure
     (Float.of_int !total_choices /. Float.of_int samples)
     !max_choices
+    (Float.of_int !total_discarded_choices /. Float.of_int samples)
     samples
 ;;
 
@@ -445,6 +460,8 @@ let tree_quality ~name ~gen ~threshold =
   let found = ref 0 in
   let exact = ref 0 in
   let attempts = ref 0 in
+  let choices = ref 0 in
+  let discarded_attempts = ref 0 in
   let worst = ref 0 in
   for seed = 0 to 49 do
     match
@@ -452,20 +469,27 @@ let tree_quality ~name ~gen ~threshold =
         ~budget:5_000 ~test:(fun tree -> tree_nodes tree < threshold)
     with
     | Tape_engine.Passed _ -> ()
-    | Tape_engine.Failed { minimal; attempts = n; _ } ->
+    | Tape_engine.Failed { minimal; attempts = n; image; _ } ->
       let nodes = tree_nodes minimal in
       Int.incr found;
       attempts := !attempts + n;
+      choices := !choices + count_choices image;
+      discarded_attempts :=
+        !discarded_attempts
+        + List.Assoc.find_exn (Tape_engine.last_pass_costs ())
+            ~equal:String.equal "remove_discarded";
       worst := Int.max !worst nodes;
       if nodes = threshold then Int.incr exact
   done;
   Stdio.printf
-    "  %-16s found %2d, exact %2d, worst %d, %s attempts/failure\n"
+    "  %-16s found %2d, exact %2d, worst %d, %s attempts, %s choices/failure, %d discarded-pass total\n"
     name
     !found
     !exact
     !worst
     (if !found = 0 then "n/a" else Int.to_string (!attempts / !found))
+    (if !found = 0 then "n/a" else Int.to_string (!choices / !found))
+    !discarded_attempts
 ;;
 
 let () =

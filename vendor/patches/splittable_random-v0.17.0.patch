@@ -58,8 +58,8 @@
 +      -> forced:bool option
 +      -> default:(t -> probability:float -> bool)
 +      -> bool
-+  ; on_span_start : span_label -> deletable:bool -> unit
-+  ; on_span_stop : deletable:bool -> unit -> unit
++  ; on_span_start : span_label -> deletable:bool -> discardable:bool -> unit
++  ; on_span_stop : deletable:bool -> discardable:bool -> discarded:bool -> unit -> unit
 +  ; on_split : unit -> intercept option
 +  ; on_perturb : int -> intercept option
    }
@@ -191,7 +191,7 @@
  let int state ~lo ~hi =
    let lo = Int64.of_int lo in
    let hi = Int64.of_int hi in
-@@ -201,29 +250,59 @@
+@@ -201,29 +250,67 @@
  
  let double_ulp = 2. **. -53.
  
@@ -215,7 +215,9 @@
 -  assert (unit_float_from_int64 0x0000_0000_0000_0000L = 0.);
 -  assert (unit_float_from_int64 0xffff_ffff_ffff_ffffL < 1.0);
 -  assert (unit_float_from_int64 0xffff_ffff_ffff_ffffL = 1.0 -. double_ulp)
-+
+-;;
+ 
+-let unit_float state = unit_float_from_int64 (next_int64 state)
 +let unit_float_default state = unit_float_from_int64 (next_int64 state)
 +
 +let unit_float state =
@@ -256,20 +258,27 @@
 +  match state.intercept with
 +  | None -> sample state ~probability
 +  | Some i -> i.bool_with_probability state ~probability ~forced ~default:sample
- ;;
- 
--let unit_float state = unit_float_from_int64 (next_int64 state)
-+let with_span ?(deletable = false) state label ~f =
++;;
++
++let with_span ?(deletable = false) ?(discard_on_exception = false) state label ~f =
 +  match state.intercept with
 +  | None -> f ()
 +  | Some i ->
-+    i.on_span_start label ~deletable;
-+    Exn.protect ~f ~finally:(fun () -> i.on_span_stop ~deletable ())
++    i.on_span_start label ~deletable ~discardable:discard_on_exception;
++    let discarded = ref true in
++    Exn.protect
++      ~f:(fun () ->
++        let result = f () in
++        discarded := false;
++        result)
++      ~finally:(fun () ->
++        i.on_span_stop ~deletable ~discardable:discard_on_exception
++          ~discarded:!discarded ())
 +;;
  
  (* Note about roundoff error:
  
-@@ -233,16 +312,20 @@
+@@ -233,16 +320,20 @@
     with [x < 1.] such that [lo +. x *. (hi -. lo) = hi], so it would not be correct to
     document this as being exclusive of [hi].
  *)
@@ -293,7 +302,7 @@
           (* Depending on rounding, the recursion with [~hi:mid] might be inclusive of [mid],
           which would mean the two cases overlap on [mid]. The alternative is to increment
           or decrement [mid] using [one_ulp] in either of the calls, but then if the first
-@@ -260,11 +343,13 @@
+@@ -260,11 +351,13 @@
      finite_float state ~lo ~hi
  ;;
  
@@ -310,7 +319,7 @@
  module Log_uniform = struct
    module Make (M : sig
      include Int.S
-@@ -286,48 +371,14 @@
+@@ -286,48 +379,14 @@
        !n
      ;;
  
@@ -359,7 +368,7 @@
  
      let log_uniform state ~lo ~hi =
        let min_bits = bits_to_represent lo in
-@@ -377,6 +428,42 @@
+@@ -377,6 +436,43 @@
    let nativeint = For_nativeint.log_uniform
  end
  
@@ -387,8 +396,9 @@
 +        -> forced:bool option
 +        -> default:(state -> probability:float -> bool)
 +        -> bool
-+    ; on_span_start : span_label -> deletable:bool -> unit
-+    ; on_span_stop : deletable:bool -> unit -> unit
++    ; on_span_start : span_label -> deletable:bool -> discardable:bool -> unit
++    ; on_span_stop :
++        deletable:bool -> discardable:bool -> discarded:bool -> unit -> unit
 +    ; on_split : unit -> t option
 +    ; on_perturb : int -> t option
 +    }
@@ -414,7 +424,7 @@
  (** Create a new [t] seeded from the given random state. This allows nondeterministic
      initialization, for example in the case that the input state was created using
      [Random.make_self_init].
-@@ -44,7 +47,76 @@
+@@ -44,7 +47,78 @@
      [t], i.e., [t] will return different values than if this hadn't been called. *)
  val split : t -> t
  
@@ -470,12 +480,14 @@
 +        (** Intercepts weighted choices, including forced choices.  Probability
 +            controls sampling; [forced] constrains replay without advancing the
 +            underlying random state. *)
-+    ; on_span_start : span_label -> deletable:bool -> unit
-+    ; on_span_stop : deletable:bool -> unit -> unit
++    ; on_span_start : span_label -> deletable:bool -> discardable:bool -> unit
++    ; on_span_stop :
++        deletable:bool -> discardable:bool -> discarded:bool -> unit -> unit
 +      (** Span callbacks must not raise.  They are notifications rather than
 +          recovery boundaries; an exception from a callback is propagated and
 +          may prevent the body from running.  If both the body and stop
-+          callback raise, [Exn.Finally] preserves both exceptions. *)
++          callback raise, [Exn.Finally] preserves both exceptions.
++          [discarded] is true exactly when [with_span]'s body raised. *)
 +    ; on_split : unit -> t option
 +    ; on_perturb : int -> t option
 +    }
@@ -492,7 +504,7 @@
  module State : sig
    type nonrec t = t
  
-@@ -61,6 +133,22 @@
+@@ -61,6 +135,30 @@
  (** Produces a random, fair boolean. *)
  val bool : t -> bool
  
@@ -509,10 +521,17 @@
 +    no interceptor it calls [f] directly.
 +    A started span is stopped even if [f] raises.  Observer callbacks must not
 +    raise; if they do, their exception is propagated.  If both [f] and the
-+    stop callback raise, [Exn.Finally] preserves both exceptions. *)
-+val with_span : ?deletable:bool -> t -> span_label -> f:(unit -> 'a) -> 'a
++    stop callback raise, [Exn.Finally] preserves both exceptions.
++    [discard_on_exception] asks the observer to retain the region only when
++    [f] raises, for input consumed by an abandoned generation attempt. *)
++val with_span
++  :  ?deletable:bool
++  -> ?discard_on_exception:bool
++  -> t
++  -> span_label
++  -> f:(unit -> 'a)
++  -> 'a
 +
  (** Produce a random number uniformly distributed in the given inclusive range.  (In the
      case of [float], [hi] may or may not be attainable, depending on rounding.)  *)
  val int : t -> lo:int -> hi:int -> int
-

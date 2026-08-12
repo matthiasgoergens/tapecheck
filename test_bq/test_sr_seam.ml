@@ -23,7 +23,7 @@ let () =
           weighted_calls := (probability, forced) :: !weighted_calls;
           default state ~probability)
     ; on_span_start =
-        (fun label ~deletable ->
+        (fun label ~deletable ~discardable:_ ->
           events :=
             (match label with
              | Outer -> "start outer"
@@ -31,7 +31,9 @@ let () =
              | Inner -> "start inner"
              | _ -> "start unknown")
             :: !events)
-    ; on_span_stop = (fun ~deletable:_ () -> events := "stop" :: !events)
+    ; on_span_stop =
+        (fun ~deletable:_ ~discardable:_ ~discarded:_ () ->
+          events := "stop" :: !events)
     ; on_split = (fun () -> Some hooks)
     ; on_perturb = (fun _ -> Some hooks)
     }
@@ -67,7 +69,8 @@ let () =
   let body_ran = ref false in
   let start_failure_hooks =
     { hooks with
-      on_span_start = (fun _ ~deletable:_ -> raise Start_callback_failure)
+      on_span_start =
+        (fun _ ~deletable:_ ~discardable:_ -> raise Start_callback_failure)
     }
   in
   let start_failure_state = Sr_real.with_intercept bare start_failure_hooks in
@@ -81,7 +84,9 @@ let () =
   check "start callback exception prevents the body" (not !body_ran);
   let stop_failure_hooks =
     { hooks with
-      on_span_stop = (fun ~deletable:_ () -> raise Stop_callback_failure)
+      on_span_stop =
+        (fun ~deletable:_ ~discardable:_ ~discarded:_ () ->
+          raise Stop_callback_failure)
     }
   in
   let stop_failure_state = Sr_real.with_intercept bare stop_failure_hooks in

@@ -535,9 +535,9 @@ let no_stats () =
    ../tapecheck-hypothesis-baseline/README.md). *)
 let pass_names =
   [| "lower_and_delete"; "delete_spans"; "redistribute_pairs"
-   ; "minimize_choices"; "pre-loop"; "sort_siblings" |]
+   ; "minimize_choices"; "pre-loop"; "sort_siblings"; "remove_discarded" |]
 
-let pass_costs = Array.create ~len:6 0
+let pass_costs = Array.create ~len:(Array.length pass_names) 0
 let greedy_cost = ref 0
 let duplicate_proposals = ref 0
 let distinct_proposals = ref 0
@@ -1008,6 +1008,57 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       end
   in
 
+  (* Delete choices consumed by generator attempts which were explicitly
+     abandoned.  Unlike structural deletion, these ranges need no leading
+     continuation Boolean: the generator has declared that their result was
+     discarded.  Replay remains the oracle, and a successful edit restarts
+     from freshly observed offsets. *)
+  let remove_discarded () =
+    let compare_span (a : Tape.span) (b : Tape.span) =
+      let c = Tape.compare_key a.stream b.stream in
+      if c <> 0 then c
+      else
+        (* Prefer a containing (longer) discarded region, but retain nested
+           candidates as a fallback when replay rejects the outer edit. *)
+        let c = Int.compare (b.stop - b.start) (a.stop - a.start) in
+        if c <> 0 then c
+        else
+          let c = Int.compare b.start a.start in
+          if c <> 0 then c else Int.compare b.stop a.stop
+    in
+    let eligible (span : Tape.span) =
+      span.discarded
+      &&
+      match segment_for_key !best span.stream with
+      | None -> false
+      | Some segment ->
+        let choices = seg_get !best segment in
+        span.start >= 0
+        && span.stop <= Array.length choices
+        && span.stop > span.start
+    in
+    let improved_any = ref false in
+    let restart = ref true in
+    while !restart && budget_ok () do
+      restart := false;
+      let candidates =
+        Array.filter !best_spans ~f:eligible
+        |> Array.to_list
+        |> List.dedup_and_sort ~compare:compare_span
+      in
+      List.iter candidates ~f:(fun span ->
+        if (not !restart) && budget_ok () then
+          match delete_span !best span with
+          | None -> ()
+          | Some proposal ->
+            if attempt proposal then begin
+              improved_any := true;
+              restart := true
+            end)
+    done;
+    !improved_any
+  in
+
   (* Port of Hypothesis's [lower_blocks_together] (shrinker.py:1258),
      the defence against the ZIG-ZAG TRAP: two values that must keep a
      fixed difference to stay failing. Lowering either one ALONE always
@@ -1189,6 +1240,13 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     done;
     !improved
   in
+
+  (* Discarded attempts are pure recording debris, so remove them before the
+     global trivialisation proposal can accidentally turn one into a live
+     successful attempt. *)
+  let discarded_start = !attempts in
+  ignore (remove_discarded () : bool);
+  pass_costs.(6) <- pass_costs.(6) + (!attempts - discarded_start);
 
   (* Pass 1: everything to target at once, across all streams. *)
   let trivial = image_trivialized !best in
@@ -1789,7 +1847,10 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
           if c <> 0 then c
           else
             let c = Int.compare a.label b.label in
-            if c <> 0 then c else Bool.compare a.deletable b.deletable
+            if c <> 0 then c
+            else
+              let c = Bool.compare a.deletable b.deletable in
+              if c <> 0 then c else Bool.compare a.discarded b.discarded
     in
     let is_leaf spans (candidate : Tape.span) =
       not
@@ -1841,8 +1902,11 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   pass_costs.(4) <- !attempts;
   while !continue_ && budget_ok () do
     Int.incr sweeps;
+    let a6 = !attempts in
+    let improved = remove_discarded () in
+    pass_costs.(6) <- pass_costs.(6) + (!attempts - a6);
     let a1 = !attempts in
-    let improved = delete_spans () in
+    let improved = delete_spans () || improved in
     pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
     let a0 = !attempts in
     let improved = lower_and_delete () || improved in

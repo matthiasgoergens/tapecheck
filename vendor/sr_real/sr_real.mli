@@ -98,12 +98,14 @@ module Intercept : sig
         (** Intercepts weighted choices, including forced choices.  Probability
             controls sampling; [forced] constrains replay without advancing the
             underlying random state. *)
-    ; on_span_start : span_label -> deletable:bool -> unit
-    ; on_span_stop : deletable:bool -> unit -> unit
+    ; on_span_start : span_label -> deletable:bool -> discardable:bool -> unit
+    ; on_span_stop :
+        deletable:bool -> discardable:bool -> discarded:bool -> unit -> unit
       (** Span callbacks must not raise.  They are notifications rather than
           recovery boundaries; an exception from a callback is propagated and
           may prevent the body from running.  If both the body and stop
-          callback raise, [Exn.Finally] preserves both exceptions. *)
+          callback raise, [Exn.Finally] preserves both exceptions.
+          [discarded] is true exactly when [with_span]'s body raised. *)
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }
@@ -146,8 +148,16 @@ val bool_with_probability : ?forced:bool -> t -> probability:float -> bool
     no interceptor it calls [f] directly.
     A started span is stopped even if [f] raises.  Observer callbacks must not
     raise; if they do, their exception is propagated.  If both [f] and the
-    stop callback raise, [Exn.Finally] preserves both exceptions. *)
-val with_span : ?deletable:bool -> t -> span_label -> f:(unit -> 'a) -> 'a
+    stop callback raise, [Exn.Finally] preserves both exceptions.
+    [discard_on_exception] asks the observer to retain the region only when
+    [f] raises, for input consumed by an abandoned generation attempt. *)
+val with_span
+  :  ?deletable:bool
+  -> ?discard_on_exception:bool
+  -> t
+  -> span_label
+  -> f:(unit -> 'a)
+  -> 'a
 
 (** Produce a random number uniformly distributed in the given inclusive range.  (In the
     case of [float], [hi] may or may not be attainable, depending on rounding.)  *)

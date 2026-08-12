@@ -6,7 +6,12 @@
 open! Base
 module G = Base_quickcheck.Generator
 
-type Splittable_random.span_label += Continuation_element | Observed_element
+type Splittable_random.span_label +=
+  | Continuation_element
+  | Observed_element
+  | Discarded_attempt
+
+exception Retry_attempt
 
 let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
@@ -222,6 +227,56 @@ let () =
       "delete_spans"
   in
   check "keyed span deletion pass was exercised" (keyed_delete_span_attempts > 0);
+  (* A failed generator attempt consumed choices but produced no part of the
+     returned value.  Its exceptional span should be removed as one discarded
+     region before ordinary value shrinking. *)
+  let retrying_int =
+    G.create (fun ~size:_ ~random ->
+      let rec attempt () =
+        try
+          Splittable_random.with_span ~discard_on_exception:true random
+            Discarded_attempt ~f:(fun () ->
+            let retry = Splittable_random.bool random in
+            let value = Splittable_random.int random ~lo:0 ~hi:1000 in
+            if retry then raise Retry_attempt else value)
+        with
+        | Retry_attempt -> attempt ()
+      in
+      attempt ())
+  in
+  let discarded_image =
+    Tape.image_of_main
+      [| Tape.Bool true; int 999; Tape.Bool false; int 100 |]
+  in
+  (match
+     Tape_engine.resume retrying_int discarded_image ~test:(fun value -> value < 100)
+   with
+   | Tape_engine.Passed _ -> failwith "discarded-attempt tape stopped failing"
+   | Tape_engine.Failed { minimal; image; _ } ->
+     check "discarded attempt leaves the same failing value" (minimal = 100);
+     check "discarded attempt choices are absent from the minimal tape"
+       (Array.length image.Tape.main <= 2));
+  let remove_discarded_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "remove_discarded"
+  in
+  check "remove_discarded pass was exercised" (remove_discarded_attempts > 0);
+  (match
+     Tape_engine.resume retrying_int discarded_image ~domains:2
+       ~test:(fun value -> value < 100)
+   with
+   | Tape_engine.Passed _ ->
+     failwith "pooled discarded-attempt tape stopped failing"
+   | Tape_engine.Failed { minimal; image; _ } ->
+     check "pooled remove_discarded preserves the failing value" (minimal = 100);
+     check "pooled remove_discarded removes the dead region"
+       (Array.length image.Tape.main <= 2));
+  let pooled_remove_discarded_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "remove_discarded"
+  in
+  check "pooled run exercises remove_discarded"
+    (pooled_remove_discarded_attempts > 0);
   (match
      Tape_engine.resume observed_continuation_int continuation_image ~domains:2
        ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)

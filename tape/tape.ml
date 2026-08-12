@@ -110,6 +110,7 @@ type span = {
   stream : key;
   label : int;
   deletable : bool;
+  discarded : bool;
   start : int;
   stop : int;
 }
@@ -118,6 +119,7 @@ type open_span = {
   open_stream : key;
   open_label : int;
   open_deletable : bool;
+  open_discardable : bool;
   open_start : int;
 }
 
@@ -226,7 +228,10 @@ let finish t =
           if c <> 0 then c
           else
             let c = compare a.label b.label in
-            if c <> 0 then c else compare a.deletable b.deletable)
+            if c <> 0 then c
+            else
+              let c = compare a.deletable b.deletable in
+              if c <> 0 then c else compare a.discarded b.discarded)
     |> Array.of_list
   in
   t.mode <- Off;
@@ -237,8 +242,8 @@ let finish t =
    that already truncated during generation. Monotone within a run. *)
 let overrun_now (t : t) = t.overrun
 
-let on_span_start t ~stream ~label ~deletable =
-  if not deletable
+let on_span_start t ~stream ~label ~deletable ~discardable =
+  if not (deletable || discardable)
   then ()
   else match t.mode with
   | Off -> ()
@@ -248,29 +253,35 @@ let on_span_start t ~stream ~label ~deletable =
       { open_stream = stream
       ; open_label = label
       ; open_deletable = deletable
+      ; open_discardable = discardable
       ; open_start = s.wpos
       }
       :: t.open_spans
 
-let on_span_stop t ~stream ~deletable =
-  if not deletable
+let on_span_stop t ~stream ~deletable ~discardable ~discarded =
+  if not (deletable || discardable)
   then ()
   else match t.mode with
   | Off -> ()
   | Recording | Replaying ->
     (match t.open_spans with
-     | { open_stream; open_label; open_deletable; open_start } :: rest
-       when compare_key open_stream stream = 0 ->
+     | { open_stream; open_label; open_deletable; open_discardable; open_start } :: rest
+       when compare_key open_stream stream = 0
+            && Bool.equal open_deletable deletable
+            && Bool.equal open_discardable discardable ->
        let s = get_stream t stream in
        t.open_spans <- rest;
-       t.spans_rev <-
-         { stream
-         ; label = open_label
-         ; deletable = open_deletable
-         ; start = open_start
-         ; stop = s.wpos
-         }
-         :: t.spans_rev
+       if open_deletable || (open_discardable && discarded)
+       then
+         t.spans_rev <-
+           { stream
+           ; label = open_label
+           ; deletable = open_deletable
+           ; discarded = open_discardable && discarded
+           ; start = open_start
+           ; stop = s.wpos
+           }
+           :: t.spans_rev
      | _ -> invalid_arg "Tape.on_span_stop: unbalanced structural span")
 
 (* Record into a stream with rewrite-over semantics: at a call boundary
