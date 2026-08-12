@@ -155,6 +155,26 @@ val filter_map : 'a t -> f:('a -> 'b option) -> 'b t
     ]} *)
 val recursive_union : 'a t list -> f:('a t -> 'a t list) -> 'a t
 
+(** Builds recursive values with an explicit local leaf budget, following
+    Hypothesis's [recursive] strategy rather than using the ambient size as a
+    universal recursive resource. [base] draws consume one leaf; [f] builds a
+    recursive layer from a leaf-limited generator. A draw which would exceed
+    [max_leaves] is discarded and retried from the advanced random stream.
+
+    The bounded strategy tower is constructed separately for each generated
+    value, so [f] should be pure and inexpensive.
+
+    [max_attempts] is a Base_quickcheck-specific safety bound: Hypothesis relies
+    on engine health checks around its unbounded retry loop, while this library
+    has no per-example deadline. Raises if either bound is non-positive or if
+    every one of [max_attempts] consecutive draws exceeds the leaf cap. *)
+val recursive_with_max_leaves
+  :  ?max_leaves:int
+  -> ?max_attempts:int
+  -> 'a t
+  -> f:('a t -> 'a t)
+  -> 'a t
+
 (** Like [recursive_union], without separate clauses or automatic size management. Useful
     for generating recursive types that don't fit the clause structure of
     [recursive_union].
@@ -333,6 +353,23 @@ val sexp_of : string t -> Sexp.t t
 
 val list_non_empty : 'a t -> 'a list t
 val list_with_length : 'a t -> length:int -> 'a list t
+
+(** Produces a list whose length has the same marginal log-uniform
+    distribution as [list], but represents optional elements as conditional
+    continuation choices and generates every element at the ambient size.
+    This representation supports structural tape deletion and avoids coupling
+    list length to element complexity. Use [recursive_with_max_leaves] for
+    recursive values instead of relying on list element sizes to terminate
+    recursion.
+
+    The result's length is between [min_length] and [max_length], and no more
+    than [min_length + size]. Raises for negative [min_length] or inconsistent
+    bounds. *)
+val list_structural
+  :  ?min_length:int
+  -> ?max_length:int
+  -> 'a t
+  -> 'a list t
 
 (** Randomly drops elements from a list. The length of each result is chosen uniformly
     between 0 and the length of the input, inclusive. *)

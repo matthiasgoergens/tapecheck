@@ -64,6 +64,9 @@ that, the production API needs a decision on pathological non-terminating
 the private leaf-limit exception. First-class string and bytes choices remain
 separate work.
 
+The opt-in production generator patch is now implemented and documented in
+`WAVE2-PRODUCTION-GENERATORS.md`.
+
 ## Reproduction
 
 The complete deterministic output is
