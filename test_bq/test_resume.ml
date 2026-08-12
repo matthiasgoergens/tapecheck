@@ -317,4 +317,21 @@ let () =
   check "explicit-example failure is counted"
     (String.is_substring printed_example ~substring:"1 failing");
 
+  (* A changed generator can consume none of a saved image and still fail.
+     Resume must start from the confirmation replay's normalised image, so the
+     returned value, image, and structural spans describe the same execution. *)
+  let stale_image =
+    Tape.image_of_main
+      [| Tape.Integer { value = 7L; lo = 0L; hi = 10L } |]
+  in
+  (match
+     Tape_engine.resume (G.return 5) stale_image ~budget:0
+       ~test:(fun _ -> false)
+   with
+   | Tape_engine.Passed _ -> failwith "normalised stale tape stopped failing"
+   | Tape_engine.Failed { minimal; image; _ } ->
+     check "resume keeps the replayed value" (minimal = 5);
+     check "resume normalises a stale image before shrinking"
+       (Array.is_empty image.Tape.main && Array.is_empty image.Tape.streams));
+
   Stdlib.print_endline "test_resume: all passed"

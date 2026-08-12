@@ -49,6 +49,44 @@ let () =
   check "replay re-records identically"
     (Tape.equal_choices out1.Tape.choices out2.Tape.choices);
 
+  (* Deletable span boundaries are runtime metadata over half-open choice
+     ranges.  They are reconstructed on replay rather than becoming part of
+     the persisted image.  An observational outer span is filtered without
+     disturbing its nested deletable range. *)
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false;
+  ignore
+    (Tape.draw_int tape ~lo:0L ~hi:10L
+       ~sample:(fun ~lo:_ ~hi:_ -> 4L)
+     : int64);
+  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false;
+  let spanned = Tape.finish tape in
+  check "only deletable nested spans are retained"
+    (Array.to_list spanned.Tape.spans
+     = [ { Tape.stream = Tape.root
+         ; label = 23
+         ; deletable = true
+         ; start = 1
+         ; stop = 2
+         }
+       ]);
+  Tape.start_replay_image tape spanned.Tape.image;
+  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false;
+  ignore
+    (Tape.draw_int tape ~lo:0L ~hi:10L
+       ~sample:(fun ~lo:_ ~hi:_ -> 9L)
+     : int64);
+  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> false) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false;
+  let respanned = Tape.finish tape in
+  check "replay reconstructs span boundaries"
+    (Array.to_list spanned.Tape.spans = Array.to_list respanned.Tape.spans);
+
   (* Editing a choice steers generation: flip the bool to false and the
      dependent draw disappears; the output tape is shorter, hence
      shortlex-smaller. *)

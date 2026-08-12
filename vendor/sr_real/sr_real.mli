@@ -92,12 +92,14 @@ module Intercept : sig
     ; bool_with_probability :
         state
         -> probability:float
+        -> forced:bool option
         -> default:(state -> probability:float -> bool)
         -> bool
-        (** Intercepts non-forced weighted choices.  The probability controls
-            sampling only, so a replaying engine may supply either Boolean. *)
-    ; on_span_start : span_label -> unit
-    ; on_span_stop : unit -> unit
+        (** Intercepts weighted choices, including forced choices.  Probability
+            controls sampling; [forced] constrains replay without advancing the
+            underlying random state. *)
+    ; on_span_start : span_label -> deletable:bool -> unit
+    ; on_span_stop : deletable:bool -> unit -> unit
       (** Span callbacks must not raise.  They are notifications rather than
           recovery boundaries; an exception from a callback is propagated and
           may prevent the body from running.  If both the body and stop
@@ -132,18 +134,20 @@ end
 val bool : t -> bool
 
 (** [bool_with_probability t ~probability] is true with the given probability.
-    [probability] must be finite and between zero and one, inclusive.  Zero and
-    one are forced: they do not advance [t] and bypass any interceptor because
-    no random choice was made.  For other probabilities, the probability is
-    sampling metadata only; an interceptor may replay either Boolean. *)
-val bool_with_probability : t -> probability:float -> bool
+    [probability] must be finite and between zero and one, inclusive.  A
+    [forced] result and the probability-zero/one cases do not advance [t], but
+    are still reported to an interceptor so a replay tree retains the forced
+    structural node.  A forced value with zero probability is rejected. *)
+val bool_with_probability : ?forced:bool -> t -> probability:float -> bool
 
 (** [with_span t label ~f] notifies an attached observer of a structurally
-    deletable region around [f].  With no interceptor it calls [f] directly.
+    related region around [f].  [deletable] declares that removing the whole
+    region is meaningful to replay; observational spans leave it false.  With
+    no interceptor it calls [f] directly.
     A started span is stopped even if [f] raises.  Observer callbacks must not
     raise; if they do, their exception is propagated.  If both [f] and the
     stop callback raise, [Exn.Finally] preserves both exceptions. *)
-val with_span : t -> span_label -> f:(unit -> 'a) -> 'a
+val with_span : ?deletable:bool -> t -> span_label -> f:(unit -> 'a) -> 'a
 
 (** Produce a random number uniformly distributed in the given inclusive range.  (In the
     case of [float], [hi] may or may not be attainable, depending on rounding.)  *)

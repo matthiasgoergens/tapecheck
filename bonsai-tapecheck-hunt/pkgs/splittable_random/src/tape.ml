@@ -99,6 +99,28 @@ type image = {
   streams : (key * choice array) array;
 }
 
+(* Deletable structural boundaries observed while generating one image.  They
+   are deliberately runtime metadata rather than part of [image]: labels are
+   an extensible variant owned by generator libraries and are not serialisable,
+   while replay deterministically reconstructs the boundaries from the
+   generator.  Observational spans are filtered at the callback to avoid
+   charging unchanged generators for metadata no current pass consumes.
+   Positions are half-open choice ranges within one stream. *)
+type span = {
+  stream : key;
+  label : int;
+  deletable : bool;
+  start : int;
+  stop : int;
+}
+
+type open_span = {
+  open_stream : key;
+  open_label : int;
+  open_deletable : bool;
+  open_start : int;
+}
+
 let image_of_main main = { main; streams = [||] }
 
 type t = {
@@ -109,6 +131,8 @@ type t = {
   streams : (key, stream) Hashtbl.t;
   (* Split ordinal counters, per parent key, reset each run. *)
   splits : (key, int) Hashtbl.t;
+  mutable open_spans : open_span list;
+  mutable spans_rev : span list;
 }
 
 let create () =
@@ -119,13 +143,17 @@ let create () =
     misaligned = false;
     streams = Hashtbl.create 8;
     splits = Hashtbl.create 8;
+    open_spans = [];
+    spans_rev = [];
   }
 
 let reset t =
   Hashtbl.reset t.streams;
   Hashtbl.reset t.splits;
   t.overrun <- false;
-  t.misaligned <- false
+  t.misaligned <- false;
+  t.open_spans <- [];
+  t.spans_rev <- []
 
 let get_stream t k =
   match Hashtbl.find_opt t.streams k with
@@ -160,6 +188,7 @@ type output = {
          callers want, and what all pre-stream code compiled against. *)
   overrun : bool;
   misaligned : bool;
+  spans : span array;
 }
 
 let stream_written (s : stream) = Array.sub s.written 0 s.wlen
@@ -182,13 +211,67 @@ let finish t =
   let image = { main; streams = Array.of_list subs } in
   let overrun = t.overrun in
   let misaligned = t.misaligned in
+  if not (List.is_empty t.open_spans) then
+    invalid_arg "Tape.finish: unclosed structural span";
+  let spans =
+    List.rev t.spans_rev
+    |> List.sort (fun a b ->
+      let c = compare_key a.stream b.stream in
+      if c <> 0 then c
+      else
+        let c = compare a.start b.start in
+        if c <> 0 then c
+        else
+          let c = compare a.stop b.stop in
+          if c <> 0 then c
+          else
+            let c = compare a.label b.label in
+            if c <> 0 then c else compare a.deletable b.deletable)
+    |> Array.of_list
+  in
   t.mode <- Off;
   reset t;
-  { image; choices = image.main; overrun; misaligned }
+  { image; choices = image.main; overrun; misaligned; spans }
 
 (* Overrun so far: lets the engine skip running the test on a proposal
    that already truncated during generation. Monotone within a run. *)
 let overrun_now (t : t) = t.overrun
+
+let on_span_start t ~stream ~label ~deletable =
+  if not deletable
+  then ()
+  else match t.mode with
+  | Off -> ()
+  | Recording | Replaying ->
+    let s = get_stream t stream in
+    t.open_spans <-
+      { open_stream = stream
+      ; open_label = label
+      ; open_deletable = deletable
+      ; open_start = s.wpos
+      }
+      :: t.open_spans
+
+let on_span_stop t ~stream ~deletable =
+  if not deletable
+  then ()
+  else match t.mode with
+  | Off -> ()
+  | Recording | Replaying ->
+    (match t.open_spans with
+     | { open_stream; open_label; open_deletable; open_start } :: rest
+       when compare_key open_stream stream = 0 ->
+       let s = get_stream t stream in
+       t.open_spans <- rest;
+       t.spans_rev <-
+         { stream
+         ; label = open_label
+         ; deletable = open_deletable
+         ; start = open_start
+         ; stop = s.wpos
+         }
+         :: t.spans_rev
+     | _ -> invalid_arg "Tape.on_span_stop: unbalanced structural span")
 
 (* Record into a stream with rewrite-over semantics: at a call boundary
    [wpos] rewinds, and re-recording an identical prefix advances through
@@ -417,15 +500,15 @@ let draw_float ?(stream = root) t ~lo ~hi
     record_in s (Float { value; lo; hi });
     value
 
-let draw_bool ?(stream = root) t ~(sample : unit -> bool) : bool =
+let draw_bool ?(stream = root) ?forced t ~(sample : unit -> bool) : bool =
   match t.mode with
   | Off -> sample ()
   | Recording | Replaying ->
     let s = get_stream t stream in
     let value =
       match pop t s ~matches:(function Bool _ -> true | _ -> false) with
-      | Some (Bool b) -> b
-      | _ -> sample ()
+      | Some (Bool b) -> Option.value forced ~default:b
+      | _ -> (match forced with Some value -> value | None -> sample ())
     in
     record_in s (Bool value);
     value
