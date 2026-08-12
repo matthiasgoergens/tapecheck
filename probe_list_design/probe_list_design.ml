@@ -18,6 +18,8 @@ open! Base
 
 module G = Base_quickcheck.Generator
 
+type Splittable_random.span_label += Continuation_element
+
 let bounded_max_length ~size ~min_length ~requested =
   let upper_bound = min_length + size in
   if upper_bound >= min_length then Int.min requested upper_bound else requested
@@ -168,15 +170,61 @@ let list_continuation_float elt_gen =
 let list_continuation_int elt_gen = list_continuation_with continuation_length_int elt_gen
 let list_continuation elt_gen = list_continuation_with continuation_length_bool elt_gen
 
+(* Hypothesis-shaped representation: the continuation choice and all draws for
+   the element it guards occupy one structural span.  Unlike the earlier
+   continuation probe, decisions are interleaved with element generation so a
+   complete element can be deleted without leaving an unmatched continuation.
+
+   This arm isolates that structural question: element generation receives the
+   ambient size independently of list continuation.  It is deliberately not a
+   shippable recursive generator yet; Hypothesis uses a separate [max_leaves]
+   mechanism for that safety contract, which is the next design component. *)
+let list_continuation_spans elt_gen =
+  G.create (fun ~size ~random ->
+    let lo = 0 in
+    let hi = bounded_max_length ~size ~min_length:lo ~requested:Int.max_value in
+    let count = hi - lo + 1 in
+    let weights =
+      Array.init count ~f:(fun i ->
+        1. /. Float.of_int (bit_bucket_size ~lo ~hi (lo + i)))
+    in
+    let tails = Array.create ~len:count 0. in
+    for i = count - 1 downto 0 do
+      tails.(i) <- weights.(i) +. if i + 1 < count then tails.(i + 1) else 0.
+    done;
+    let rec loop length acc =
+      let at_maximum = length = hi in
+      let p_continue =
+        if at_maximum then 0. else 1. -. (weights.(length) /. tails.(length))
+      in
+      let forced = if at_maximum then Some false else None in
+      match
+        Splittable_random.with_span ~deletable:true random
+          Continuation_element ~f:(fun () ->
+          if
+            Splittable_random.bool_with_probability random
+              ~probability:p_continue ?forced
+          then begin
+            let value = G.generate elt_gen ~size ~random in
+            Some value
+          end
+          else None)
+      with
+      | None -> List.rev acc
+      | Some value -> loop (length + 1) (value :: acc)
+    in
+    loop 0 [])
+
 let count_choices image =
   Array.length image.Tape.main
   + Array.fold image.Tape.streams ~init:0 ~f:(fun n (_, xs) -> n + Array.length xs)
 ;;
 
-let quality ~name ~gen ~test ~is_minimal =
+let quality ~name ~gen ~test ~is_minimal ~show =
   let found = ref 0 in
   let minimal = ref 0 in
   let attempts = ref 0 in
+  let stuck = ref [] in
   for seed = 0 to 99 do
     match
       Tape_engine.run gen ~test ~seed:(seed * 1_000_003) ~count:200 ~size:10
@@ -185,7 +233,9 @@ let quality ~name ~gen ~test ~is_minimal =
     | Tape_engine.Failed { minimal = value; attempts = n; _ } ->
       Int.incr found;
       attempts := !attempts + n;
-      if is_minimal value then Int.incr minimal
+      if is_minimal value
+      then Int.incr minimal
+      else if List.length !stuck < 5 then stuck := show value :: !stuck
   done;
   Stdio.printf
     "    %-16s found %3d, minimal %3d, %4s shrink attempts/failure\n"
@@ -193,6 +243,9 @@ let quality ~name ~gen ~test ~is_minimal =
     !found
     !minimal
     (if !found = 0 then "n/a" else Int.to_string (!attempts / !found))
+  ;
+  if not (List.is_empty !stuck) then
+    Stdio.printf "      first non-minima: %s\n" (String.concat ~sep:"; " (List.rev !stuck))
 ;;
 
 let distribution ~name ~gen ~size ~samples =
@@ -282,17 +335,30 @@ let generation_tail ~name ~gen ~size ~samples ~measure =
 ;;
 
 let () =
+  let show_ints xs =
+    "[" ^ String.concat ~sep:"; " (List.map xs ~f:Int.to_string) ^ "]"
+  in
+  let show_strings xs =
+    "["
+    ^ String.concat ~sep:"; " (List.map xs ~f:(Printf.sprintf "%S"))
+    ^ "]"
+  in
   let int100 = G.int_uniform_inclusive 0 100 in
   let int1000 = G.int_uniform_inclusive 0 1000 in
   let stock elt = G.list elt in
   let running elt = list_running elt in
   let continuation elt = list_continuation elt in
+  let continuation_spans elt = list_continuation_spans elt in
 
   Stdio.printf "RAW LENGTH DISTRIBUTION (size 10, 20k samples)\n";
   let raw_stock = raw_distribution ~name:"stock" ~gen:(stock int100) ~size:10 ~samples:20_000 in
   let raw_continuation =
     raw_distribution ~name:"continuation" ~gen:(continuation int100) ~size:10 ~samples:20_000
   in
+  ignore
+    (raw_distribution ~name:"continuation+span"
+       ~gen:(continuation_spans int100) ~size:10 ~samples:20_000
+     : int array);
   Stdio.printf
     "  stock vs continuation two-sample chi-square %.2f (%d bins)\n"
     (chi_square raw_stock raw_continuation)
@@ -304,6 +370,10 @@ let () =
   let continuation_counts =
     distribution ~name:"continuation" ~gen:(continuation int100) ~size:10 ~samples:20_000
   in
+  ignore
+    (distribution ~name:"continuation+span"
+       ~gen:(continuation_spans int100) ~size:10 ~samples:20_000
+     : int array);
   Stdio.printf
     "  stock vs continuation two-sample chi-square %.2f (%d bins)\n"
     (chi_square stock_counts continuation_counts)
@@ -325,26 +395,37 @@ let () =
      : int array);
 
   Stdio.printf "\nSHRINK QUALITY (100 seeds)\n";
-  let run_case : type a. string -> a G.t -> test:(a list -> bool) -> minimal:(a list -> bool) -> unit =
-    fun label elt ~test ~minimal ->
+  let run_case : type a.
+    string ->
+    a G.t ->
+    show:(a list -> string) ->
+    test:(a list -> bool) ->
+    minimal:(a list -> bool) ->
+    unit =
+    fun label elt ~show ~test ~minimal ->
     Stdio.printf "  %s\n" label;
-    quality ~name:"stock" ~gen:(stock elt) ~test ~is_minimal:minimal;
-    quality ~name:"length-int" ~gen:(running elt) ~test ~is_minimal:minimal;
-    quality ~name:"continuation" ~gen:(continuation elt) ~test ~is_minimal:minimal
+    quality ~name:"stock" ~gen:(stock elt) ~test ~is_minimal:minimal ~show;
+    quality ~name:"length-int" ~gen:(running elt) ~test ~is_minimal:minimal ~show;
+    quality ~name:"continuation" ~gen:(continuation elt) ~test ~is_minimal:minimal ~show;
+    quality ~name:"continuation+span" ~gen:(continuation_spans elt) ~test
+      ~is_minimal:minimal ~show
   in
   run_case
     "length >= 3 (minimum [0;0;0])"
     int100
+    ~show:show_ints
     ~test:(fun xs -> List.length xs < 3)
     ~minimal:(List.equal Int.equal [ 0; 0; 0 ]);
   run_case
     "sum >= 100 (minimum [100])"
     int1000
+    ~show:show_ints
     ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)
     ~minimal:(List.equal Int.equal [ 100 ]);
   run_case
     "hd = length (minimum [1])"
     (G.int_uniform_inclusive 0 50)
+    ~show:show_ints
     ~test:(fun xs ->
       match xs with
       | [] -> true
@@ -353,6 +434,7 @@ let () =
   run_case
     "ten strings (minimum ten empty strings)"
     G.string
+    ~show:show_strings
     ~test:(fun xs -> List.length xs < 10)
     ~minimal:(fun xs -> List.length xs = 10 && List.for_all xs ~f:String.is_empty);
 
@@ -363,10 +445,14 @@ let () =
     ~measure:(List.sum (module Int) ~f:String.length);
   generation_tail ~name:"continuation str" ~gen:(continuation G.string) ~size:50 ~samples:10_000
     ~measure:(List.sum (module Int) ~f:String.length);
+  generation_tail ~name:"cont+span str" ~gen:(continuation_spans G.string) ~size:50
+    ~samples:10_000 ~measure:(List.sum (module Int) ~f:String.length);
   generation_tail ~name:"stock tree" ~gen:(tree stock) ~size:50 ~samples:10_000
     ~measure:tree_nodes;
   generation_tail ~name:"running tree" ~gen:(tree running) ~size:50 ~samples:10_000
     ~measure:tree_nodes;
   generation_tail ~name:"continuation tree" ~gen:(tree continuation) ~size:50 ~samples:10_000
-    ~measure:tree_nodes
+    ~measure:tree_nodes;
+  Stdio.printf
+    "  cont+span tree  deliberately not sampled: explicit leaf cap not implemented\n"
 ;;

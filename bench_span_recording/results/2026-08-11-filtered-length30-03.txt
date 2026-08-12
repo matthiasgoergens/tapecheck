@@ -1,0 +1,65 @@
+attached observational callbacks: 60 randomised paired blocks x 3000 cases, length 30
+ignored 387.259 ns/element; recorded 387.713
+paired geometric effect +0.12%, 95% t CI [-0.34%, +0.58%]
+practical slowdown margin +5.0%: excluded
+checksum 44335889
+  block 01 (recorded first): ignored 403.356, recorded 400.022, ratio 0.99174
+  block 02 (recorded first): ignored 400.578, recorded 398.844, ratio 0.99567
+  block 03 (ignored first): ignored 398.289, recorded 403.911, ratio 1.01412
+  block 04 (recorded first): ignored 409.600, recorded 413.256, ratio 1.00892
+  block 05 (recorded first): ignored 394.800, recorded 398.478, ratio 1.00932
+  block 06 (ignored first): ignored 392.922, recorded 398.289, ratio 1.01366
+  block 07 (recorded first): ignored 395.278, recorded 397.678, ratio 1.00607
+  block 08 (ignored first): ignored 399.489, recorded 391.689, ratio 0.98048
+  block 09 (recorded first): ignored 403.589, recorded 405.333, ratio 1.00432
+  block 10 (recorded first): ignored 409.633, recorded 400.422, ratio 0.97751
+  block 11 (recorded first): ignored 398.089, recorded 394.311, ratio 0.99051
+  block 12 (recorded first): ignored 399.111, recorded 396.200, ratio 0.99271
+  block 13 (recorded first): ignored 408.956, recorded 397.700, ratio 0.97248
+  block 14 (recorded first): ignored 405.078, recorded 393.244, ratio 0.97079
+  block 15 (recorded first): ignored 392.711, recorded 401.011, ratio 1.02114
+  block 16 (ignored first): ignored 387.000, recorded 381.411, ratio 0.98556
+  block 17 (ignored first): ignored 379.111, recorded 377.522, ratio 0.99581
+  block 18 (recorded first): ignored 379.856, recorded 378.256, ratio 0.99579
+  block 19 (ignored first): ignored 381.489, recorded 405.289, ratio 1.06239
+  block 20 (ignored first): ignored 385.589, recorded 384.622, ratio 0.99749
+  block 21 (ignored first): ignored 396.467, recorded 409.111, ratio 1.03189
+  block 22 (recorded first): ignored 387.244, recorded 396.444, ratio 1.02376
+  block 23 (ignored first): ignored 392.367, recorded 392.800, ratio 1.00110
+  block 24 (ignored first): ignored 385.389, recorded 384.167, ratio 0.99683
+  block 25 (ignored first): ignored 393.411, recorded 379.344, ratio 0.96424
+  block 26 (ignored first): ignored 379.011, recorded 377.856, ratio 0.99695
+  block 27 (ignored first): ignored 376.789, recorded 379.956, ratio 1.00840
+  block 28 (recorded first): ignored 381.589, recorded 378.944, ratio 0.99307
+  block 29 (ignored first): ignored 379.900, recorded 391.778, ratio 1.03127
+  block 30 (recorded first): ignored 375.800, recorded 379.589, ratio 1.01008
+  block 31 (recorded first): ignored 390.956, recorded 377.878, ratio 0.96655
+  block 32 (ignored first): ignored 382.478, recorded 380.956, ratio 0.99602
+  block 33 (recorded first): ignored 379.356, recorded 380.689, ratio 1.00351
+  block 34 (ignored first): ignored 375.533, recorded 381.444, ratio 1.01574
+  block 35 (recorded first): ignored 393.122, recorded 389.322, ratio 0.99033
+  block 36 (recorded first): ignored 379.222, recorded 383.811, ratio 1.01210
+  block 37 (ignored first): ignored 377.000, recorded 375.456, ratio 0.99590
+  block 38 (ignored first): ignored 377.211, recorded 379.022, ratio 1.00480
+  block 39 (ignored first): ignored 385.522, recorded 382.922, ratio 0.99326
+  block 40 (ignored first): ignored 374.011, recorded 379.122, ratio 1.01367
+  block 41 (ignored first): ignored 376.711, recorded 380.444, ratio 1.00991
+  block 42 (recorded first): ignored 380.033, recorded 379.078, ratio 0.99749
+  block 43 (recorded first): ignored 397.211, recorded 390.522, ratio 0.98316
+  block 44 (recorded first): ignored 375.867, recorded 385.000, ratio 1.02430
+  block 45 (ignored first): ignored 379.778, recorded 380.456, ratio 1.00178
+  block 46 (recorded first): ignored 378.200, recorded 376.267, ratio 0.99489
+  block 47 (recorded first): ignored 398.344, recorded 386.267, ratio 0.96968
+  block 48 (ignored first): ignored 391.422, recorded 392.822, ratio 1.00358
+  block 49 (recorded first): ignored 378.211, recorded 379.544, ratio 1.00353
+  block 50 (ignored first): ignored 378.400, recorded 384.033, ratio 1.01489
+  block 51 (ignored first): ignored 380.300, recorded 377.878, ratio 0.99363
+  block 52 (ignored first): ignored 377.122, recorded 385.489, ratio 1.02219
+  block 53 (ignored first): ignored 372.533, recorded 377.933, ratio 1.01450
+  block 54 (recorded first): ignored 388.133, recorded 379.344, ratio 0.97736
+  block 55 (ignored first): ignored 376.156, recorded 381.689, ratio 1.01471
+  block 56 (ignored first): ignored 382.444, recorded 392.533, ratio 1.02638
+  block 57 (recorded first): ignored 378.622, recorded 379.422, ratio 1.00211
+  block 58 (recorded first): ignored 393.711, recorded 383.611, ratio 0.97435
+  block 59 (recorded first): ignored 385.689, recorded 390.033, ratio 1.01126
+  block 60 (ignored first): ignored 379.767, recorded 382.333, ratio 1.00676
