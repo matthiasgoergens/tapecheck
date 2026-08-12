@@ -162,12 +162,17 @@ val recursive_union : 'a t list -> f:('a t -> 'a t list) -> 'a t
     [max_leaves] is discarded and retried from the advanced random stream.
 
     The bounded strategy tower is constructed separately for each generated
-    value, so [f] should be pure and inexpensive.
+    value, so [f] should be pure and inexpensive. Its finite tower also bounds
+    nested [f]-layer depth logarithmically in [max_leaves]; the cap does not
+    bound work performed internally by [base].
 
     [max_attempts] is a Base_quickcheck-specific safety bound: Hypothesis relies
     on engine health checks around its unbounded retry loop, while this library
     has no per-example deadline. Raises if either bound is non-positive or if
-    every one of [max_attempts] consecutive draws exceeds the leaf cap. *)
+    every one of [max_attempts] consecutive draws exceeds the leaf cap. This
+    is a generator exception, including if exhaustion occurs during a
+    Tapecheck replay; leave the generous default in place unless a smaller
+    value is needed to diagnose a pathological recursive layer. *)
 val recursive_with_max_leaves
   :  ?max_leaves:int
   -> ?max_attempts:int

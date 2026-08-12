@@ -1,8 +1,8 @@
 diff --git a/src/generator.ml b/src/generator.ml
-index 75c8492..f6d154c 100644
+index 75c8492..f0e81ed 100644
 --- a/src/generator.ml
 +++ b/src/generator.ml
-@@ -1,5 +1,12 @@
+@@ -1,5 +1,10 @@
  open! Base
  
 +type Splittable_random.span_label +=
@@ -10,12 +10,10 @@ index 75c8492..f6d154c 100644
 +  | Structural_list_element
 +  | Recursive_attempt
 +
-+exception Leaf_limit_reached
-+
  module T : sig
    type +'a t
  
-@@ -193,6 +200,72 @@ let recursive_union nonrec_list ~f =
+@@ -193,6 +198,75 @@ let recursive_union nonrec_list ~f =
    weighted_recursive_union (weighted nonrec_list) ~f:(fun self -> weighted (f self))
  ;;
  
@@ -38,6 +36,9 @@ index 75c8492..f6d154c 100644
 +        "Base_quickcheck.Generator.recursive_with_max_leaves: max_attempts <= 0"
 +          (max_attempts : int)];
 +  create (fun ~size ~random ->
++    (* A fresh exception constructor prevents a nested leaf-budget generator
++       from mistaking its caller's limit signal for one of its own retries. *)
++    let exception Leaf_limit_reached in
 +    let remaining = ref max_leaves in
 +    let limit_reached = ref false in
 +    let limited_base =
@@ -88,7 +89,7 @@ index 75c8492..f6d154c 100644
  let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
    create (fun ~size ~random ->
      assert (min_length <= max_length);
-@@ -239,7 +312,11 @@ let result ok_t err_t =
+@@ -239,7 +313,11 @@ let result ok_t err_t =
  
  let list_generic ?min_length ?max_length elt_gen =
    let%bind sizes = sizes ?min_length ?max_length () in
@@ -101,7 +102,7 @@ index 75c8492..f6d154c 100644
  ;;
  
  let list elt_gen = list_generic elt_gen
-@@ -249,6 +326,99 @@ let list_with_length elt_gen ~length =
+@@ -249,6 +327,99 @@ let list_with_length elt_gen ~length =
    list_generic ~min_length:length ~max_length:length elt_gen
  ;;
  
@@ -201,7 +202,7 @@ index 75c8492..f6d154c 100644
  let list_filtered elts =
    let elts = Array.of_list elts in
    let length_of_input = Array.length elts in
-@@ -743,7 +913,13 @@ let sexp = sexp_of string
+@@ -743,7 +914,13 @@ let sexp = sexp_of string
  
  let map_tree_using_comparator ~comparator key_gen data_gen =
    let%bind keys = list key_gen in
@@ -217,10 +218,10 @@ index 75c8492..f6d154c 100644
    return (Map.Using_comparator.Tree.of_alist_exn ~comparator (List.zip_exn keys data))
  ;;
 diff --git a/src/generator.mli b/src/generator.mli
-index 241f3c7..3a81b24 100644
+index 241f3c7..6d4c2e5 100644
 --- a/src/generator.mli
 +++ b/src/generator.mli
-@@ -155,6 +155,26 @@ val filter_map : 'a t -> f:('a -> 'b option) -> 'b t
+@@ -155,6 +155,31 @@ val filter_map : 'a t -> f:('a -> 'b option) -> 'b t
      ]} *)
  val recursive_union : 'a t list -> f:('a t -> 'a t list) -> 'a t
  
@@ -231,12 +232,17 @@ index 241f3c7..3a81b24 100644
 +    [max_leaves] is discarded and retried from the advanced random stream.
 +
 +    The bounded strategy tower is constructed separately for each generated
-+    value, so [f] should be pure and inexpensive.
++    value, so [f] should be pure and inexpensive. Its finite tower also bounds
++    nested [f]-layer depth logarithmically in [max_leaves]; the cap does not
++    bound work performed internally by [base].
 +
 +    [max_attempts] is a Base_quickcheck-specific safety bound: Hypothesis relies
 +    on engine health checks around its unbounded retry loop, while this library
 +    has no per-example deadline. Raises if either bound is non-positive or if
-+    every one of [max_attempts] consecutive draws exceeds the leaf cap. *)
++    every one of [max_attempts] consecutive draws exceeds the leaf cap. This
++    is a generator exception, including if exhaustion occurs during a
++    Tapecheck replay; leave the generous default in place unless a smaller
++    value is needed to diagnose a pathological recursive layer. *)
 +val recursive_with_max_leaves
 +  :  ?max_leaves:int
 +  -> ?max_attempts:int
@@ -247,7 +253,7 @@ index 241f3c7..3a81b24 100644
  (** Like [recursive_union], without separate clauses or automatic size management. Useful
      for generating recursive types that don't fit the clause structure of
      [recursive_union].
-@@ -334,6 +354,23 @@ val sexp_of : string t -> Sexp.t t
+@@ -334,6 +359,23 @@ val sexp_of : string t -> Sexp.t t
  val list_non_empty : 'a t -> 'a list t
  val list_with_length : 'a t -> length:int -> 'a list t
  

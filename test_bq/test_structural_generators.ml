@@ -78,6 +78,16 @@ let () =
   in
   check "overflowing min_length + size still respects max_length"
     (List.length overflow_safe >= 1 && List.length overflow_safe <= 10);
+  let saw_optional_maximum = ref false in
+  for seed = 0 to 999 do
+    let xs = generate (G.list_structural ~min_length:2 ~max_length:4 G.size) ~size:7 seed in
+    check "required structural prefix and optional tail respect their bounds"
+      (List.length xs >= 2
+       && List.length xs <= 4
+       && List.for_all xs ~f:(Int.equal 7));
+    if List.length xs = 4 then saw_optional_maximum := true
+  done;
+  check "optional structural tail reaches its forced maximum" !saw_optional_maximum;
 
   let tree =
     G.recursive_with_max_leaves ~max_leaves:20 (G.return Leaf)
@@ -107,6 +117,19 @@ let () =
   for seed = 0 to 999 do
     check "catch-all handlers cannot defeat the leaf cap"
       (match generate swallowed ~size:10 seed with
+       | Only_leaf -> true
+       | Pair _ -> false)
+  done;
+  let nested =
+    G.recursive_with_max_leaves ~max_leaves:1 (G.return Only_leaf)
+      ~f:(fun outer_self ->
+        G.recursive_with_max_leaves ~max_leaves:1 ~max_attempts:10 outer_self
+          ~f:(fun inner_self ->
+            G.map2 inner_self inner_self ~f:(fun left right -> Pair (left, right))))
+  in
+  for seed = 0 to 999 do
+    check "nested leaf budgets do not intercept their caller's limit signal"
+      (match generate nested ~size:10 seed with
        | Only_leaf -> true
        | Pair _ -> false)
   done;

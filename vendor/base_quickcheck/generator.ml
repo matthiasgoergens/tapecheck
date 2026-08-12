@@ -5,8 +5,6 @@ type Splittable_random.span_label +=
   | Structural_list_element
   | Recursive_attempt
 
-exception Leaf_limit_reached
-
 module T : sig
   type +'a t
 
@@ -219,6 +217,9 @@ let recursive_with_max_leaves
         "Base_quickcheck.Generator.recursive_with_max_leaves: max_attempts <= 0"
           (max_attempts : int)];
   create (fun ~size ~random ->
+    (* A fresh exception constructor prevents a nested leaf-budget generator
+       from mistaking its caller's limit signal for one of its own retries. *)
+    let exception Leaf_limit_reached in
     let remaining = ref max_leaves in
     let limit_reached = ref false in
     let limited_base =
