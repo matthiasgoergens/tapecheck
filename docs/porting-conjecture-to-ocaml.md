@@ -73,9 +73,13 @@ shorter or simpler.
 The payoff is that generators need to know nothing. Every existing
 `base_quickcheck` generator — including everything `[@@deriving
 quickcheck]` emits — becomes shrinkable with zero changes, no ppx and no
-rewriting. The cost is that we have no spans, and four of Hypothesis's
+rewriting. The cost was that we had no spans, and four of Hypothesis's
 passes need them: `remove_discarded`, `pass_to_descendant`,
-`reorder_spans`, `minimize_duplicated_choices`.
+`reorder_spans`, `minimize_duplicated_choices`. Two of the four have
+since landed behind the opt-in capability on `wave2/span-deletion` —
+see the poisoned-trees table above and
+`WAVE2-PASS-TO-DESCENDANT.md` — and the two that remain are the span
+gap this post keeps meeting.
 
 That trade is the subject of most of what follows.
 
@@ -354,6 +358,10 @@ cooperation the shrinker needs from the generator**:
   generator returns its own shrink candidates, and the engine takes the
   first that still fails.
 - **tapecheck**: no cooperation at all, over unmodified generators — and
+  since `wave2/span-deletion`, an opt-in capability that marks which
+  labelled spans the recorder retains, which is how the first two of the
+  four missing passes landed. The axis has therefore become a measured
+  spectrum rather than a binary question.
   the four missing passes look like the price of exactly that.
 
 I tried recovering spans from the PRNG's split topology. It fails for a
