@@ -162,7 +162,8 @@ on all three; the 1000-run table above gives the current figures,
 calculator's misses are long inert chains — `('+', ('+', ('+', 0, 0),
 0), 0)` — wrapped around a small failing subterm the shrinker cannot
 promote to the root. That is `pass_to_descendant`, the same thing
-`test_poison/` prices at 10/34 (see `SPANS-THE-ROOT-CAUSE.md`). The
+`test_poison/` priced at 10/34 when this was written (see
+`SPANS-THE-ROOT-CAUSE.md`). The
 `max_int` issue shows here too but only as flavour: with the patch the
 divisors become `('/', 0, -1)` instead of `('/', 0, max_int)`, and the
 inert chains remain, so the score does not move.
