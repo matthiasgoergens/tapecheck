@@ -81,9 +81,10 @@ committed.
 
 ## Next decision
 
-Use the opt-in API in at least one real recursive consumer and repeat the
-quality/cost suite. If that remains healthy, propose these functions and their
-companion span seam upstream as additions first. A later breaking release can consider making structural
+The calculator migration and descendant pass are now measured in
+`WAVE2-CALCULATOR-MIGRATION.md` and `WAVE2-PASS-TO-DESCENDANT.md`. The next
+upstream step is to propose these functions and their companion span seam as
+additions first. A later breaking release can consider making structural
 lists the default alongside a replacement or deprecation path for
 size-dependent `fixed_point` recursion. First-class string and bytes choices
 remain the next independent shrinking capability.

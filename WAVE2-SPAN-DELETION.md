@@ -25,9 +25,10 @@ allocating runtime metadata, so they add neither shrink proposals nor a sort in
 `Tape.finish`. The experimental list arm marks a continuation decision plus
 its element as one deletable span.
 
-This is not yet Hypothesis's full `remove_discarded`, `pass_to_descendant`, or
-span-reordering machinery. It establishes the representation and one useful,
-well-bounded edit.
+This checkpoint established the representation and one useful, well-bounded
+edit. `remove_discarded` and `pass_to_descendant` have since landed on this
+branch; see `WAVE2-DISCARDED-REGIONS.md` and
+`WAVE2-PASS-TO-DESCENDANT.md`. Span reordering remains open.
 
 An initial implementation retained and sorted every observational Base-list
 span. A randomised paired-block measurement at fixed length 30 estimated a
