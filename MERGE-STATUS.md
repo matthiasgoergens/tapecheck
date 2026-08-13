@@ -1,6 +1,27 @@
 # Integration status
 
-Updated 2026-08-10 after Wave 1 was merged into local `master`.
+Updated 2026-08-13. Earlier update 2026-08-10 after Wave 1 was merged into
+local `master`.
+
+## Wave 2 on `master`, and the active branch
+
+`origin/master` has advanced past Wave 1 to `26d3dcd`: the Wave 2
+continuation-list seams landed via PRs #31 and #30.
+
+The active line is now `wave2/span-deletion` (local, not yet pushed). On top
+of the continuation lists it adds the capability-split span seam (deletable /
+discardable / descendable), `remove_discarded`, the opt-in
+`pass_to_descendant` pass (poisoned leaves 12/34 to 34/34, matching
+Hypothesis; calculator replay attempts 501.3 to 438.6 mean, discovery
+unchanged), and Hypothesis-style recursive leaf budgets. See
+`WAVE2-PASS-TO-DESCENDANT.md` for the checkpoint and its measured next
+candidates: `reorder_spans` and `minimize_duplicated_choices` behind explicit
+capabilities, then first-class string/bytes choices.
+
+Open on GitHub: PR #20 (`docs/wave-2-design`, design note) and PR #29
+(`wave2/monotone-list-sizes`, DRAFT, unresolved size-bound/distribution
+trade-off). Issue #2 (trivial-only health check) is open; the adversarial
+review issues #4-#15 are all closed via Wave 1.
 
 ## Wave 1 merged locally
 
