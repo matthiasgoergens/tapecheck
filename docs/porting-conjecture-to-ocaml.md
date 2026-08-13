@@ -362,7 +362,6 @@ cooperation the shrinker needs from the generator**:
   labelled spans the recorder retains, which is how the first two of the
   four missing passes landed. The axis has therefore become a measured
   spectrum rather than a binary question.
-  the four missing passes look like the price of exactly that.
 
 I tried recovering spans from the PRNG's split topology. It fails for a
 specific reason: `base_quickcheck` calls `split` exactly once in the
