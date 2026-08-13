@@ -1,15 +1,16 @@
 # Wave 2 design: capability-gated `reorder_spans` and `minimize_duplicated_choices`
 
-Written 2026-08-13, before implementation. The next two span-dependent
-passes from `WAVE2-PASS-TO-DESCENDANT.md`, restricted to explicit
-generator capabilities as decided there, measured on the known
-`bound5`, `large_union_list`, calculator and poison-tree trade-offs on
-paired seeds.
+Written 2026-08-13, before implementation. Revised the same day after
+the adversarial design reviews (codex break-it, DeepSeek alternatives);
+the revisions section at the end records what each review changed. The
+next two span-dependent passes from `WAVE2-PASS-TO-DESCENDANT.md`,
+measured on the known `bound5`, `large_union_list`, calculator and
+poison-tree trade-offs.
 
 ## Prior art (verified against the vendored Hypothesis sources)
 
 `reorder_spans` (shrinker.py): choose a span, choose a label among its
-children, collect the children sharing that label, and run
+children, collect the **children sharing that label**, and run
 `Ordering.shrink` over their indices with `sort_key` — shortlex over
 the child's choice sequence — so the canonical arrangement is the
 sorted one. The motivating case is two `st.text()` draws with
@@ -28,94 +29,139 @@ is a span-free signature guess, hard-disabled after re-measurement at
 n=1000 (`+patch` only: distinct 116→649, reverse 452→487, binheap
 93→110 — but lengthlist regressed); `redistribute_pairs` is the
 pairwise, sum-preserving cousin of duplicate minimisation. This design
-retires neither: the real passes are gated opt-ins, and the
-approximations stay for the stock columns.
+retires neither: the new passes are opt-ins, and the approximations
+stay for the stock columns.
 
 ## Design: `reorder_spans`
 
-1. **Seam.** New capability `reorderable` on the span record
-   (`tape/tape.ml`: field, `on_span_start`/`on_span_stop` arguments,
-   the retention fast-path, and the span comparison), mirrored through
-   the `Intercept` callbacks in `vendor/base_quickcheck`,
-   `vendor/splittable_random`, the patches, and the bonsai consumer
-   snapshot (the sync script checks these stay in step). Unchanged
-   generators pass `false` everywhere and retain nothing, exactly as
-   with the other three capabilities.
+1. **Seam.** New capability `reorderable` on the span record, widened
+   through every gate the reviews enumerated: `Tape.span` and
+   `open_span` fields, `on_span_start`/`on_span_stop` arguments and the
+   retention fast-paths, start/stop balance equality, exceptional
+   clearing, retention conditions, span comparison, the shim's
+   independent start filter, both `sr_real` callback record
+   declarations plus `with_span` and its interface, the vendor patch,
+   the bonsai consumer snapshot (sync script checked), and the test
+   interceptors. A capability-only start whose stop is dropped must
+   still balance — the shim filter and the Tape gates widen together.
+   Unchanged generators pass `false` everywhere and retain nothing.
 
-2. **Pass.** For each span marked `reorderable` (root stream only,
-   same rationale and boundary rules as `pass_to_descendant`: properly
-   contained children, shared endpoints allowed), collect its child
-   spans that are also `reorderable` and share the parent's label. If
-   at least two, propose the shortlex-sorted arrangement of their
-   slices as a single proposal — one attempt per group, not per
-   permutation pair, matching `sort_siblings`' cost discipline and the
-   per-pass failure cutoff. Accept only a still-failing,
-   shortlex-smaller replay. Re-sort with every accepted proposal, as
-   the other passes do, so the fixpoint converges to the sorted
-   arrangement.
+2. **Direct-child representation.** Spans are flat intervals today; a
+   permutation pass needs direct children. The open-span stack knows
+   the depth at every stop event, so `Tape.span` gains `depth : int`
+   recorded at close. Direct children of a parent span are retained
+   spans with `depth = parent.depth + 1` that are properly contained
+   in it. No parent-pointer metadata, no inference.
 
-3. **Explicit non-goal.** `Ordering.shrink`'s permutation search (it
-   explores reorderings beyond the sorted one, with its own search
-   discipline). The sorted arrangement is the normalisation target;
-   the permutation search is a later refinement if measurement shows
-   the sorted proposal alone is insufficient.
+3. **Grouping, per Hypothesis.** Choose a label among the *children*
+   of a `reorderable` parent (not the parent's own label), collect the
+   direct children sharing that label, all also `reorderable`. At
+   least two, or the pass moves on.
 
-4. **Generator exposure.** First, mark the challenge generators'
-   spans via the raw seam in `challenge/` and the paired probes.
-   A public opt-in combinator follows only if the measurements justify
-   it, following the `WAVE2-PRODUCTION-GENERATORS.md` pattern.
+4. **Proposal and acceptance.** One proposal per group: the children's
+   slices rearranged into shortlex order, the parent's own gaps kept in
+   place — a single parent-interval reconstruction, not per-pair
+   swaps. Accept only a still-failing, whole-image-smaller replay.
+   After every accepted proposal, abandon all cached groups, arrays
+   and indices and rebuild from the fresh replay; the engine already
+   replaces `s_best_spans` on acceptance. Candidates are enumerated
+   deterministically (by position, never by hash order) before any
+   failure cutoff applies. Proposals already present in the global
+   seen table are skipped, since replay can accept an output different
+   from the submitted proposal.
+
+5. **Scope restriction.** Main stream only, and only groups whose
+   slices contain no `Marker` choices: `Generator.fn` splits a keyed
+   stream at a marker, and reordering slices across a marker would
+   cross-wire the payload. Root-stream only is inherited from
+   `pass_to_descendant` for the same ancestry reason.
+
+6. **Sort key — an honest caveat.** Shortlex is the faithful port, but
+   tapecheck's `non_uniform` encoding contaminates it: `-32768` has a
+   two-entry recording and sorts ahead of `-1`'s four entries, while
+   `bound5`'s expected permutation wants `-1` first. So the sorted
+   arrangement is canonical but can be the *wrong* canonical
+   permutation for `bound5`; the same pathology the +patch column
+   already shows. The first measurement decides: if `bound5` exact does
+   not move toward the expected permutation, the follow-up is a
+   value-aware key (distance from the shrink target, the
+   `sort_siblings` target-aware variant), which is a separate measured
+   change, not a silent one.
+
+7. **Fixpoint honesty.** The sorted-arrangement proposal alone does not
+   reach a sorted fixpoint in general (`[B,C,A]` where failure needs
+   the first child to be `B`: `[A,B,C]` passes, `[B,A,C]` is smaller
+   and failing, and is never proposed). The pass may settle unsorted;
+   `Ordering.shrink`'s permutation search, or a bounded
+   adjacent-transposition fallback, is the measured next step rather
+   than a claim.
 
 ## Design: `minimize_duplicated_choices`
 
-1. **Seam.** Second new capability `duplicable`, same plumbing as
-   `reorderable`. A `duplicable` span declares that the values inside
-   it may legitimately duplicate and that duplicates should be
-   minimised together.
+1. **No new capability.** Hypothesis groups over the whole buffer, and
+   the DeepSeek alternatives review made the case for not widening the
+   seam again: the pass is instead restricted to integer and float
+   choices — the kinds with a defined shrink order — with equal
+   `(kind, value, lo, hi)`. Equal bounds matter: replay clamps a
+   proposed value independently per position, so equal values in
+   different ranges can replay apart and destroy the group.
 
-2. **Pass.** Within each `duplicable` span (root stream only), group
-   positions by equal `(kind, value)`, skipping values that are already
-   trivial for their kind. For each group of at least two, bisect the
-   shared value downward for all members simultaneously — one proposal
-   per bisection step for the whole group — accepting a still-failing
-   replay. This is `redistribute_pairs` generalised from two nodes to
-   N same-value nodes, using the same machinery and cutoffs.
-
-3. **Interaction with `reorder_spans`.** The two passes compose: after
-   reordering, duplicated values sit at adjacent positions, but the
-   duplicate pass does not depend on adjacency (it groups by value over
-   the span, not by position runs).
+2. **Mechanism.** For each group of at least two non-trivial values,
+   bisect the shared value toward its kind's shrink direction for all
+   members simultaneously — one proposal per bisection step. Downward
+   means toward zero for integers; the float and sign conventions come
+   from the existing `minimize_choices` machinery. Acceptance is the
+   usual replay gate; stale-geometry and determinism rules are shared
+   with `reorder_spans`. All-members bisection can miss subset moves
+   (a length choice of the same value is excluded by the bounds/kind
+   gate, but genuine subset cases remain); a subset-splitting fallback
+   is the noted refinement, matching Hypothesis's own all-members
+   scope.
 
 ## Measurement protocol (predeclared)
 
-Paired 1000 seeds, stock vs each capability vs both, on:
+Same-seed columns, not paired-interval claims: the harness drops seed
+identity, so per-seed discordance and paired cost intervals are not
+computable without harness work. Reported as parallel same-seed runs
+at n=1000, plus the 200-seed pilot stage:
 
-- `bound5` — the canonical reorder test: 998/1000 at-or-below optimal
-  size but 158/1000 exact because the five symmetric slots are not
-  canonically ordered. Prediction: `reorderable` on the slot spans
-  moves exact toward the Hypothesis 1000/1000 without changing size
-  or cost class.
+- `bound5` — reorder target. Predeclared risk: the sort-key caveat
+  above may leave exact normalisation unchanged even while the
+  at-or-below-optimal-size column improves.
 - `large_union_list` — expected `[[0, 1, -1, 2, -2]]` is an ordering;
-  reordering should normalise more of the 726 distinct answers.
-- calculator — the residue after `pass_to_descendant` is choice
-  minimisation and sibling ordering; measure whether either pass moves
-  the 16/1000 exact without accepting longer chains.
-- poison-tree guard — both the 12/34 unchanged floor and the 34/34
-  structural result must hold unchanged.
+  reorder should reduce the distinct-answer count.
+- calculator — the residue after `pass_to_descendant`; measure whether
+  either pass moves the 16/1000 exact without accepting longer chains.
+- `deletion` — the duplicate positive control (expected `([0, 0], 0)`,
+  the case `minimize_duplicated_choices` exists for).
+- poison-tree guard — the stock arm's 12/34 floor becomes two-sided
+  (exactly 12/34, the existing `high_minimal` pattern from
+  `CHALLENGE.md`), and the structural 34/34 must hold unchanged.
+- Negative control: same-seed pre-shrink tape images identical across
+  arms, asserted once per run.
 
-Also the full forced suite and the regression guard must stay green;
-any guard improvement is kill-tested both directions per
-`CHALLENGE.md`'s existing discipline. Costs are mean shrink
-evaluations per the challenge convention.
+Staged: existing guards first (full forced suite, regression guard,
+poison), then 200-seed targeted runs, then the full 1000-seed
+columns. Any guard improvement is kill-tested both directions per
+`CHALLENGE.md`'s existing discipline.
 
-## Known risks to weigh in review
+## Revisions after the design reviews
 
-- The old approximation hurt lengthlist via wasted attempts; the real
-  pass can waste attempts too (labels are generator-declared, but
-  reordering groups that cannot accept any swap still cost the cutoff).
-- Sorting by shortlex inside a span changes the tape layout under the
-  span's own boundary — the parent's recorded slice positions must be
-  rebuilt from the replay, which the engine already does on every
-  accepted proposal (`s_best_spans`).
-- Two more capabilities widen the intercept record again; upstream
-  `splittable_random#2` has still not merged, and each widening makes
-  the eventual upstream proposal heavier.
+- **Grouping rule** (codex): children share a chosen *child* label,
+  not the parent's label. Direct children via recorded span depth.
+- **Split-stream hazard** (codex): main-stream, marker-free slices
+  only; `Generator.fn` keyed payloads must not be cross-wired.
+- **Sort-key caveat** (codex): shortlex + `non_uniform` predicts the
+  wrong `bound5` permutation; predeclared measurement decides whether
+  the value-aware key is needed.
+- **Fixpoint and stale-geometry discipline** (codex): rebuild after
+  every acceptance, deterministic enumeration, seen-table skips,
+  withdraw the convergence claim.
+- **`duplicable` dropped** (DeepSeek): whole-tape grouping gated by
+  equal `(kind, value, lo, hi)` instead of a third capability bit.
+- **Measurement protocol** (both): `deletion` positive control added;
+  same-seed columns replace paired-interval claims; poison floor
+  becomes two-sided; negative control added; staged pilot first.
+- **Retention checklist** (codex): the full gate list is in the seam
+  section above and is checked mechanically by the widened
+  start/stop-balance tests and the sync scripts.
