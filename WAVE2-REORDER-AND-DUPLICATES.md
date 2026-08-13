@@ -145,6 +145,32 @@ poison), then 200-seed targeted runs, then the full 1000-seed
 columns. Any guard improvement is kill-tested both directions per
 `CHALLENGE.md`'s existing discipline.
 
+## Measured: `reorder_spans` on the challenge suite
+
+Measured 2026-08-13 at n=1000, same seeds as the stock column
+(`challenge-1000-20260808.txt`). Only `bound5` carries reorderable
+spans so far; raw output in
+`tapecheck-notes/challenge-1000-reorder-20260813.txt`.
+
+| | stock | +reorder spans |
+|---|---|---|
+| bound5 distinct answers | 22 | **2** (999 × one arrangement) |
+| bound5 at-or-below optimal size | 998/1000 | **999/1000** |
+| bound5 exact | 158/1000 | 0/1000 |
+| bound5 mean evaluations | 276.8 | 284.8 |
+
+Every other challenge row is identical to the stock column to two
+decimals — the pass is inert where nothing opts in, which is the point
+of the capability gate.
+
+The canonical arrangement is `([], [], [], [-32768], [-1])`: shortlex
+ranks the two-entry `-32768` recording ahead of `-1`'s four entries,
+the predeclared sort-key caveat, and the same order the `+patch` column
+already prefers. Normalisation consistency is delivered; the
+challenge's expected permutation needs the value-aware key, which is
+the next measured step. The poisoned-trees guard stays 12/34 and 34/34,
+with the stock floor now two-sided and kill-tested.
+
 ## Revisions after the design reviews
 
 - **Grouping rule** (codex): children share a chosen *child* label,
