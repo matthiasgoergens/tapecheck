@@ -165,6 +165,20 @@ promote to the root. That is `pass_to_descendant`, the same thing
 divisors become `('/', 0, -1)` instead of `('/', 0, max_int)`, and the
 inert chains remain, so the score does not move.
 
+**Update, 2026-08-12: `pass_to_descendant` landed** on
+`wave2/span-deletion` behind an opt-in `descendable` capability. The
+poisoned trees go 12/34 to 34/34 with the capability, matching
+Hypothesis, and the test asserts both arms. It does not rescue
+calculator's exact normalisation: on the paired diag2 sample the
+descendant pass removes every inert recursive wrapper (replay attempts
+501.3 to 438.6, nodes 5.6 to 5.0) but exact canonical renderings move
+1/100 to 0/100 — too sparse to distinguish from seed variation, and the
+five-node residue can still hold the wrong operator or literal
+arrangement. That residue belongs to choice minimisation, sibling
+reordering (`reorder_spans`) and duplicate-span handling, not to
+another descendant pass. The table above is therefore unchanged by the
+pass and remains the honest current score.
+
 **lengthlist: earned patience helps a little.** A shrink pass's failure
 allowance is now the flat base plus one extra per success it has already
 banked in this shrink, so patience is earned rather than granted. At
