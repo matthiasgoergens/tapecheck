@@ -75,9 +75,20 @@ and intercept =
       -> default:(t -> probability:float -> bool)
       -> bool
   ; on_span_start :
-      span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
+      span_label
+      -> deletable:bool
+      -> discardable:bool
+      -> descendable:bool
+      -> reorderable:bool
+      -> unit
   ; on_span_stop :
-      deletable:bool -> discardable:bool -> descendable:bool -> discarded:bool -> unit -> unit
+      deletable:bool
+      -> discardable:bool
+      -> descendable:bool
+      -> reorderable:bool
+      -> discarded:bool
+      -> unit
+      -> unit
   ; on_split : unit -> intercept option
   ; on_perturb : int -> intercept option
   }
@@ -302,6 +313,7 @@ let with_span
   ?(deletable = false)
   ?(discard_on_exception = false)
   ?(descendable = false)
+  ?(reorderable = false)
   state
   label
   ~f
@@ -309,7 +321,8 @@ let with_span
   match state.intercept with
   | None -> f ()
   | Some i ->
-    i.on_span_start label ~deletable ~discardable:discard_on_exception ~descendable;
+    i.on_span_start label ~deletable ~discardable:discard_on_exception
+      ~descendable ~reorderable;
     let discarded = ref true in
     Exn.protect
       ~f:(fun () ->
@@ -318,7 +331,7 @@ let with_span
         result)
       ~finally:(fun () ->
         i.on_span_stop ~deletable ~discardable:discard_on_exception ~descendable
-          ~discarded:!discarded ())
+          ~reorderable ~discarded:!discarded ())
 ;;
 
 (* Note about roundoff error:
@@ -470,11 +483,17 @@ module Intercept = struct
         -> default:(state -> probability:float -> bool)
         -> bool
     ; on_span_start :
-        span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
+        span_label
+        -> deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> reorderable:bool
+        -> unit
     ; on_span_stop :
         deletable:bool
         -> discardable:bool
         -> descendable:bool
+        -> reorderable:bool
         -> discarded:bool
         -> unit
         -> unit

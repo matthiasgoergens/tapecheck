@@ -1,8 +1,8 @@
 diff --git a/src/splittable_random.ml b/src/splittable_random.ml
-index 6b8e31e..e451f4e 100644
+index 6b8e31e..430cd3d 100644
 --- a/src/splittable_random.ml
 +++ b/src/splittable_random.ml
-@@ -21,22 +21,76 @@
+@@ -21,22 +21,87 @@
  *)
  
  open! Base
@@ -61,9 +61,20 @@ index 6b8e31e..e451f4e 100644
 +      -> default:(t -> probability:float -> bool)
 +      -> bool
 +  ; on_span_start :
-+      span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
++      span_label
++      -> deletable:bool
++      -> discardable:bool
++      -> descendable:bool
++      -> reorderable:bool
++      -> unit
 +  ; on_span_stop :
-+      deletable:bool -> discardable:bool -> descendable:bool -> discarded:bool -> unit -> unit
++      deletable:bool
++      -> discardable:bool
++      -> descendable:bool
++      -> reorderable:bool
++      -> discarded:bool
++      -> unit
++      -> unit
 +  ; on_split : unit -> intercept option
 +  ; on_perturb : int -> intercept option
    }
@@ -82,7 +93,7 @@ index 6b8e31e..e451f4e 100644
  let mix_bits z n = z lxor (z lsr n)
  
  let mix64 z =
-@@ -63,13 +117,6 @@ let mix_odd_gamma z =
+@@ -63,13 +128,6 @@ let mix_odd_gamma z =
    if Int.( < ) n 24 then z lxor 0xaaaa_aaaa_aaaa_aaaaL else z
  ;;
  
@@ -96,7 +107,7 @@ index 6b8e31e..e451f4e 100644
  
  let next_seed t =
    let next = t.seed + t.odd_gamma in
-@@ -80,7 +127,7 @@ let next_seed t =
+@@ -80,7 +138,7 @@ let next_seed t =
  let of_seed_and_gamma ~seed ~gamma =
    let seed = mix64 seed in
    let odd_gamma = mix_odd_gamma gamma in
@@ -105,7 +116,7 @@ index 6b8e31e..e451f4e 100644
  ;;
  
  let random_int64 random_state =
-@@ -94,9 +141,16 @@ let create random_state =
+@@ -94,9 +152,16 @@ let create random_state =
  ;;
  
  let split t =
@@ -123,7 +134,7 @@ index 6b8e31e..e451f4e 100644
  ;;
  
  let next_int64 t = mix64 (next_seed t)
-@@ -104,11 +158,23 @@ let next_int64 t = mix64 (next_seed t)
+@@ -104,11 +169,23 @@ let next_int64 t = mix64 (next_seed t)
  (* [perturb] is not from any external source, but provides a way to mix in external
     entropy with a pseudo-random state. *)
  let perturb t salt =
@@ -148,7 +159,7 @@ index 6b8e31e..e451f4e 100644
  
  (* We abuse terminology and refer to individual values as biased or unbiased.  More
     properly, what is unbiased is the sampler that results if we keep only these "unbiased"
-@@ -118,32 +184,11 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
+@@ -118,32 +195,11 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
    draw - remainder <= draw_maximum - remainder_maximum
  ;;
  
@@ -182,7 +193,7 @@ index 6b8e31e..e451f4e 100644
    let open Int64.O in
    let rec between state ~lo ~hi =
      let draw = next_int64 state in
-@@ -171,6 +216,12 @@ let int64 =
+@@ -171,6 +227,12 @@ let int64 =
      else between state ~lo ~hi
  ;;
  
@@ -195,7 +206,7 @@ index 6b8e31e..e451f4e 100644
  let int state ~lo ~hi =
    let lo = Int64.of_int lo in
    let hi = Int64.of_int hi in
-@@ -201,29 +252,74 @@ let int63 state ~lo ~hi =
+@@ -201,29 +263,76 @@ let int63 state ~lo ~hi =
  
  let double_ulp = 2. **. -53.
  
@@ -267,6 +278,7 @@ index 6b8e31e..e451f4e 100644
 +  ?(deletable = false)
 +  ?(discard_on_exception = false)
 +  ?(descendable = false)
++  ?(reorderable = false)
 +  state
 +  label
 +  ~f
@@ -274,7 +286,8 @@ index 6b8e31e..e451f4e 100644
 +  match state.intercept with
 +  | None -> f ()
 +  | Some i ->
-+    i.on_span_start label ~deletable ~discardable:discard_on_exception ~descendable;
++    i.on_span_start label ~deletable ~discardable:discard_on_exception
++      ~descendable ~reorderable;
 +    let discarded = ref true in
 +    Exn.protect
 +      ~f:(fun () ->
@@ -283,12 +296,12 @@ index 6b8e31e..e451f4e 100644
 +        result)
 +      ~finally:(fun () ->
 +        i.on_span_stop ~deletable ~discardable:discard_on_exception ~descendable
-+          ~discarded:!discarded ())
++          ~reorderable ~discarded:!discarded ())
 +;;
  
  (* Note about roundoff error:
  
-@@ -233,16 +329,20 @@ let unit_float state = unit_float_from_int64 (next_int64 state)
+@@ -233,16 +342,20 @@ let unit_float state = unit_float_from_int64 (next_int64 state)
     with [x < 1.] such that [lo +. x *. (hi -. lo) = hi], so it would not be correct to
     document this as being exclusive of [hi].
  *)
@@ -312,7 +325,7 @@ index 6b8e31e..e451f4e 100644
           (* Depending on rounding, the recursion with [~hi:mid] might be inclusive of [mid],
           which would mean the two cases overlap on [mid]. The alternative is to increment
           or decrement [mid] using [one_ulp] in either of the calls, but then if the first
-@@ -260,11 +360,13 @@ let float =
+@@ -260,11 +373,13 @@ let float =
      finite_float state ~lo ~hi
  ;;
  
@@ -329,7 +342,7 @@ index 6b8e31e..e451f4e 100644
  module Log_uniform = struct
    module Make (M : sig
      include Int.S
-@@ -286,48 +388,14 @@ module Log_uniform = struct
+@@ -286,48 +401,14 @@ module Log_uniform = struct
        !n
      ;;
  
@@ -378,7 +391,7 @@ index 6b8e31e..e451f4e 100644
  
      let log_uniform state ~lo ~hi =
        let min_bits = bits_to_represent lo in
-@@ -377,6 +445,49 @@ module Log_uniform = struct
+@@ -377,6 +458,55 @@ module Log_uniform = struct
    let nativeint = For_nativeint.log_uniform
  end
  
@@ -407,11 +420,17 @@ index 6b8e31e..e451f4e 100644
 +        -> default:(state -> probability:float -> bool)
 +        -> bool
 +    ; on_span_start :
-+        span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
++        span_label
++        -> deletable:bool
++        -> discardable:bool
++        -> descendable:bool
++        -> reorderable:bool
++        -> unit
 +    ; on_span_stop :
 +        deletable:bool
 +        -> discardable:bool
 +        -> descendable:bool
++        -> reorderable:bool
 +        -> discarded:bool
 +        -> unit
 +        -> unit
@@ -429,7 +448,7 @@ index 6b8e31e..e451f4e 100644
    type t = state
  
 diff --git a/src/splittable_random.mli b/src/splittable_random.mli
-index 787b052..c9c2d3d 100644
+index 787b052..19b2ae5 100644
 --- a/src/splittable_random.mli
 +++ b/src/splittable_random.mli
 @@ -19,6 +19,9 @@ open! Base
@@ -442,7 +461,7 @@ index 787b052..c9c2d3d 100644
  (** Create a new [t] seeded from the given random state. This allows nondeterministic
      initialization, for example in the case that the input state was created using
      [Random.make_self_init].
-@@ -44,7 +47,84 @@ val copy : t -> t
+@@ -44,7 +47,90 @@ val copy : t -> t
      [t], i.e., [t] will return different values than if this hadn't been called. *)
  val split : t -> t
  
@@ -499,11 +518,17 @@ index 787b052..c9c2d3d 100644
 +            controls sampling; [forced] constrains replay without advancing the
 +            underlying random state. *)
 +    ; on_span_start :
-+        span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
++        span_label
++        -> deletable:bool
++        -> discardable:bool
++        -> descendable:bool
++        -> reorderable:bool
++        -> unit
 +    ; on_span_stop :
 +        deletable:bool
 +        -> discardable:bool
 +        -> descendable:bool
++        -> reorderable:bool
 +        -> discarded:bool
 +        -> unit
 +        -> unit
@@ -528,7 +553,7 @@ index 787b052..c9c2d3d 100644
  module State : sig
    type nonrec t = t
  
-@@ -61,6 +141,36 @@ end
+@@ -61,6 +147,37 @@ end
  (** Produces a random, fair boolean. *)
  val bool : t -> bool
  
@@ -557,6 +582,7 @@ index 787b052..c9c2d3d 100644
 +  :  ?deletable:bool
 +  -> ?discard_on_exception:bool
 +  -> ?descendable:bool
++  -> ?reorderable:bool
 +  -> t
 +  -> span_label
 +  -> f:(unit -> 'a)

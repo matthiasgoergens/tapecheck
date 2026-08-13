@@ -23,7 +23,7 @@ let () =
           weighted_calls := (probability, forced) :: !weighted_calls;
           default state ~probability)
     ; on_span_start =
-        (fun label ~deletable ~discardable:_ ~descendable ->
+        (fun label ~deletable ~discardable:_ ~descendable ~reorderable:_ ->
           events :=
             (match label with
              | Outer -> "start outer"
@@ -33,7 +33,7 @@ let () =
              | _ -> "start unknown")
             :: !events)
     ; on_span_stop =
-        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~discarded:_ () ->
+        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () ->
           events := "stop" :: !events)
     ; on_split = (fun () -> Some hooks)
     ; on_perturb = (fun _ -> Some hooks)
@@ -76,7 +76,7 @@ let () =
   let start_failure_hooks =
     { hooks with
       on_span_start =
-        (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ->
+        (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ->
           raise Start_callback_failure)
     }
   in
@@ -92,7 +92,7 @@ let () =
   let stop_failure_hooks =
     { hooks with
       on_span_stop =
-        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~discarded:_ () ->
+        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () ->
           raise Stop_callback_failure)
     }
   in

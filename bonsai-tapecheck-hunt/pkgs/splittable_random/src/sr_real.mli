@@ -99,11 +99,17 @@ module Intercept : sig
             controls sampling; [forced] constrains replay without advancing the
             underlying random state. *)
     ; on_span_start :
-        span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
+        span_label
+        -> deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> reorderable:bool
+        -> unit
     ; on_span_stop :
         deletable:bool
         -> discardable:bool
         -> descendable:bool
+        -> reorderable:bool
         -> discarded:bool
         -> unit
         -> unit
@@ -166,6 +172,7 @@ val with_span
   :  ?deletable:bool
   -> ?discard_on_exception:bool
   -> ?descendable:bool
+  -> ?reorderable:bool
   -> t
   -> span_label
   -> f:(unit -> 'a)
