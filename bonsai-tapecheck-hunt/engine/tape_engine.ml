@@ -1232,6 +1232,17 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                          Array.sub main ~pos:sp.Tape.start
                            ~len:(sp.Tape.stop - sp.Tape.start))
                      in
+                     (* The sort key is raw tape shortlex. A value-aware
+                        key (distance from the shrink target) WAS tried
+                        and rejected: it generates the right proposal
+                        for bound5 (-1 before -32768), but the whole-image
+                        acceptance gate rejects the result, because a
+                        permutation preserves total length and the first
+                        differing choice ranks -1's four-entry slice
+                        ABOVE -32768's two-entry one. Custom acceptance
+                        for permutation proposals, or fixing the
+                        non_uniform encoding, are the known next steps;
+                        neither is this pass's job. *)
                      let sorted =
                        List.sort slices ~compare:Tape.compare_shortlex
                      in
