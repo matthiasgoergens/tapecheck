@@ -121,7 +121,7 @@ column.** Measured directly over 1000 runs (`diag2/probe_bound5.ml`):
 **all 1000 reduce to exactly two elements, and 998 of them to the right
 content** — two singleton lists holding `-1` and `-32768`, three
 empties. What varies is *which of the five slots* the singletons land
-in, and the challenge scores one exact permutation. So the 159/1000
+in, and the challenge scores one exact permutation. So the 158/1000
 score measures positional canonicalisation, not reduction.
 
 That reframes the `+patch` column too. It gains 50 points on `reverse`
