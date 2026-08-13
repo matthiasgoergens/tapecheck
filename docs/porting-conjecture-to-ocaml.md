@@ -240,7 +240,12 @@ Ported with the same three sizes and two seeds as theirs, hence the same
 | | positions reduced to the poisoned leaf |
 |---|---|
 | Hypothesis 6.152.9 (their own test) | 34/34 |
-| tapecheck | 10/34 |
+| tapecheck, unchanged generators | 12/34 |
+| tapecheck, opt-in descendable brackets | **34/34** |
+
+The 12/34 floor is asserted in `test_poison/`; the 34/34 row needs the
+opt-in capability that landed with `pass_to_descendant` on
+`wave2/span-deletion` (see `WAVE2-PASS-TO-DESCENDANT.md`).
 
 What makes this evidence rather than a score is that the failure has a
 shape. Positions 0 and 1 reduce fully; from position 2 onward the
@@ -252,8 +257,9 @@ deleting what *follows* it, and suffix deletion is a pass we have.
 Poison late requires deleting what *precedes* it — which shifts the
 poison's own two draws into the position where a branch coin is read.
 They get re-parsed as structure, the tree changes shape, and the poison
-is destroyed. Span boundaries are exactly what would let the subtree be
-relocated intact, which is all `pass_to_descendant` is.
+is destroyed. Span boundaries are exactly what let the subtree be
+relocated intact, which is all `pass_to_descendant` is — and it now
+exists, behind the opt-in capability.
 
 `calculator` is the same gap in different clothing. Its misses are long
 inert chains — `('+', ('+', ('+', 0, 0), 0), 0)` — wrapped around a
@@ -323,9 +329,10 @@ separately-drawn integers. The challenge's own spec singles out
 because shrinking parameters individually will never lead to a smaller
 and falsifying sample".
 
-tapecheck matches Hypothesis's answer 100/100 at **9.3× lower cost**,
-and near-deterministically: our evaluation range is 94..95 against their
-54..1056.
+tapecheck matches Hypothesis's answer 1000/1000 at **9.0× lower mean
+cost** — 98.6 evaluations against their 885.2 — and
+near-deterministically (the 100-seed pilot measured an evaluation range
+of 94..95 against their 54..1056).
 
 That is `lower_together`, a port of Hypothesis's own
 `lower_integers_together`, doing what it was ported to do. It got there
