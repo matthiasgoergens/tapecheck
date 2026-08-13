@@ -99,18 +99,20 @@ type image = {
   streams : (key * choice array) array;
 }
 
-(* Deletable structural boundaries observed while generating one image.  They
-   are deliberately runtime metadata rather than part of [image]: labels are
-   an extensible variant owned by generator libraries and are not serialisable,
-   while replay deterministically reconstructs the boundaries from the
-   generator.  Observational spans are filtered at the callback to avoid
-   charging unchanged generators for metadata no current pass consumes.
-   Positions are half-open choice ranges within one stream. *)
+(* Actionable structural boundaries observed while generating one image.
+   They are deliberately runtime metadata rather than part of [image]: labels
+   are an extensible variant owned by generator libraries and are not
+   serialisable, while replay deterministically reconstructs the boundaries
+   from the generator.  Purely observational spans are filtered at the
+   callback; retained spans explicitly opt into deletion, discard cleanup, or
+   same-labelled descendant replacement. Positions are half-open choice ranges
+   within one stream. *)
 type span = {
   stream : key;
   label : int;
   deletable : bool;
   discarded : bool;
+  descendable : bool;
   start : int;
   stop : int;
 }
@@ -120,6 +122,7 @@ type open_span = {
   open_label : int;
   open_deletable : bool;
   open_discardable : bool;
+  open_descendable : bool;
   open_start : int;
 }
 
@@ -231,7 +234,10 @@ let finish t =
             if c <> 0 then c
             else
               let c = compare a.deletable b.deletable in
-              if c <> 0 then c else compare a.discarded b.discarded)
+              if c <> 0 then c
+              else
+                let c = compare a.discarded b.discarded in
+                if c <> 0 then c else compare a.descendable b.descendable)
     |> Array.of_list
   in
   t.mode <- Off;
@@ -242,8 +248,8 @@ let finish t =
    that already truncated during generation. Monotone within a run. *)
 let overrun_now (t : t) = t.overrun
 
-let on_span_start t ~stream ~label ~deletable ~discardable =
-  if not (deletable || discardable)
+let on_span_start t ~stream ~label ~deletable ~discardable ~descendable =
+  if not (deletable || discardable || descendable)
   then ()
   else match t.mode with
   | Off -> ()
@@ -254,30 +260,38 @@ let on_span_start t ~stream ~label ~deletable ~discardable =
       ; open_label = label
       ; open_deletable = deletable
       ; open_discardable = discardable
+      ; open_descendable = descendable
       ; open_start = s.wpos
       }
       :: t.open_spans
 
-let on_span_stop t ~stream ~deletable ~discardable ~discarded =
-  if not (deletable || discardable)
+let on_span_stop t ~stream ~deletable ~discardable ~descendable ~discarded =
+  if not (deletable || discardable || descendable)
   then ()
   else match t.mode with
   | Off -> ()
   | Recording | Replaying ->
     (match t.open_spans with
-     | { open_stream; open_label; open_deletable; open_discardable; open_start } :: rest
+     | { open_stream; open_label; open_deletable; open_discardable
+       ; open_descendable; open_start } :: rest
        when compare_key open_stream stream = 0
             && Bool.equal open_deletable deletable
-            && Bool.equal open_discardable discardable ->
+            && Bool.equal open_discardable discardable
+            && Bool.equal open_descendable descendable ->
        let s = get_stream t stream in
        t.open_spans <- rest;
-       if open_deletable || (open_discardable && discarded)
+       let retained_deletable = open_deletable && not discarded in
+       let retained_descendable = open_descendable && not discarded in
+       if retained_deletable
+          || retained_descendable
+          || (open_discardable && discarded)
        then
          t.spans_rev <-
            { stream
            ; label = open_label
-           ; deletable = open_deletable
+           ; deletable = retained_deletable
            ; discarded = open_discardable && discarded
+           ; descendable = retained_descendable
            ; start = open_start
            ; stop = s.wpos
            }

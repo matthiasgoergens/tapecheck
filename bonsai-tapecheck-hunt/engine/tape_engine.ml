@@ -535,7 +535,8 @@ let no_stats () =
    ../tapecheck-hypothesis-baseline/README.md). *)
 let pass_names =
   [| "lower_and_delete"; "delete_spans"; "redistribute_pairs"
-   ; "minimize_choices"; "pre-loop"; "sort_siblings"; "remove_discarded" |]
+   ; "minimize_choices"; "pre-loop"; "sort_siblings"; "remove_discarded"
+   ; "pass_to_descendant" |]
 
 let pass_costs = Array.create ~len:(Array.length pass_names) 0
 let greedy_cost = ref 0
@@ -1049,6 +1050,89 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       List.iter candidates ~f:(fun span ->
         if (not !restart) && budget_ok () then
           match delete_span !best span with
+          | None -> ()
+          | Some proposal ->
+            if attempt proposal then begin
+              improved_any := true;
+              restart := true
+            end)
+    done;
+    !improved_any
+  in
+
+  (* Replace a recursively generated value with one of its own same-labelled
+     descendants.  Generator-owned spans tell us which byte ranges are values
+     of the same recursive family; replay remains the semantic oracle.  Try
+     the largest reductions first and restart after acceptance because every
+     subsequent offset belongs to the newly replayed span tree. *)
+  let pass_to_descendant () =
+    let replace_span_with_descendant
+        (img : Tape.image)
+        ~(ancestor : Tape.span)
+        ~(descendant : Tape.span)
+      =
+      Option.bind (segment_for_key img ancestor.stream) ~f:(fun segment ->
+        let choices = seg_get img segment in
+        if Tape.compare_key ancestor.stream descendant.stream <> 0
+           || ancestor.start < 0
+           || ancestor.start > descendant.start
+           || descendant.stop > ancestor.stop
+           || ancestor.stop > Array.length choices
+           || descendant.stop <= descendant.start
+           || (ancestor.start = descendant.start
+               && ancestor.stop = descendant.stop)
+        then None
+        else
+          Some
+            (seg_set img segment
+               (Array.concat
+                  [ Array.sub choices ~pos:0 ~len:ancestor.start
+                  ; Array.sub choices ~pos:descendant.start
+                      ~len:(descendant.stop - descendant.start)
+                  ; Array.sub choices ~pos:ancestor.stop
+                      ~len:(Array.length choices - ancestor.stop)
+                  ])))
+    in
+    let candidates spans =
+      let pairs = ref [] in
+      Array.iter spans ~f:(fun (ancestor : Tape.span) ->
+        (* Salted generated-function streams rewind their output cursor at
+           every call.  Equal/contained offsets there do not yet prove runtime
+           ancestry, so this first pass is deliberately root-stream only. *)
+        if ancestor.descendable
+           && Tape.compare_key ancestor.stream Tape.root = 0
+        then
+          Array.iter spans ~f:(fun (descendant : Tape.span) ->
+            if descendant.descendable
+               && ancestor.label = descendant.label
+               && Tape.compare_key ancestor.stream descendant.stream = 0
+               && ancestor.start <= descendant.start
+               && descendant.stop <= ancestor.stop
+               && (ancestor.start < descendant.start
+                   || descendant.stop < ancestor.stop)
+            then pairs := (ancestor, descendant) :: !pairs));
+      List.dedup_and_sort !pairs ~compare:(fun (a1, d1) (a2, d2) ->
+        let removed1 = (a1.stop - a1.start) - (d1.stop - d1.start) in
+        let removed2 = (a2.stop - a2.start) - (d2.stop - d2.start) in
+        let c = Int.compare removed2 removed1 in
+        if c <> 0 then c
+        else
+          let c = Tape.compare_key a1.stream a2.stream in
+          if c <> 0 then c
+          else
+            let c = Int.compare a1.start a2.start in
+            if c <> 0 then c
+            else
+              let c = Int.compare d1.start d2.start in
+              if c <> 0 then c else Int.compare d1.stop d2.stop)
+    in
+    let improved_any = ref false in
+    let restart = ref true in
+    while !restart && budget_ok () do
+      restart := false;
+      List.iter (candidates !best_spans) ~f:(fun (ancestor, descendant) ->
+        if (not !restart) && budget_ok () then
+          match replace_span_with_descendant !best ~ancestor ~descendant with
           | None -> ()
           | Some proposal ->
             if attempt proposal then begin
@@ -1820,9 +1904,8 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     !improved_any
   in
 
-  (* Delete one replay-observed structural unit at a time.  This first pass is
-     intentionally narrower than Hypothesis's general [remove_discarded] and
-     [pass_to_descendant] machinery: a candidate must be an explicitly
+  (* Delete one replay-observed structural unit at a time.  This pass is
+     intentionally narrower than general span rewriting: a candidate must be an explicitly
      deletable leaf span whose first choice is [Bool true].  Here "leaf"
      means that it contains no nested *deletable* span in the same tape stream:
      observational child spans belong to the structural unit and are removed
@@ -1905,6 +1988,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a6 = !attempts in
     let improved = remove_discarded () in
     pass_costs.(6) <- pass_costs.(6) + (!attempts - a6);
+    let a7 = !attempts in
+    let improved = pass_to_descendant () || improved in
+    pass_costs.(7) <- pass_costs.(7) + (!attempts - a7);
     let a1 = !attempts in
     let improved = delete_spans () || improved in
     pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);

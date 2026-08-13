@@ -98,9 +98,15 @@ module Intercept : sig
         (** Intercepts weighted choices, including forced choices.  Probability
             controls sampling; [forced] constrains replay without advancing the
             underlying random state. *)
-    ; on_span_start : span_label -> deletable:bool -> discardable:bool -> unit
+    ; on_span_start :
+        span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
     ; on_span_stop :
-        deletable:bool -> discardable:bool -> discarded:bool -> unit -> unit
+        deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> discarded:bool
+        -> unit
+        -> unit
       (** Span callbacks must not raise.  They are notifications rather than
           recovery boundaries; an exception from a callback is propagated and
           may prevent the body from running.  If both the body and stop
@@ -150,10 +156,16 @@ val bool_with_probability : ?forced:bool -> t -> probability:float -> bool
     raise; if they do, their exception is propagated.  If both [f] and the
     stop callback raise, [Exn.Finally] preserves both exceptions.
     [discard_on_exception] asks the observer to retain the region only when
-    [f] raises, for input consumed by an abandoned generation attempt. *)
+    [f] raises, for input consumed by an abandoned generation attempt.
+    [descendable] declares that a same-labelled nested region represents a
+    value which may replace this one during replay. Deletion and descendant
+    replacement capabilities apply only when [f] returns successfully; a
+    region which raises is retained solely as discarded input when
+    [discard_on_exception] is set. *)
 val with_span
   :  ?deletable:bool
   -> ?discard_on_exception:bool
+  -> ?descendable:bool
   -> t
   -> span_label
   -> f:(unit -> 'a)

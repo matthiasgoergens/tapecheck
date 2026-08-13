@@ -23,16 +23,17 @@ let () =
           weighted_calls := (probability, forced) :: !weighted_calls;
           default state ~probability)
     ; on_span_start =
-        (fun label ~deletable ~discardable:_ ->
+        (fun label ~deletable ~discardable:_ ~descendable ->
           events :=
             (match label with
              | Outer -> "start outer"
+             | Inner when descendable -> "start inner descendable"
              | Inner when deletable -> "start inner deletable"
              | Inner -> "start inner"
              | _ -> "start unknown")
             :: !events)
     ; on_span_stop =
-        (fun ~deletable:_ ~discardable:_ ~discarded:_ () ->
+        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~discarded:_ () ->
           events := "stop" :: !events)
     ; on_split = (fun () -> Some hooks)
     ; on_perturb = (fun _ -> Some hooks)
@@ -52,6 +53,11 @@ let () =
        String.equal
        (List.rev !events)
        [ "start outer"; "start inner deletable"; "stop"; "stop" ]);
+  events := [];
+  Sr_real.with_span ~descendable:true attached Inner ~f:(fun () -> ());
+  check "descendable capability reaches the observer"
+    (List.equal String.equal (List.rev !events)
+       [ "start inner descendable"; "stop" ]);
 
   events := [];
   let raised =
@@ -70,7 +76,8 @@ let () =
   let start_failure_hooks =
     { hooks with
       on_span_start =
-        (fun _ ~deletable:_ ~discardable:_ -> raise Start_callback_failure)
+        (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ->
+          raise Start_callback_failure)
     }
   in
   let start_failure_state = Sr_real.with_intercept bare start_failure_hooks in
@@ -85,7 +92,7 @@ let () =
   let stop_failure_hooks =
     { hooks with
       on_span_stop =
-        (fun ~deletable:_ ~discardable:_ ~discarded:_ () ->
+        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~discarded:_ () ->
           raise Stop_callback_failure)
     }
   in

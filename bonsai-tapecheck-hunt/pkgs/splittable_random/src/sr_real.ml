@@ -74,8 +74,10 @@ and intercept =
       -> forced:bool option
       -> default:(t -> probability:float -> bool)
       -> bool
-  ; on_span_start : span_label -> deletable:bool -> discardable:bool -> unit
-  ; on_span_stop : deletable:bool -> discardable:bool -> discarded:bool -> unit -> unit
+  ; on_span_start :
+      span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
+  ; on_span_stop :
+      deletable:bool -> discardable:bool -> descendable:bool -> discarded:bool -> unit -> unit
   ; on_split : unit -> intercept option
   ; on_perturb : int -> intercept option
   }
@@ -296,11 +298,18 @@ let bool_with_probability ?forced state ~probability =
   | Some i -> i.bool_with_probability state ~probability ~forced ~default:sample
 ;;
 
-let with_span ?(deletable = false) ?(discard_on_exception = false) state label ~f =
+let with_span
+  ?(deletable = false)
+  ?(discard_on_exception = false)
+  ?(descendable = false)
+  state
+  label
+  ~f
+  =
   match state.intercept with
   | None -> f ()
   | Some i ->
-    i.on_span_start label ~deletable ~discardable:discard_on_exception;
+    i.on_span_start label ~deletable ~discardable:discard_on_exception ~descendable;
     let discarded = ref true in
     Exn.protect
       ~f:(fun () ->
@@ -308,7 +317,7 @@ let with_span ?(deletable = false) ?(discard_on_exception = false) state label ~
         discarded := false;
         result)
       ~finally:(fun () ->
-        i.on_span_stop ~deletable ~discardable:discard_on_exception
+        i.on_span_stop ~deletable ~discardable:discard_on_exception ~descendable
           ~discarded:!discarded ())
 ;;
 
@@ -460,9 +469,15 @@ module Intercept = struct
         -> forced:bool option
         -> default:(state -> probability:float -> bool)
         -> bool
-    ; on_span_start : span_label -> deletable:bool -> discardable:bool -> unit
+    ; on_span_start :
+        span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
     ; on_span_stop :
-        deletable:bool -> discardable:bool -> discarded:bool -> unit -> unit
+        deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> discarded:bool
+        -> unit
+        -> unit
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }

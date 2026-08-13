@@ -4,6 +4,7 @@ type Splittable_random.span_label +=
   | List_element
   | Structural_list_element
   | Recursive_attempt
+  | Recursive_layer
 
 module T : sig
   type +'a t
@@ -235,16 +236,22 @@ let recursive_with_max_leaves
         Int.decr remaining;
         generate base ~size ~random)
     in
-    let strategies = ref [ limited_base; f limited_base ] in
+    let layer generator =
+      create (fun ~size ~random ->
+        Splittable_random.with_span ~descendable:true random Recursive_layer
+          ~f:(fun () -> generate generator ~size ~random))
+    in
+    let select strategies = layer (union strategies) in
+    let strategies = ref [ limited_base; f (select [ limited_base ]) ] in
     let capacity = ref 2 in
     let keep_growing = ref true in
     while !keep_growing && !capacity <= max_leaves do
-      strategies := !strategies @ [ f (union !strategies) ];
+      strategies := !strategies @ [ f (select !strategies) ];
       if !capacity > max_leaves / 2
       then keep_growing := false
       else capacity := !capacity * 2
     done;
-    let strategy = union !strategies in
+    let strategy = select !strategies in
     let rec attempt attempts =
       if attempts >= max_attempts
       then

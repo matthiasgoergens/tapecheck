@@ -1,19 +1,20 @@
 diff --git a/src/generator.ml b/src/generator.ml
-index 75c8492..f0e81ed 100644
+index 75c8492..cb3ff62 100644
 --- a/src/generator.ml
 +++ b/src/generator.ml
-@@ -1,5 +1,10 @@
+@@ -1,5 +1,11 @@
  open! Base
  
 +type Splittable_random.span_label +=
 +  | List_element
 +  | Structural_list_element
 +  | Recursive_attempt
++  | Recursive_layer
 +
  module T : sig
    type +'a t
  
-@@ -193,6 +198,75 @@ let recursive_union nonrec_list ~f =
+@@ -193,6 +199,81 @@ let recursive_union nonrec_list ~f =
    weighted_recursive_union (weighted nonrec_list) ~f:(fun self -> weighted (f self))
  ;;
  
@@ -54,16 +55,22 @@ index 75c8492..f0e81ed 100644
 +        Int.decr remaining;
 +        generate base ~size ~random)
 +    in
-+    let strategies = ref [ limited_base; f limited_base ] in
++    let layer generator =
++      create (fun ~size ~random ->
++        Splittable_random.with_span ~descendable:true random Recursive_layer
++          ~f:(fun () -> generate generator ~size ~random))
++    in
++    let select strategies = layer (union strategies) in
++    let strategies = ref [ limited_base; f (select [ limited_base ]) ] in
 +    let capacity = ref 2 in
 +    let keep_growing = ref true in
 +    while !keep_growing && !capacity <= max_leaves do
-+      strategies := !strategies @ [ f (union !strategies) ];
++      strategies := !strategies @ [ f (select !strategies) ];
 +      if !capacity > max_leaves / 2
 +      then keep_growing := false
 +      else capacity := !capacity * 2
 +    done;
-+    let strategy = union !strategies in
++    let strategy = select !strategies in
 +    let rec attempt attempts =
 +      if attempts >= max_attempts
 +      then
@@ -89,7 +96,7 @@ index 75c8492..f0e81ed 100644
  let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
    create (fun ~size ~random ->
      assert (min_length <= max_length);
-@@ -239,7 +313,11 @@ let result ok_t err_t =
+@@ -239,7 +320,11 @@ let result ok_t err_t =
  
  let list_generic ?min_length ?max_length elt_gen =
    let%bind sizes = sizes ?min_length ?max_length () in
@@ -102,7 +109,7 @@ index 75c8492..f0e81ed 100644
  ;;
  
  let list elt_gen = list_generic elt_gen
-@@ -249,6 +327,99 @@ let list_with_length elt_gen ~length =
+@@ -249,6 +334,99 @@ let list_with_length elt_gen ~length =
    list_generic ~min_length:length ~max_length:length elt_gen
  ;;
  
@@ -202,7 +209,7 @@ index 75c8492..f0e81ed 100644
  let list_filtered elts =
    let elts = Array.of_list elts in
    let length_of_input = Array.length elts in
-@@ -743,7 +914,13 @@ let sexp = sexp_of string
+@@ -743,7 +921,13 @@ let sexp = sexp_of string
  
  let map_tree_using_comparator ~comparator key_gen data_gen =
    let%bind keys = list key_gen in
