@@ -444,3 +444,9 @@ module Debug : sig
       record the set of values that do not satisfy some filter. *)
   val monitor : 'a t -> f:('a -> unit) -> 'a t
 end
+
+
+(** Wrap [t] so the recorder retains a reorderable span around its
+    draws. Combine with itself on a parent and on each child to make
+    the children reorderable as a group. *)
+val with_reorderable_span : 'a t -> 'a t
