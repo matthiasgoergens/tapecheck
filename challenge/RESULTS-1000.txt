@@ -1,0 +1,81 @@
+warning: `--isolated` is a no-op for Python scripts with inline metadata, which always run in isolation
+# The Shrinking Challenge, Hypothesis 6.164.0
+
+1000 runs per challenge.
+
+## reverse
+
+  expected      [0, 1]
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   11..57 during shrinking, mean 17.73
+      1000 x  [0, 1]   <- expected
+
+## large_union_list
+
+  expected      [[0, 1, -1, 2, -2]]
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   128..276 during shrinking, mean 211.29
+      1000 x  [[0, 1, -1, 2, -2]]   <- expected
+
+## lengthlist
+
+  expected      [900]
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   29..149 during shrinking, mean 87.92
+      1000 x  [900]   <- expected
+
+## distinct
+
+  expected      [0, 1, -1]
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   29..114 during shrinking, mean 49.05
+      1000 x  [0, 1, -1]   <- expected
+
+## difference_must_not_be_zero
+
+  expected      10, 10
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   32..48 during shrinking, mean 40.50
+      1000 x  10, 10   <- expected
+
+## difference_must_not_be_small
+
+  expected      10, 6
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   42..1062 during shrinking, mean 721.59
+      1000 x  10, 6   <- expected
+
+## difference_must_not_be_one
+
+  expected      10, 9
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   38..1058 during shrinking, mean 885.19
+      1000 x  10, 9   <- expected
+
+## bound5
+
+  expected      ([], [], [], [-1], [-32768])
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   39..462 during shrinking, mean 154.79
+      1000 x  ([], [], [], [-1], [-32768])   <- expected
+
+## calculator
+
+  expected      ('/', 0, ('+', 0, 0))
+  normalised    1000/1000 runs = 100.0% [95% CI 99.6-100.0] (1 distinct)
+  evaluations   19..262 during shrinking, mean 103.27
+      1000 x  ('/', 0, ('+', 0, 0))   <- expected
+
+## Summary
+
+| challenge | normalised | 95% CI | mean evaluations |
+|---|---|---|---|
+| reverse | 1000/1000 | 99.6-100.0 | 17.7 |
+| large_union_list | 1000/1000 | 99.6-100.0 | 211.3 |
+| lengthlist | 1000/1000 | 99.6-100.0 | 87.9 |
+| distinct | 1000/1000 | 99.6-100.0 | 49.1 |
+| difference_must_not_be_zero | 1000/1000 | 99.6-100.0 | 40.5 |
+| difference_must_not_be_small | 1000/1000 | 99.6-100.0 | 721.6 |
+| difference_must_not_be_one | 1000/1000 | 99.6-100.0 | 885.2 |
+| bound5 | 1000/1000 | 99.6-100.0 | 154.8 |
+| calculator | 1000/1000 | 99.6-100.0 | 103.3 |
