@@ -115,10 +115,16 @@ Distribution, 400 000 draws of `Generator.int` each
 | other | 88.570% | 88.534% |
 | negative | 50.023% | 50.051% |
 
-Magnitude bit-length histogram over 63 buckets: chi-square 36.5 on 63
-degrees of freedom. Statistically indistinguishable, as intended — the
-selector is independent of the value, so the change is a pure
-reassociation.
+Magnitude bit-length histogram over 63 buckets: chi-square 36.5. That
+figure is not a valid two-sample test — both arms were drawn from the
+same seed stream, so the arms are correlated and the statistic reads
+far below its null expectation — but the exact selector-grid count
+(`selector-grid-count.py`, committed with the PR) supersedes sampling.
+Over the 2^53 selector values, stock and proposed hit lo / general /
+hi in exactly 450359962737050 / 8106479329266892 / 450359962737050
+each — identical to the value. Distribution preservation is by
+construction: the selector is independent of the value, so the change
+is a pure reassociation.
 
 Shrink quality, Shrinking Challenge, 100 runs each:
 
