@@ -153,8 +153,10 @@ through a two-choice tape and `1` through a four-choice tape. Shortlex
 is length-first, so `max_int` ranks below `1` and the shrinker
 converges, correctly by its own order, onto answers full of
 `4611686018427387903`. Diagnosis and a distribution-preserving fix in
-`proposals/BASE-QUICKCHECK-ENCODING.md`: `reverse` 0/100 → 50/100,
-`distinct` 0/100 → 12/100, and cost *down* on all three.
+`proposals/BASE-QUICKCHECK-ENCODING.md`. The 100-run pilot measured
+`reverse` 0/100 → 50/100 and `distinct` 0/100 → 12/100 with cost down
+on all three; the 1000-run table above gives the current figures,
+`reverse` 452/1000 and `distinct` 116/1000.
 
 **calculator and bound5 are the span gap, in a third and fourth dress.**
 calculator's misses are long inert chains — `('+', ('+', ('+', 0, 0),
