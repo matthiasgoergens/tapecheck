@@ -2334,7 +2334,14 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        duplicate lowering opens a local minimum the other passes cannot
        escape. Needs its own investigation before it can be default-on;
        see WAVE2-REORDER-AND-DUPLICATES.md. *)
-    let minimize_duplicated_choices_enabled = false in
+    (* Opt-in for tests: the pass stays off by default until its
+       poisoned-containers trap is understood, but the tests that pin
+       its bisection set TAPECHECK_MINIMIZE_DUPLICATES=1. *)
+    let minimize_duplicated_choices_enabled =
+      match Stdlib.Sys.getenv_opt "TAPECHECK_MINIMIZE_DUPLICATES" with
+      | Some "1" -> true
+      | _ -> false
+    in
     let improved =
       if minimize_duplicated_choices_enabled then begin
         let a9 = !attempts in

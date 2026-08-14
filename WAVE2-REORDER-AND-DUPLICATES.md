@@ -171,6 +171,24 @@ challenge's expected permutation needs the value-aware key, which is
 the next measured step. The poisoned-trees guard stays 12/34 and 34/34,
 with the stock floor now two-sided and kill-tested.
 
+## The duplicate pass's trap, recorded
+
+The whole-tape duplicate pass ships hard-disabled because on the
+poisoned-containers guard (`test_poison_lists`) it traps the shrinker
+at list lengths 2-3 where the exact minimum is length 1 — settled, not
+budget-truncated — dropping the guard from 21/48 to 17/48 and failing
+its floor (log: `tapecheck-notes/logs/runtest-passes6-2026-08-13.log`).
+A reader who flips `minimize_duplicated_choices_enabled` gets a red
+build with that legible message. The trap mechanism is not yet
+understood; the pass's bisection is pinned by review but has no live
+test yet, and the trap investigation is the prerequisite for enabling
+it. `TAPECHECK_MINIMIZE_DUPLICATES=1` opts in for experiments.
+
+The measurement protocol's promised in-harness negative control
+(same-seed pre-shrink image assertion) was not implemented; the
+byte-identical non-bound5 columns across the two 1000-run artefacts are
+the de facto control instead.
+
 ## Revisions after the design reviews
 
 - **Grouping rule** (codex): children share a chosen *child* label,
