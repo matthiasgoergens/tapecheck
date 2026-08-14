@@ -172,21 +172,35 @@ challenge's expected permutation needs the value-aware key, which is
 the next measured step. The poisoned-trees guard stays 12/34 and 34/34,
 with the stock floor now two-sided and kill-tested.
 
-## Why the duplicate pass rarely sees its groups
+## The poisoned-containers trap, measured
 
-Investigated while writing its regression test: a whole-tape duplicate
-group of three `Integer(-100)`s never reaches the pass. The deletion
-passes remove the value-carrying choices first, and the fixed-seed
-replay (`replay_fresh_seed`) resamples the erased cells with the
-boundary-biased generator, which reproduces `-100` — so the deletion is
-accepted and the equality "solved" without any duplicate-group move.
-The reported minimal then lives partly in fresh draws: self-consistent
-and reproducible (the same fixed seed), but the duplicate pass has
-nothing to act on. This, not a bisection bug, is plausibly the class
-behind the poisoned-containers trap too — the deletion+resample
-semantics already do the duplicate pass's job. A live regression test
-for the pass therefore needs a property where deletion cannot
-reproduce the failure, and is left as part of the trap investigation.
+Traced on the discriminating seed `1284235381287210546` (Matrices,
+size 10, p=1/100; pass-off settles at len 2, pass-on at len 4). The
+pass's three accepted proposals are all STRUCTURAL draws being zeroed
+together: seven duplicated `Integer(1)`s to 0, nine `Integer(2)`s to
+0, six `Integer(3)`s to 0 — the matrix and list dimension draws, which
+no single-cell pass can move simultaneously. The coordinated
+dimension-zeroing lands the shrinker in a dimension state from which
+the element-deletion passes can no longer reach the `[Poison]`-only
+minimum. So the trap is not wasted attempts but ACCEPTED structural
+moves: whole-tape grouping cannot distinguish dimension draws from
+payload values. Candidate fixes for the next round, in increasing
+order of invasiveness: exclude groups whose replay changes the tape
+length (structural choices re-record a different-size image); gate the
+pass to choices inside a marked span after all; or group only payload
+kinds (exclude the choices that size generators draw).
+
+Separately observed while writing the regression test: for an
+all-equal-value property, a duplicate group of three `Integer(-100)`s
+never reaches the pass at all — the deletion passes erase the
+value-carrying choices first and the fixed-seed replay resamples them
+with the boundary-biased generator, reproducing `-100`, so the deletion
+is accepted and the equality "solved" without any duplicate move. The
+reported minimal then lives partly in fresh draws: self-consistent and
+reproducible (the same fixed seed), but the pass has nothing to act
+on. That is a second, independent reason the whole-tape pass
+under-delivers, and the reason its live regression test needs a
+deletion-proof property.
 
 `test_reorder/` now pins the reorder chain end to end: two reorderable
 sibling slots inside a reorderable parent, every seed must canonicalise
