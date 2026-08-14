@@ -172,6 +172,27 @@ challenge's expected permutation needs the value-aware key, which is
 the next measured step. The poisoned-trees guard stays 12/34 and 34/34,
 with the stock floor now two-sided and kill-tested.
 
+## Why the duplicate pass rarely sees its groups
+
+Investigated while writing its regression test: a whole-tape duplicate
+group of three `Integer(-100)`s never reaches the pass. The deletion
+passes remove the value-carrying choices first, and the fixed-seed
+replay (`replay_fresh_seed`) resamples the erased cells with the
+boundary-biased generator, which reproduces `-100` — so the deletion is
+accepted and the equality "solved" without any duplicate-group move.
+The reported minimal then lives partly in fresh draws: self-consistent
+and reproducible (the same fixed seed), but the duplicate pass has
+nothing to act on. This, not a bisection bug, is plausibly the class
+behind the poisoned-containers trap too — the deletion+resample
+semantics already do the duplicate pass's job. A live regression test
+for the pass therefore needs a property where deletion cannot
+reproduce the failure, and is left as part of the trap investigation.
+
+`test_reorder/` now pins the reorder chain end to end: two reorderable
+sibling slots inside a reorderable parent, every seed must canonicalise
+to `(0, 20)` (the tape-shortlex minimal — 20 is the two-entry boundary
+recording), and the test was kill-tested in the pass-off direction.
+
 ## The duplicate pass's trap, recorded
 
 The whole-tape duplicate pass ships hard-disabled because on the
