@@ -1197,6 +1197,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                  sp.Tape.reorderable
                  && not sp.Tape.discarded
                  && sp.Tape.depth = parent.Tape.depth + 1
+                 && Tape.compare_key sp.Tape.stream parent.Tape.stream = 0
                  && sp.Tape.start >= parent.Tape.start
                  && sp.Tape.stop <= parent.Tape.stop
                  && sp.Tape.stop > sp.Tape.start)
@@ -1370,19 +1371,24 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                     end
                     else begin
                       Int.incr failures;
-                      (* [lo] passes (the endpoint, just rejected) and
-                         [hi] fails (the current best); a rejected mid
-                         moves [lo] up. An accepted candidate restarts
-                         the pass rather than continuing, since the
-                         replay may have shifted downstream positions. *)
-                      let rec bisect lo hi =
+                      (* [lo]/[hi] bracket the search numerically;
+                         [target] (the endpoint, just rejected) sits on
+                         one side and [value] (the current best, still
+                         failing) on the other. A rejected mid moves the
+                         side holding [target] toward the failing side;
+                         an accepted candidate restarts the pass rather
+                         than continuing, since the replay may have
+                         shifted downstream positions. *)
+                      let lo = ref (Int64.min target value) in
+                      let hi = ref (Int64.max target value) in
+                      let rec bisect () =
                         if
                           (not !restart)
                           && budget_ok ()
                           && live ()
-                          && Int64.(hi - lo > 1L)
+                          && Int64.(!hi - !lo > 1L)
                         then begin
-                          let mid = Int64.(lo + ((hi - lo) / 2L)) in
+                          let mid = Int64.(!lo + ((!hi - !lo) / 2L)) in
                           if try_all mid then begin
                             improved_any := true;
                             failures := 0;
@@ -1390,12 +1396,13 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                           end
                           else begin
                             Int.incr failures;
-                            bisect mid hi
+                            if Int64.( < ) target value then lo := mid
+                            else hi := mid;
+                            bisect ()
                           end
                         end
                       in
-                      if Int64.( > ) value target then bisect target value
-                      else bisect value target
+                      bisect ()
                     end
                   end
                 | Tape.Float { value; lo; hi } ->
@@ -1431,14 +1438,14 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                       end
                       else begin
                         if Float.( <> ) rounded value then Int.incr failures;
-                        (* [low] passes, [high] fails; a rejected mid
-                           moves the passing bound toward the failing
-                           one. *)
-                        let low = ref target and high = ref value in
-                        if Float.(value < target) then begin
-                          low := value;
-                          high := target
-                        end;
+                        (* [lo]/[hi] bracket the search numerically;
+                           [target] (the endpoint, just rejected) sits
+                           on one side and [value] (the current best,
+                           still failing) on the other. A rejected mid
+                           moves the side holding [target] toward the
+                           failing side. *)
+                        let lo = ref (Float.min target value) in
+                        let hi = ref (Float.max target value) in
                         let steps = ref 0 in
                         while
                           (not !restart)
@@ -1447,7 +1454,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                           && live ()
                         do
                           Int.incr steps;
-                          let mid = Float.(( !low + !high ) / 2.) in
+                          let mid = Float.(( !lo + !hi ) / 2.) in
                           if try_value mid then begin
                             improved_any := true;
                             failures := 0;
@@ -1455,7 +1462,8 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                           end
                           else begin
                             Int.incr failures;
-                            low := mid
+                            if Float.( < ) target value then lo := mid
+                            else hi := mid
                           end
                         done
                       end
