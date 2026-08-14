@@ -65,10 +65,11 @@ stay for the stock columns.
    After every accepted proposal, abandon all cached groups, arrays
    and indices and rebuild from the fresh replay; the engine already
    replaces `s_best_spans` on acceptance. Candidates are enumerated
-   deterministically (by position, never by hash order) before any
-   failure cutoff applies. Proposals already present in the global
-   seen table are skipped, since replay can accept an output different
-   from the submitted proposal.
+   deterministically (children by position, labels in ascending label
+   order, never by hash order) before any failure cutoff applies.
+   Proposals already present in the global seen table are skipped,
+   since replay can accept an output different from the submitted
+   proposal.
 
 5. **Scope restriction.** Main stream only, and only groups whose
    slices contain no `Marker` choices: `Generator.fn` splits a keyed
@@ -78,7 +79,7 @@ stay for the stock columns.
 
 6. **Sort key — an honest caveat.** Shortlex is the faithful port, but
    tapecheck's `non_uniform` encoding contaminates it: `-32768` has a
-   two-entry recording and sorts ahead of `-1`'s four entries, while
+   two-entry recording and sorts ahead of `-1`'s three entries, while
    `bound5`'s expected permutation wants `-1` first. So the sorted
    arrangement is canonical but can be the *wrong* canonical
    permutation for `bound5`; the same pathology the +patch column
@@ -164,7 +165,7 @@ decimals — the pass is inert where nothing opts in, which is the point
 of the capability gate.
 
 The canonical arrangement is `([], [], [], [-32768], [-1])`: shortlex
-ranks the two-entry `-32768` recording ahead of `-1`'s four entries,
+ranks the two-entry `-32768` recording ahead of `-1`'s three entries,
 the predeclared sort-key caveat, and the same order the `+patch` column
 already prefers. Normalisation consistency is delivered; the
 challenge's expected permutation needs the value-aware key, which is

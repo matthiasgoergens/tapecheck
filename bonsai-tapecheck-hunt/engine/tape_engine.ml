@@ -1207,7 +1207,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
              let by_label = Hashtbl.create (module Int) in
              List.iter children ~f:(fun sp ->
                Hashtbl.add_multi by_label ~key:sp.Tape.label ~data:sp);
-             (* Visit labels in position order of their first child so
+             (* Visit labels in ascending label order so
                 the pass is deterministic before any cutoff applies. *)
              let labels =
                List.dedup_and_sort ~compare:Int.compare
@@ -1239,7 +1239,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                         for bound5 (-1 before -32768), but the whole-image
                         acceptance gate rejects the result, because a
                         permutation preserves total length and the first
-                        differing choice ranks -1's four-entry slice
+                        differing choice ranks -1's three-entry slice
                         ABOVE -32768's two-entry one. Custom acceptance
                         for permutation proposals, or fixing the
                         non_uniform encoding, are the known next steps;
@@ -1454,7 +1454,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                           && live ()
                         do
                           Int.incr steps;
-                          let mid = Float.(( !lo + !hi ) / 2.) in
+                          let mid = Float.(!lo + ((!hi - !lo) / 2.)) in
                           if try_value mid then begin
                             improved_any := true;
                             failures := 0;
