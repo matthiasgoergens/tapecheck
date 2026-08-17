@@ -172,58 +172,86 @@ challenge's expected permutation needs the value-aware key, which is
 the next measured step. The poisoned-trees guard stays 12/34 and 34/34,
 with the stock floor now two-sided and kill-tested.
 
-## The poisoned-containers trap, measured
+## The poisoned-containers trap: measured, diagnosed, fixed
 
-Traced on the discriminating seed `1284235381287210546` (Matrices,
-size 10, p=1/100; pass-off settles at len 2, pass-on at len 4). The
-pass's three accepted proposals are all STRUCTURAL draws being zeroed
-together: seven duplicated `Integer(1)`s to 0, nine `Integer(2)`s to
-0, six `Integer(3)`s to 0 — the matrix and list dimension draws, which
-no single-cell pass can move simultaneously. The coordinated
-dimension-zeroing lands the shrinker in a dimension state from which
-the element-deletion passes can no longer reach the `[Poison]`-only
-minimum. So the trap is not wasted attempts but ACCEPTED structural
-moves: whole-tape grouping cannot distinguish dimension draws from
-payload values. Candidate fixes for the next round, in increasing
-order of invasiveness: exclude groups whose replay changes the tape
-length (structural choices re-record a different-size image); gate the
-pass to choices inside a marked span after all; or group only payload
-kinds (exclude the choices that size generators draw).
+**The trap was pass ORDERING.** An earlier note in this file blamed the
+pass for zeroing duplicated *structural* draws (matrix and list
+dimensions). That was wrong, and the measurement that refuted it is
+recorded here so the mistake is not repeated: tracing the accepted
+proposals on the discriminating seed (Matrices size 10, p=1/100,
+seed 1284235381287210546) shows all three accepted moves preserving the
+image length exactly — `size 80 -> 80` — at positions spread through
+the payload (`4,18,22,24,28,32,36`). Seven duplicated `1`s cannot be
+matrix dimensions; these are element draws. A structural gate built on
+the dimension hypothesis (skip any group whose target proposal changes
+the replayed image length) was implemented, measured completely inert,
+and removed.
 
-Separately observed while writing the regression test: for an
-all-equal-value property, a duplicate group of three `Integer(-100)`s
-never reaches the pass at all — the deletion passes erase the
-value-carrying choices first and the fixed-seed replay resamples them
-with the boundary-biased generator, reproducing `-100`, so the deletion
-is accepted and the equality "solved" without any duplicate move. The
-reported minimal then lives partly in fresh draws: self-consistent and
-reproducible (the same fixed seed), but the pass has nothing to act
-on. That is a second, independent reason the whole-tape pass
-under-delivers, and the reason its live regression test needs a
-deletion-proof property.
+The pass ran EARLY in the sweep, before `lower_and_delete`.
+Pre-zeroing duplicated payload values removes the raw material that
+pass needs for its combined lower-then-delete move — the length-repair
+move that length-prefixed data depends on. Moving
+`minimize_duplicated_choices` to run after the deletion and lowering
+passes resolves it:
 
-`test_reorder/` now pins the reorder chain end to end: two reorderable
-sibling slots inside a reorderable parent, every seed must canonicalise
-to `(0, 20)` (the tape-shortlex minimal — 20 is the two-entry boundary
-recording), and the test was kill-tested in the pass-off direction.
+| poisoned containers | exact minima |
+|---|---:|
+| pass off (baseline) | 21/48 |
+| pass on, early placement | 17/48 |
+| pass on, late placement | **21/48**, per-case identical to baseline |
 
-## The duplicate pass's trap, recorded
+## What the pass earns in its late slot
 
-The whole-tape duplicate pass ships hard-disabled because on the
-poisoned-containers guard (`test_poison_lists`) it traps the shrinker
-at list lengths 2-3 where the exact minimum is length 1 — settled, not
-budget-truncated — dropping the guard from 21/48 to 17/48 and failing
-its floor (log: `tapecheck-notes/logs/runtest-passes6-2026-08-13.log`).
-A reader who flips `minimize_duplicated_choices_enabled` gets a red
-build with that legible message. The trap mechanism is not yet
-understood; the pass's bisection is pinned by review but has no live
-test yet, and the trap investigation is the prerequisite for enabling
-it. `TAPECHECK_MINIMIZE_DUPLICATES=1` opts in for experiments.
+Same-seed challenge columns at n=1000 (raw:
+`tapecheck-notes/challenge-1000-duplate-20260814.txt` against the
+pass-off column `challenge-1000-reorder-20260813.txt`):
 
-The measurement protocol's promised in-harness negative control
-(same-seed pre-shrink image assertion) was not implemented; the
-byte-identical non-bound5 columns across the two 1000-run artefacts are
-the de facto control instead.
+| challenge | pass off | pass on, late |
+|---|---:|---:|
+| difference_must_not_be_zero | 98.0 | **85.5** |
+| large_union_list | 1338.8 | 1344.8 |
+| nestedlists | 640.9 | 645.5 |
+| bound5 | 284.8 | 285.0 |
+| binheap | 1175.6 | 1175.4 |
+
+Cells are mean shrink evaluations. **Every quality column is identical**
+— normalisation, exact counts and at-or-below-optimal-size all
+unchanged on all thirteen challenges. The one material move is a 12.8%
+cost reduction on `difference_must_not_be_zero`, whose failing inputs
+are literally a duplicated pair, which is the case the pass exists for.
+The increases elsewhere are under 1%.
+
+The full forced suite is green in BOTH arms, including the
+poisoned-containers and poisoned-trees guards, which it was not with
+the early placement.
+
+**The default is deliberately not flipped.** Following the
+`sort_siblings` precedent in `engine/tape_engine.ml` — a shipping
+default is not a call to make silently — the pass stays behind
+`TAPECHECK_MINIMIZE_DUPLICATES=1` with the evidence above. The
+recommendation is to enable it: no measured quality regression, one
+real cost win, guards green.
+
+## Remaining gap: the pass has no live regression test
+
+A test that pins the pass needs a property where deletion cannot
+reproduce the failure. The obvious candidate — three integers that must
+be equal — does not work: the deletion passes erase the value-carrying
+choices and the fixed-seed replay (`replay_fresh_seed`) resamples them
+with the boundary-biased generator, reproducing the equal values, so
+the deletion is accepted and the equality "solved" without any
+duplicate move. The reported minimal then lives partly in fresh draws:
+self-consistent and reproducible, but the pass never sees the group.
+`difference_must_not_be_zero` is the workload where the pass demonstrably
+pays, so a guard row there (mean evaluations, two-sided) is the cheapest
+real pin and is the next step.
+
+## Note on the measurement protocol
+
+The protocol's promised in-harness negative control (same-seed
+pre-shrink image assertion) was not implemented; the byte-identical
+non-bound5 columns across the 1000-run artefacts are the de facto
+control instead.
 
 ## Revisions after the design reviews
 
@@ -239,6 +267,10 @@ the de facto control instead.
   withdraw the convergence claim.
 - **`duplicable` dropped** (DeepSeek): whole-tape grouping gated by
   equal `(kind, value, lo, hi)` instead of a third capability bit.
+- **The trap, and the correction** (measured 2026-08-14): the early
+  placement's poisoned-containers regression was pass ORDERING, not
+  structural-draw zeroing as an earlier revision of this file claimed.
+  See the trap section above for the refuting measurement.
 - **Measurement protocol** (both): `deletion` positive control added;
   same-seed columns replace paired-interval claims; poison floor
   becomes two-sided; negative control added; staged pilot first.

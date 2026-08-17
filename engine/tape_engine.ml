@@ -1356,12 +1356,18 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                (match arr.(i0) with
                 | Tape.Integer { value; lo; hi } ->
                   let target = clamp64 0L ~lo ~hi in
+                  let int_image v =
+                    seg_set !best s
+                      (proposal
+                         ~mutate:(fun c ->
+                           match c with
+                           | Tape.Integer { lo; hi; _ } ->
+                             Tape.Integer { value = v; lo; hi }
+                           | c -> c)
+                         (seg_get !best s))
+                  in
                   if not (Int64.equal value target) then begin
-                    let try_all v =
-                      attempt
-                        (seg_set !best s
-                           (proposal ~mutate:(fun c -> match c with | Tape.Integer { lo; hi; _ } -> Tape.Integer { value = v; lo; hi } | c -> c) (seg_get !best s)))
-                    in
+                    let try_all v = attempt (int_image v) in
                     (* Try the endpoint first, mirroring [minimize_float]:
                        bisection alone stops one step short of it. *)
                     if try_all target then begin
@@ -1407,18 +1413,18 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                   end
                 | Tape.Float { value; lo; hi } ->
                   let target = clampf 0. ~lo ~hi in
+                  let float_image v =
+                    seg_set !best s
+                      (proposal
+                         ~mutate:(fun c ->
+                           match c with
+                           | Tape.Float { lo; hi; _ } ->
+                             Tape.Float { value = v; lo; hi }
+                           | c -> c)
+                         (seg_get !best s))
+                  in
                   if Float.( <> ) value target then begin
-                    let try_value v =
-                      attempt
-                        (seg_set !best s
-                           (proposal
-                              ~mutate:(fun c ->
-                                match c with
-                                | Tape.Float { lo; hi; _ } ->
-                                  Tape.Float { value = v; lo; hi }
-                                | c -> c)
-                              (seg_get !best s)))
-                    in
+                    let try_value v = attempt (float_image v) in
                     if try_value target then begin
                       improved_any := true;
                       failures := 0;
@@ -2328,15 +2334,24 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a8 = !attempts in
     let improved = reorder_spans () || improved in
     pass_costs.(8) <- pass_costs.(8) + (!attempts - a8);
-    (* OFF by default: on the poisoned-containers guard the whole-tape
-       duplicate pass traps the shrinker at list length 2-3 where the
-       exact minimum is length 1 (settled, not budget-truncated) — the
-       duplicate lowering opens a local minimum the other passes cannot
-       escape. Needs its own investigation before it can be default-on;
-       see WAVE2-REORDER-AND-DUPLICATES.md. *)
-    (* Opt-in for tests: the pass stays off by default until its
-       poisoned-containers trap is understood, but the tests that pin
-       its bisection set TAPECHECK_MINIMIZE_DUPLICATES=1. *)
+    let a1 = !attempts in
+    let improved = delete_spans () || improved in
+    pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
+    let a0 = !attempts in
+    let improved = lower_and_delete () || improved in
+    pass_costs.(0) <- pass_costs.(0) + (!attempts - a0);
+    let a2 = !attempts in
+    let improved = redistribute_pairs () || improved in
+    pass_costs.(2) <- pass_costs.(2) + (!attempts - a2);
+    let a3 = !attempts in
+    let improved = minimize_choices () || improved in
+    pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
+    (* Placed LATE in the sweep, after the deletion and lowering passes.
+       Run early it pre-zeroes duplicated payload values, which removes
+       the raw material [lower_and_delete] needs for its combined
+       lower-then-delete move -- the measured poisoned-containers trap.
+       Opt-in via TAPECHECK_MINIMIZE_DUPLICATES=1 while that is being
+       settled; see WAVE2-REORDER-AND-DUPLICATES.md. *)
     let minimize_duplicated_choices_enabled =
       match Stdlib.Sys.getenv_opt "TAPECHECK_MINIMIZE_DUPLICATES" with
       | Some "1" -> true
@@ -2351,18 +2366,6 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
       end
       else improved
     in
-    let a1 = !attempts in
-    let improved = delete_spans () || improved in
-    pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
-    let a0 = !attempts in
-    let improved = lower_and_delete () || improved in
-    pass_costs.(0) <- pass_costs.(0) + (!attempts - a0);
-    let a2 = !attempts in
-    let improved = redistribute_pairs () || improved in
-    pass_costs.(2) <- pass_costs.(2) + (!attempts - a2);
-    let a3 = !attempts in
-    let improved = minimize_choices () || improved in
-    pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
     let improved = lower_together () || improved in
     (* OFF by default. See SORT-SIBLINGS.md.
 
