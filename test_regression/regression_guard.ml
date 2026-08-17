@@ -279,6 +279,47 @@ let () =
        ~test:(fun (m, n) -> abs (m - n) <> 1)
        ~is_minimal:(fun (m, n) -> (m = 0 && n = 1) || (m = 1 && n = 0)) ());
 
+  (* Guards [minimize_duplicated_choices] -- the pass that lowers a
+     whole group of equal-valued choices at once. This property is the
+     Shrinking Challenge's difference_must_not_be_zero: the failing
+     inputs are literally a duplicated pair, which is the shape the
+     pass exists for, and it is the workload where the pass measurably
+     pays (n=1000 challenge column, 98.0 -> 85.5 mean evaluations when
+     the pass was enabled on 2026-08-14).
+
+     The COST ceiling is the assertion that bites: deleting the pass,
+     or moving it back before the deletion and lowering passes, sends
+     this row's cost back up. The placement matters as much as the
+     pass -- run early it costs the poisoned-containers guard 21/48 to
+     17/48 while leaving this row's quality untouched, so quality alone
+     would not catch it. See WAVE2-REORDER-AND-DUPLICATES.md. *)
+  check
+    { name = "difference: a >= 10 and a = b (challenge shape)"
+    ; min_found = 95
+    ; min_minimal = 95
+    ; high_minimal = 100 (* measured 100/100 *)
+    ; max_avg_calls = 105
+        (* Measured 98 with the pass on and 110 with it off, both on
+           2026-08-14 -- so the ceiling has to sit BETWEEN them or the
+           row certifies nothing. An earlier draft used 130 "to leave
+           room", and the kill-test walked straight through it: the
+           pass was disabled and the guard still printed ok. Tight is
+           correct here because [measure] is deterministic (fixed
+           seeds, no wall-clock term), so this only moves when the
+           engine does. If an unrelated change shifts it, re-measure
+           and re-kill-test rather than raising the ceiling blind. *)
+    ; max_non_converged = 0
+    ; catches =
+        "deleting minimize_duplicated_choices, or moving it before the          deletion and lowering passes, where it pre-zeroes duplicated          payload values and the poisoned-containers guard regresses."
+    }
+    (measure
+       ~gen:
+         (G.both
+            (G.int_uniform_inclusive 0 1_000_000)
+            (G.int_uniform_inclusive 0 1_000_000))
+       ~test:(fun (a, b) -> a < 10 || abs (a - b) <> 0)
+       ~is_minimal:(fun (a, b) -> a = 10 && b = 10) ());
+
   (* Guards the per-pass cutoff CONSTANT, not just its presence. With
      max_pass_failures at 20 this matches no-cutoff exactly (100/100);
      at 3 it collapses to 47/100 (diag2/probe_cutoff.ml). Adaptation

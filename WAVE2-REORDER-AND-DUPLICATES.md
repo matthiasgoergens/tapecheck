@@ -232,7 +232,29 @@ is a plain boolean in `engine/tape_engine.ml`, the same shape as
 `sort_siblings_enabled`, so A/B-ing it is a one-line edit. The
 placement is load-bearing and the comment at the dispatch site says so.
 
-## Remaining gap: the pass has no live regression test
+## The pass is now pinned by a guard row
+
+`test_regression/regression_guard.ml` carries a
+`difference: a >= 10 and a = b (challenge shape)` row — the Shrinking
+Challenge's `difference_must_not_be_zero`, whose failing inputs are a
+duplicated pair. The COST ceiling is the assertion that bites: 98 mean
+calls with the pass on, 110 with it off, ceiling 105.
+
+Two things about that number are worth keeping. First, an earlier
+draft set the ceiling at 130 "to leave room", and the kill-test walked
+straight through it — the pass was disabled and the guard still
+printed `ok`. A ceiling outside the discriminating band certifies
+nothing. Second, an earlier draft of the row used a plain `m = n`
+property over `[0, 1000]`, which the guard solved in **0 shrink calls**
+(edge-case bias finds `(0, 0)` immediately, already minimal) — a
+vacuous row that would have passed forever. Both were caught by
+kill-testing rather than by reading, which is the argument for
+kill-testing every new guard in the direction it is supposed to fire.
+
+## Remaining gap: no test for the group mechanism itself
+
+The guard row above pins the pass's measurable effect, not its
+internals.
 
 A test that pins the pass needs a property where deletion cannot
 reproduce the failure. The obvious candidate — three integers that must
