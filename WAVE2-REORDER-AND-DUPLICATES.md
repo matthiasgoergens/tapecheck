@@ -225,12 +225,12 @@ The full forced suite is green in BOTH arms, including the
 poisoned-containers and poisoned-trees guards, which it was not with
 the early placement.
 
-**The default is deliberately not flipped.** Following the
-`sort_siblings` precedent in `engine/tape_engine.ml` — a shipping
-default is not a call to make silently — the pass stays behind
-`TAPECHECK_MINIMIZE_DUPLICATES=1` with the evidence above. The
-recommendation is to enable it: no measured quality regression, one
-real cost win, guards green.
+**Enabled by default 2026-08-14**, on the evidence above and with
+Matthias's go-ahead: no measured quality regression on any of the
+thirteen challenges, one real cost win, and every guard green. The flag
+is a plain boolean in `engine/tape_engine.ml`, the same shape as
+`sort_siblings_enabled`, so A/B-ing it is a one-line edit. The
+placement is load-bearing and the comment at the dispatch site says so.
 
 ## Remaining gap: the pass has no live regression test
 

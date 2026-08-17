@@ -2346,17 +2346,31 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a3 = !attempts in
     let improved = minimize_choices () || improved in
     pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
-    (* Placed LATE in the sweep, after the deletion and lowering passes.
-       Run early it pre-zeroes duplicated payload values, which removes
-       the raw material [lower_and_delete] needs for its combined
-       lower-then-delete move -- the measured poisoned-containers trap.
-       Opt-in via TAPECHECK_MINIMIZE_DUPLICATES=1 while that is being
-       settled; see WAVE2-REORDER-AND-DUPLICATES.md. *)
-    let minimize_duplicated_choices_enabled =
-      match Stdlib.Sys.getenv_opt "TAPECHECK_MINIMIZE_DUPLICATES" with
-      | Some "1" -> true
-      | _ -> false
-    in
+    (* ON, and the PLACEMENT is load-bearing: this must run after the
+       deletion and lowering passes. Run early it pre-zeroes duplicated
+       payload values, which removes the raw material
+       [lower_and_delete] needs for its combined lower-then-delete move,
+       and the poisoned-containers guard drops 21/48 to 17/48. Moved
+       here it is 21/48, per-case identical to the pass being off.
+
+       Measured at n=1000 on same seeds before enabling (raw output in
+       ../tapecheck-notes/challenge-1000-duplate-20260814.txt against
+       challenge-1000-reorder-20260813.txt):
+
+         difference_must_not_be_zero  98.0 -> 85.5 mean evaluations
+         large_union_list           1338.8 -> 1344.8
+         nestedlists                 640.9 -> 645.5
+         bound5                      284.8 -> 285.0
+         binheap                    1175.6 -> 1175.4
+
+       Every quality column across all thirteen challenges is unchanged;
+       the only material move is the 12.8% cost reduction on the one
+       challenge whose failing inputs are a duplicated pair, which is
+       what this pass is for. See WAVE2-REORDER-AND-DUPLICATES.md.
+
+       To A/B it, edit this boolean, exactly as with
+       [sort_siblings_enabled] below. *)
+    let minimize_duplicated_choices_enabled = true in
     let improved =
       if minimize_duplicated_choices_enabled then begin
         let a9 = !attempts in
