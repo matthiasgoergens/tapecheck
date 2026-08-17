@@ -30,6 +30,7 @@ type t =
   | Too_slow
   | Data_too_large
   | Large_base_example
+  | Trivial_only
 [@@deriving sexp_of]
 
 let equal (a : t) (b : t) =
@@ -38,7 +39,10 @@ let equal (a : t) (b : t) =
   | Too_slow, Too_slow -> true
   | Data_too_large, Data_too_large -> true
   | Large_base_example, Large_base_example -> true
-  | (Filter_too_much | Too_slow | Data_too_large | Large_base_example), _ ->
+  | Trivial_only, Trivial_only -> true
+  | ( ( Filter_too_much | Too_slow | Data_too_large | Large_base_example
+      | Trivial_only )
+    , _ ) ->
     false
 
 let to_string = function
@@ -46,6 +50,7 @@ let to_string = function
   | Too_slow -> "too_slow"
   | Data_too_large -> "data_too_large"
   | Large_base_example -> "large_base_example"
+  | Trivial_only -> "trivial_only"
 
 (* Thresholds. Where Hypothesis's own constant transfers as a count
    (cases observed, not bytes), we keep its exact number, cited inline
@@ -122,6 +127,12 @@ type state = {
   mutable base_example_choices : int;
   (* Recorded for the message/report once [maybe_check_large_base_example]
      has run; meaningless (0) before that. *)
+  mutable observed : (string, String.comparator_witness) Set.t;
+  (* Distinct observations from [Tape_engine.run]'s ?observe, over the
+     WHOLE run rather than the health-check window: the collapse this
+     detects is a property of the run as a whole, and a ten-case window
+     would call almost every run trivial. *)
+  mutable observed_cases : int;
   mutable fired : t list;
       (* Every check that has fired so far (whether suppressed or not),
          most recent first; used for the statistics report and to
@@ -136,6 +147,8 @@ let create () =
   ; closed = false
   ; checked_base_example = false
   ; base_example_choices = 0
+  ; observed = Set.empty (module String)
+  ; observed_cases = 0
   ; fired = []
   }
 
@@ -183,6 +196,27 @@ let message_for check ~state =
        ~suppress_health_check:[Tape_health.Large_base_example] if this is \
        expected."
       state.base_example_choices large_base_example_choices
+  | Trivial_only ->
+    Printf.sprintf
+      "health check trivial_only: all %d observed cases produced the \
+       same observation (%s). The generator may be varying inputs that \
+       the property then collapses -- a green run whose case count \
+       certifies less than it appears to. Check that the value reaching \
+       the assertion actually depends on what was generated. Suppress \
+       with ~suppress_health_check:[Tape_health.Trivial_only] if one \
+       bucket is expected."
+      state.observed_cases
+      (match Set.to_list state.observed with
+       | [ only ] -> only
+       | _ -> "<none>")
+
+(* How many observed cases must agree before a single bucket is
+   evidence rather than a small sample. Not ported from Hypothesis,
+   which has no analogue: chosen so a default ~count:100 run trips it
+   while the one-case-per-size [Tape_test] shape does not, and stated
+   here rather than buried because it is a judgement, not a
+   measurement. *)
+let trivial_only_cases = 25
 
 (* Raise (unless suppressed), and remember that [check] fired either
    way so it never re-fires and so the statistics report can mention
@@ -250,3 +284,21 @@ let maybe_check_large_base_example state ~suppress ~choices =
     if choices > large_base_example_choices then
       fire state ~suppress Large_base_example
   end
+
+(* Record one case's observation (from [Tape_engine.run]'s ?observe) and
+   fire [Trivial_only] once enough cases have agreed. Deliberately NOT
+   gated on [state.closed]: the health-check window exists to keep the
+   cheap early-sample checks cheap, whereas this one is a statement
+   about the whole run, and a ten-case window would call almost every
+   run trivial.
+
+   Silent when ?observe was not supplied -- no information, no warning,
+   which is issue #2's own rule. The check therefore only ever fires
+   for a caller who asked a question about coverage; what it adds over
+   labelling inside the test body is that the label sits on the value
+   handed to the property, so no test body has to change. *)
+let record_observation state ~suppress observation =
+  state.observed <- Set.add state.observed observation;
+  state.observed_cases <- state.observed_cases + 1;
+  if state.observed_cases >= trivial_only_cases && Set.length state.observed = 1
+  then fire state ~suppress Trivial_only

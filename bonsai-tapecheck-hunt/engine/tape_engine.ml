@@ -3043,12 +3043,20 @@ let run_with_db (type a) ~(db : Tape_db.t) ~(db_key : string)
    | None -> ());
   outcome
 
+(* [?observe] answers issue #2: a property whose BODY collapses varied
+   inputs to one point produces a green run with a large case count and
+   nothing warns, because every existing check looks at the generated
+   data, which was fine. Labelling the value handed to the property --
+   rather than requiring an [event] call inside the test body -- lets
+   the engine answer "did this run actually exercise anything?" without
+   any test body changing. Silent when not supplied. *)
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     ?(max_seconds : float option = None) ?(max_shrinks = 500)
     ?(max_stall : int option = None)
     ?(max_pass_failures : int option = Some 20) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats ?health
-    ?(suppress_health_check = []) (gen : a Base_quickcheck.Generator.t)
+    ?(suppress_health_check = []) ?(observe : (a -> string) option)
+    (gen : a Base_quickcheck.Generator.t)
     ~(test : a -> bool) : a result =
   let stats = match stats with Some s -> s | None -> no_stats () in
   let health = match health with Some h -> h | None -> Tape_health.create () in
@@ -3135,6 +3143,14 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
              in
              if is_valid then stats.cases_valid <- stats.cases_valid + 1
              else stats.cases_invalid <- stats.cases_invalid + 1;
+             (* Only VALID cases: a discarded case never reached the
+                property, so its observation says nothing about what
+                the property exercised. *)
+             (match observe with
+              | Some f when is_valid ->
+                Tape_health.record_observation health
+                  ~suppress:suppress_health_check (f value)
+              | Some _ | None -> ());
              if timed then begin
                let choices = Tape.image_size out.Tape.image in
                (* [natural_example_choices] replays this case's tape, so
