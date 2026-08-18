@@ -5,6 +5,7 @@ type Splittable_random.span_label +=
   | Structural_list_element
   | Recursive_attempt
   | Recursive_layer
+  | Reorderable_span
 
 module T : sig
   type +'a t
@@ -1030,3 +1031,13 @@ module Debug = struct
       value)
   ;;
 end
+
+
+(* Opt-in structural capability: wrap [t] so the recorder retains a
+   reorderable span around its draws. Reordering is only meaningful for
+   generators whose children are also wrapped in reorderable spans
+   sharing this label; see WAVE2-REORDER-AND-DUPLICATES.md. *)
+let with_reorderable_span t =
+  create (fun ~size ~random ->
+    Splittable_random.with_span ~reorderable:true random Reorderable_span
+      ~f:(fun () -> generate t ~size ~random))

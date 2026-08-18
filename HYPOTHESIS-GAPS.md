@@ -60,7 +60,7 @@ because two of them point at the same structural cause as §3:
 | string/unicode character passes | absent, and unrepresentable (§3) |
 
 `sort_siblings` is the interesting one and it is not simply missing.
-`engine/tape_engine.ml:1789` sets `sort_siblings_enabled = false`, with a
+`engine/tape_engine.ml` sets `sort_siblings_enabled = false`, with a
 recorded reason, re-measured at n=1000 on 2026-08-09 rather than merely
 quoted. The live engine comment now records the full trade:
 

@@ -118,7 +118,7 @@ improved substantially since (`reverse` went from mean 45.95 evaluations to
 | calculator | **1000/1000**, 103.3 | 16/1000, 912.0 |
 | bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 |
 | lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 |
-| difference (= 0) | 1000/1000, 40.5 | 1000/1000, 98.0 |
+| difference (= 0) | 1000/1000, 40.5 | 1000/1000, 85.5 |
 | difference (small) | 1000/1000, 721.6 | 1000/1000, **97.5** |
 | difference (= 1) | 1000/1000, 885.2 | 1000/1000, **98.6** |
 

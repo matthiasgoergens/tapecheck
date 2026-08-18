@@ -55,18 +55,18 @@ let () =
      disturbing its nested deletable range. *)
   Tape.start_recording tape;
   Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false
-    ~discardable:false ~descendable:false;
+    ~discardable:false ~descendable:false ~reorderable:false;
   ignore
     (Tape.draw_int tape ~lo:0L ~hi:10L
        ~sample:(fun ~lo:_ ~hi:_ -> 4L)
      : int64);
   Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true
-    ~discardable:false ~descendable:false;
+    ~discardable:false ~descendable:false ~reorderable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:false
-    ~descendable:false ~discarded:false;
+    ~descendable:false ~reorderable:false ~discarded:false;
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
-    ~descendable:false ~discarded:false;
+    ~descendable:false ~reorderable:false ~discarded:false;
   let spanned = Tape.finish tape in
   check "only deletable nested spans are retained"
     (Array.to_list spanned.Tape.spans
@@ -75,37 +75,39 @@ let () =
          ; deletable = true
          ; discarded = false
          ; descendable = false
+         ; reorderable = false
+         ; depth = 0
          ; start = 1
          ; stop = 2
          }
        ]);
   Tape.start_replay_image tape spanned.Tape.image;
   Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false
-    ~discardable:false ~descendable:false;
+    ~discardable:false ~descendable:false ~reorderable:false;
   ignore
     (Tape.draw_int tape ~lo:0L ~hi:10L
        ~sample:(fun ~lo:_ ~hi:_ -> 9L)
      : int64);
   Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true
-    ~discardable:false ~descendable:false;
+    ~discardable:false ~descendable:false ~reorderable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> false) : bool);
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:false
-    ~descendable:false ~discarded:false;
+    ~descendable:false ~reorderable:false ~discarded:false;
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
-    ~descendable:false ~discarded:false;
+    ~descendable:false ~reorderable:false ~discarded:false;
   let respanned = Tape.finish tape in
   check "replay reconstructs span boundaries"
     (Array.to_list spanned.Tape.spans = Array.to_list respanned.Tape.spans);
 
   Tape.start_recording tape;
   Tape.on_span_start tape ~stream:Tape.root ~label:29 ~deletable:false
-    ~discardable:true ~descendable:false;
+    ~discardable:true ~descendable:false ~reorderable:false;
   ignore
     (Tape.draw_int tape ~lo:0L ~hi:10L
        ~sample:(fun ~lo:_ ~hi:_ -> 6L)
      : int64);
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:true
-    ~descendable:false ~discarded:true;
+    ~descendable:false ~reorderable:false ~discarded:true;
   let discarded = Tape.finish tape in
   check "exceptional discardable span is retained"
     (match Array.to_list discarded.Tape.spans with
@@ -119,19 +121,19 @@ let () =
      | _ -> false);
   Tape.start_recording tape;
   Tape.on_span_start tape ~stream:Tape.root ~label:29 ~deletable:false
-    ~discardable:true ~descendable:false;
+    ~discardable:true ~descendable:false ~reorderable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> false) : bool);
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:true
-    ~descendable:false ~discarded:false;
+    ~descendable:false ~reorderable:false ~discarded:false;
   let successful = Tape.finish tape in
   check "successful discardable span is filtered"
     (Array.length successful.Tape.spans = 0);
   Tape.start_recording tape;
   Tape.on_span_start tape ~stream:Tape.root ~label:31 ~deletable:false
-    ~discardable:false ~descendable:true;
+    ~discardable:false ~descendable:true ~reorderable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
-    ~descendable:true ~discarded:false;
+    ~descendable:true ~reorderable:false ~discarded:false;
   let descendable = Tape.finish tape in
   check "successful descendable span is retained"
     (match Array.to_list descendable.Tape.spans with
@@ -139,19 +141,19 @@ let () =
      | _ -> false);
   Tape.start_recording tape;
   Tape.on_span_start tape ~stream:Tape.root ~label:31 ~deletable:false
-    ~discardable:false ~descendable:true;
+    ~discardable:false ~descendable:true ~reorderable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
-    ~descendable:true ~discarded:true;
+    ~descendable:true ~reorderable:false ~discarded:true;
   let failed_descendable = Tape.finish tape in
   check "failed descendable span is not a replacement candidate"
     (Array.length failed_descendable.Tape.spans = 0);
   Tape.start_recording tape;
   Tape.on_span_start tape ~stream:Tape.root ~label:37 ~deletable:true
-    ~discardable:true ~descendable:true;
+    ~discardable:true ~descendable:true ~reorderable:false;
   ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
   Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:true
-    ~descendable:true ~discarded:true;
+    ~descendable:true ~reorderable:false ~discarded:true;
   let failed_actionable = Tape.finish tape in
   check "failed actionable span is retained only as discarded input"
     (match Array.to_list failed_actionable.Tape.spans with

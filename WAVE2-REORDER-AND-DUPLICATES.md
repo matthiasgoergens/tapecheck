@@ -65,10 +65,11 @@ stay for the stock columns.
    After every accepted proposal, abandon all cached groups, arrays
    and indices and rebuild from the fresh replay; the engine already
    replaces `s_best_spans` on acceptance. Candidates are enumerated
-   deterministically (by position, never by hash order) before any
-   failure cutoff applies. Proposals already present in the global
-   seen table are skipped, since replay can accept an output different
-   from the submitted proposal.
+   deterministically (children by position, labels in ascending label
+   order, never by hash order) before any failure cutoff applies.
+   Proposals already present in the global seen table are skipped,
+   since replay can accept an output different from the submitted
+   proposal.
 
 5. **Scope restriction.** Main stream only, and only groups whose
    slices contain no `Marker` choices: `Generator.fn` splits a keyed
@@ -78,7 +79,7 @@ stay for the stock columns.
 
 6. **Sort key — an honest caveat.** Shortlex is the faithful port, but
    tapecheck's `non_uniform` encoding contaminates it: `-32768` has a
-   two-entry recording and sorts ahead of `-1`'s four entries, while
+   two-entry recording and sorts ahead of `-1`'s three entries, while
    `bound5`'s expected permutation wants `-1` first. So the sorted
    arrangement is canonical but can be the *wrong* canonical
    permutation for `bound5`; the same pathology the +patch column
@@ -145,6 +146,135 @@ poison), then 200-seed targeted runs, then the full 1000-seed
 columns. Any guard improvement is kill-tested both directions per
 `CHALLENGE.md`'s existing discipline.
 
+## Measured: `reorder_spans` on the challenge suite
+
+Measured 2026-08-13 at n=1000, same seeds as the stock column
+(`challenge-1000-20260808.txt`). Only `bound5` carries reorderable
+spans so far; raw output in
+`tapecheck-notes/challenge-1000-reorder-20260813.txt`.
+
+| | stock | +reorder spans |
+|---|---|---|
+| bound5 distinct answers | 22 | **2** (999 × one arrangement) |
+| bound5 at-or-below optimal size | 998/1000 | **999/1000** |
+| bound5 exact | 158/1000 | 0/1000 |
+| bound5 mean evaluations | 276.8 | 284.8 |
+
+Every other challenge row is identical to the stock column to two
+decimals — the pass is inert where nothing opts in, which is the point
+of the capability gate.
+
+The canonical arrangement is `([], [], [], [-32768], [-1])`: shortlex
+ranks the two-entry `-32768` recording ahead of `-1`'s three entries,
+the predeclared sort-key caveat, and the same order the `+patch` column
+already prefers. Normalisation consistency is delivered; the
+challenge's expected permutation needs the value-aware key, which is
+the next measured step. The poisoned-trees guard stays 12/34 and 34/34,
+with the stock floor now two-sided and kill-tested.
+
+## The poisoned-containers trap: measured, diagnosed, fixed
+
+**The trap was pass ORDERING.** An earlier note in this file blamed the
+pass for zeroing duplicated *structural* draws (matrix and list
+dimensions). That was wrong, and the measurement that refuted it is
+recorded here so the mistake is not repeated: tracing the accepted
+proposals on the discriminating seed (Matrices size 10, p=1/100,
+seed 1284235381287210546) shows all three accepted moves preserving the
+image length exactly — `size 80 -> 80` — at positions spread through
+the payload (`4,18,22,24,28,32,36`). Seven duplicated `1`s cannot be
+matrix dimensions; these are element draws. A structural gate built on
+the dimension hypothesis (skip any group whose target proposal changes
+the replayed image length) was implemented, measured completely inert,
+and removed.
+
+The pass ran EARLY in the sweep, before `lower_and_delete`.
+Pre-zeroing duplicated payload values removes the raw material that
+pass needs for its combined lower-then-delete move — the length-repair
+move that length-prefixed data depends on. Moving
+`minimize_duplicated_choices` to run after the deletion and lowering
+passes resolves it:
+
+| poisoned containers | exact minima |
+|---|---:|
+| pass off (baseline) | 21/48 |
+| pass on, early placement | 17/48 |
+| pass on, late placement | **21/48**, per-case identical to baseline |
+
+## What the pass earns in its late slot
+
+Same-seed challenge columns at n=1000 (raw:
+`tapecheck-notes/challenge-1000-duplate-20260814.txt` against the
+pass-off column `challenge-1000-reorder-20260813.txt`):
+
+| challenge | pass off | pass on, late |
+|---|---:|---:|
+| difference_must_not_be_zero | 98.0 | **85.5** |
+| large_union_list | 1338.8 | 1344.8 |
+| nestedlists | 640.9 | 645.5 |
+| bound5 | 284.8 | 285.0 |
+| binheap | 1175.6 | 1175.4 |
+
+Cells are mean shrink evaluations. **Every quality column is identical**
+— normalisation, exact counts and at-or-below-optimal-size all
+unchanged on all thirteen challenges. The one material move is a 12.8%
+cost reduction on `difference_must_not_be_zero`, whose failing inputs
+are literally a duplicated pair, which is the case the pass exists for.
+The increases elsewhere are under 1%.
+
+The full forced suite is green in BOTH arms, including the
+poisoned-containers and poisoned-trees guards, which it was not with
+the early placement.
+
+**Enabled by default 2026-08-14**, on the evidence above and with
+Matthias's go-ahead: no measured quality regression on any of the
+thirteen challenges, one real cost win, and every guard green. The flag
+is a plain boolean in `engine/tape_engine.ml`, the same shape as
+`sort_siblings_enabled`, so A/B-ing it is a one-line edit. The
+placement is load-bearing and the comment at the dispatch site says so.
+
+## The pass is now pinned by a guard row
+
+`test_regression/regression_guard.ml` carries a
+`difference: a >= 10 and a = b (challenge shape)` row — the Shrinking
+Challenge's `difference_must_not_be_zero`, whose failing inputs are a
+duplicated pair. The COST ceiling is the assertion that bites: 98 mean
+calls with the pass on, 110 with it off, ceiling 105.
+
+Two things about that number are worth keeping. First, an earlier
+draft set the ceiling at 130 "to leave room", and the kill-test walked
+straight through it — the pass was disabled and the guard still
+printed `ok`. A ceiling outside the discriminating band certifies
+nothing. Second, an earlier draft of the row used a plain `m = n`
+property over `[0, 1000]`, which the guard solved in **0 shrink calls**
+(edge-case bias finds `(0, 0)` immediately, already minimal) — a
+vacuous row that would have passed forever. Both were caught by
+kill-testing rather than by reading, which is the argument for
+kill-testing every new guard in the direction it is supposed to fire.
+
+## Remaining gap: no test for the group mechanism itself
+
+The guard row above pins the pass's measurable effect, not its
+internals.
+
+A test that pins the pass needs a property where deletion cannot
+reproduce the failure. The obvious candidate — three integers that must
+be equal — does not work: the deletion passes erase the value-carrying
+choices and the fixed-seed replay (`replay_fresh_seed`) resamples them
+with the boundary-biased generator, reproducing the equal values, so
+the deletion is accepted and the equality "solved" without any
+duplicate move. The reported minimal then lives partly in fresh draws:
+self-consistent and reproducible, but the pass never sees the group.
+`difference_must_not_be_zero` is the workload where the pass demonstrably
+pays, so a guard row there (mean evaluations, two-sided) is the cheapest
+real pin and is the next step.
+
+## Note on the measurement protocol
+
+The protocol's promised in-harness negative control (same-seed
+pre-shrink image assertion) was not implemented; the byte-identical
+non-bound5 columns across the 1000-run artefacts are the de facto
+control instead.
+
 ## Revisions after the design reviews
 
 - **Grouping rule** (codex): children share a chosen *child* label,
@@ -159,6 +289,10 @@ columns. Any guard improvement is kill-tested both directions per
   withdraw the convergence claim.
 - **`duplicable` dropped** (DeepSeek): whole-tape grouping gated by
   equal `(kind, value, lo, hi)` instead of a third capability bit.
+- **The trap, and the correction** (measured 2026-08-14): the early
+  placement's poisoned-containers regression was pass ORDERING, not
+  structural-draw zeroing as an earlier revision of this file claimed.
+  See the trap section above for the refuting measurement.
 - **Measurement protocol** (both): `deletion` positive control added;
   same-seed columns replace paired-interval claims; poison floor
   becomes two-sided; negative control added; staged pilot first.

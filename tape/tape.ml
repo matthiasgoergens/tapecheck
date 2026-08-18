@@ -113,6 +113,8 @@ type span = {
   deletable : bool;
   discarded : bool;
   descendable : bool;
+  reorderable : bool;
+  depth : int;
   start : int;
   stop : int;
 }
@@ -123,6 +125,7 @@ type open_span = {
   open_deletable : bool;
   open_discardable : bool;
   open_descendable : bool;
+  open_reorderable : bool;
   open_start : int;
 }
 
@@ -237,7 +240,13 @@ let finish t =
               if c <> 0 then c
               else
                 let c = compare a.discarded b.discarded in
-                if c <> 0 then c else compare a.descendable b.descendable)
+                if c <> 0 then c
+                else
+                  let c = compare a.descendable b.descendable in
+                  if c <> 0 then c
+                  else
+                    let c = compare a.reorderable b.reorderable in
+                    if c <> 0 then c else compare a.depth b.depth)
     |> Array.of_list
   in
   t.mode <- Off;
@@ -248,8 +257,9 @@ let finish t =
    that already truncated during generation. Monotone within a run. *)
 let overrun_now (t : t) = t.overrun
 
-let on_span_start t ~stream ~label ~deletable ~discardable ~descendable =
-  if not (deletable || discardable || descendable)
+let on_span_start t ~stream ~label ~deletable ~discardable ~descendable
+    ~reorderable =
+  if not (deletable || discardable || descendable || reorderable)
   then ()
   else match t.mode with
   | Off -> ()
@@ -261,29 +271,34 @@ let on_span_start t ~stream ~label ~deletable ~discardable ~descendable =
       ; open_deletable = deletable
       ; open_discardable = discardable
       ; open_descendable = descendable
+      ; open_reorderable = reorderable
       ; open_start = s.wpos
       }
       :: t.open_spans
 
-let on_span_stop t ~stream ~deletable ~discardable ~descendable ~discarded =
-  if not (deletable || discardable || descendable)
+let on_span_stop t ~stream ~deletable ~discardable ~descendable ~reorderable
+    ~discarded =
+  if not (deletable || discardable || descendable || reorderable)
   then ()
   else match t.mode with
   | Off -> ()
   | Recording | Replaying ->
     (match t.open_spans with
      | { open_stream; open_label; open_deletable; open_discardable
-       ; open_descendable; open_start } :: rest
+       ; open_descendable; open_reorderable; open_start } :: rest
        when compare_key open_stream stream = 0
             && Bool.equal open_deletable deletable
             && Bool.equal open_discardable discardable
-            && Bool.equal open_descendable descendable ->
+            && Bool.equal open_descendable descendable
+            && Bool.equal open_reorderable reorderable ->
        let s = get_stream t stream in
        t.open_spans <- rest;
        let retained_deletable = open_deletable && not discarded in
        let retained_descendable = open_descendable && not discarded in
+       let retained_reorderable = open_reorderable && not discarded in
        if retained_deletable
           || retained_descendable
+          || retained_reorderable
           || (open_discardable && discarded)
        then
          t.spans_rev <-
@@ -292,6 +307,8 @@ let on_span_stop t ~stream ~deletable ~discardable ~descendable ~discarded =
            ; deletable = retained_deletable
            ; discarded = open_discardable && discarded
            ; descendable = retained_descendable
+           ; reorderable = retained_reorderable
+           ; depth = List.length rest
            ; start = open_start
            ; stop = s.wpos
            }

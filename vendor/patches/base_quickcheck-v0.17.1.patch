@@ -1,8 +1,8 @@
 diff --git a/src/generator.ml b/src/generator.ml
-index 75c8492..cb3ff62 100644
+index 75c8492..bcac63f 100644
 --- a/src/generator.ml
 +++ b/src/generator.ml
-@@ -1,5 +1,11 @@
+@@ -1,5 +1,12 @@
  open! Base
  
 +type Splittable_random.span_label +=
@@ -10,11 +10,12 @@ index 75c8492..cb3ff62 100644
 +  | Structural_list_element
 +  | Recursive_attempt
 +  | Recursive_layer
++  | Reorderable_span
 +
  module T : sig
    type +'a t
  
-@@ -193,6 +199,81 @@ let recursive_union nonrec_list ~f =
+@@ -193,6 +200,81 @@ let recursive_union nonrec_list ~f =
    weighted_recursive_union (weighted nonrec_list) ~f:(fun self -> weighted (f self))
  ;;
  
@@ -96,7 +97,7 @@ index 75c8492..cb3ff62 100644
  let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
    create (fun ~size ~random ->
      assert (min_length <= max_length);
-@@ -239,7 +320,11 @@ let result ok_t err_t =
+@@ -239,7 +321,11 @@ let result ok_t err_t =
  
  let list_generic ?min_length ?max_length elt_gen =
    let%bind sizes = sizes ?min_length ?max_length () in
@@ -109,7 +110,7 @@ index 75c8492..cb3ff62 100644
  ;;
  
  let list elt_gen = list_generic elt_gen
-@@ -249,6 +334,99 @@ let list_with_length elt_gen ~length =
+@@ -249,6 +335,99 @@ let list_with_length elt_gen ~length =
    list_generic ~min_length:length ~max_length:length elt_gen
  ;;
  
@@ -209,7 +210,7 @@ index 75c8492..cb3ff62 100644
  let list_filtered elts =
    let elts = Array.of_list elts in
    let length_of_input = Array.length elts in
-@@ -743,7 +921,13 @@ let sexp = sexp_of string
+@@ -743,7 +922,13 @@ let sexp = sexp_of string
  
  let map_tree_using_comparator ~comparator key_gen data_gen =
    let%bind keys = list key_gen in
@@ -224,8 +225,22 @@ index 75c8492..cb3ff62 100644
    let%bind data = list_with_length data_gen ~length:(List.length keys) in
    return (Map.Using_comparator.Tree.of_alist_exn ~comparator (List.zip_exn keys data))
  ;;
+@@ -846,3 +1031,13 @@ module Debug = struct
+       value)
+   ;;
+ end
++
++
++(* Opt-in structural capability: wrap [t] so the recorder retains a
++   reorderable span around its draws. Reordering is only meaningful for
++   generators whose children are also wrapped in reorderable spans
++   sharing this label; see WAVE2-REORDER-AND-DUPLICATES.md. *)
++let with_reorderable_span t =
++  create (fun ~size ~random ->
++    Splittable_random.with_span ~reorderable:true random Reorderable_span
++      ~f:(fun () -> generate t ~size ~random))
 diff --git a/src/generator.mli b/src/generator.mli
-index 241f3c7..6d4c2e5 100644
+index 241f3c7..a7bc190 100644
 --- a/src/generator.mli
 +++ b/src/generator.mli
 @@ -155,6 +155,31 @@ val filter_map : 'a t -> f:('a -> 'b option) -> 'b t
@@ -284,3 +299,13 @@ index 241f3c7..6d4c2e5 100644
  (** Randomly drops elements from a list. The length of each result is chosen uniformly
      between 0 and the length of the input, inclusive. *)
  val list_filtered : 'a list -> 'a list t
+@@ -402,3 +444,9 @@ module Debug : sig
+       record the set of values that do not satisfy some filter. *)
+   val monitor : 'a t -> f:('a -> unit) -> 'a t
+ end
++
++
++(** Wrap [t] so the recorder retains a reorderable span around its
++    draws. Combine with itself on a parent and on each child to make
++    the children reorderable as a group. *)
++val with_reorderable_span : 'a t -> 'a t

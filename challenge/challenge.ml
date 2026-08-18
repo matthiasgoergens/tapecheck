@@ -478,12 +478,24 @@ let bounded_list =
     ~f:(fun l -> List.sum (module Int) l ~f:Fn.id < 256)
 
 let bound5 () =
+  (* The five slots are symmetric; the challenge scores one exact
+     permutation, so canonicalising means reordering them. Each slot is
+     a reorderable child span inside a reorderable parent, which is
+     what lets the engine's [reorder_spans] pass sort them. *)
   bench ~name:"bound5"
     ~gen:
-      (G.map
-         (G.both (G.both bounded_list bounded_list)
-            (G.both bounded_list (G.both bounded_list bounded_list)))
-         ~f:(fun ((a, b), (c, (d, e))) -> [ a; b; c; d; e ]))
+      (G.with_reorderable_span
+         (G.map
+            (G.both
+               (G.both
+                  (G.with_reorderable_span bounded_list)
+                  (G.with_reorderable_span bounded_list))
+               (G.both
+                  (G.with_reorderable_span bounded_list)
+                  (G.both
+                     (G.with_reorderable_span bounded_list)
+                     (G.with_reorderable_span bounded_list))))
+            ~f:(fun ((a, b), (c, (d, e))) -> [ a; b; c; d; e ])))
     ~test:(fun ls ->
       let total =
         List.fold ls ~init:0 ~f:(fun acc l ->

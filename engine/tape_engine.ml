@@ -536,7 +536,7 @@ let no_stats () =
 let pass_names =
   [| "lower_and_delete"; "delete_spans"; "redistribute_pairs"
    ; "minimize_choices"; "pre-loop"; "sort_siblings"; "remove_discarded"
-   ; "pass_to_descendant" |]
+   ; "pass_to_descendant"; "reorder_spans"; "minimize_duplicated_choices" |]
 
 let pass_costs = Array.create ~len:(Array.length pass_names) 0
 let greedy_cost = ref 0
@@ -1139,6 +1139,346 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
               improved_any := true;
               restart := true
             end)
+    done;
+    !improved_any
+  in
+
+  (* Port of Hypothesis's [reorder_spans] (shrinker.py:1829), gated on
+     the [reorderable] span capability. See
+     WAVE2-REORDER-AND-DUPLICATES.md for the design and the predeclared
+     sort-key caveat.
+
+     For each reorderable root-stream parent, group its DIRECT
+     reorderable children by label (depth distinguishes direct children;
+     spans record their nesting depth at close), sort the group's slices
+     shortlex, and propose one parent-interval reconstruction per group:
+     each child interval receives its assigned slice, and the gaps owned
+     by the parent keep their content in place. Marker-free slices only:
+     a [Tape.Marker] inside a slice means a split into a keyed stream,
+     and moving the slice would cross-wire the payload.
+
+     Candidates are rebuilt from the fresh replay after every accepted
+     proposal ([restart]), parents are visited outer-first and children
+     in position order, and the whole pass carries its own
+     consecutive-failure cutoff like the other passes. The sorted
+     arrangement alone does not reach a sorted fixpoint in general; the
+     permutation search is the measured next step, not a claim. *)
+  let reorder_spans () =
+    let improved_any = ref false in
+    let failures = ref 0 in
+    let live () =
+      match max_pass_failures with
+      | None -> true
+      | Some n -> !failures < n
+    in
+    let restart = ref true in
+    while !restart && budget_ok () && live () do
+      restart := false;
+      (match segment_for_key !best Tape.root with
+       | None -> ()
+       | Some s ->
+         let main = seg_get !best s in
+         let has_marker slice =
+           Array.exists slice ~f:(function Tape.Marker -> true | _ -> false)
+         in
+         let parents =
+           Array.to_list !best_spans
+           |> List.filter ~f:(fun sp ->
+             sp.Tape.reorderable
+             && not sp.Tape.discarded
+             && Tape.compare_key sp.Tape.stream Tape.root = 0)
+           |> List.sort ~compare:(fun a b -> compare a.Tape.depth b.Tape.depth)
+         in
+         List.iter parents ~f:(fun parent ->
+           if (not !restart) && budget_ok () && live () then begin
+             let children =
+               Array.to_list !best_spans
+               |> List.filter ~f:(fun sp ->
+                 sp.Tape.reorderable
+                 && not sp.Tape.discarded
+                 && sp.Tape.depth = parent.Tape.depth + 1
+                 && Tape.compare_key sp.Tape.stream parent.Tape.stream = 0
+                 && sp.Tape.start >= parent.Tape.start
+                 && sp.Tape.stop <= parent.Tape.stop
+                 && sp.Tape.stop > sp.Tape.start)
+               |> List.sort ~compare:(fun a b ->
+                 compare a.Tape.start b.Tape.start)
+             in
+             let by_label = Hashtbl.create (module Int) in
+             List.iter children ~f:(fun sp ->
+               Hashtbl.add_multi by_label ~key:sp.Tape.label ~data:sp);
+             (* Visit labels in ascending label order so
+                the pass is deterministic before any cutoff applies. *)
+             let labels =
+               List.dedup_and_sort ~compare:Int.compare
+                 (List.map children ~f:(fun sp -> sp.Tape.label))
+             in
+             List.iter labels ~f:(fun label ->
+               if (not !restart) && budget_ok () && live () then begin
+                 let group = List.rev (Hashtbl.find_multi by_label label) in
+                 let n = List.length group in
+                 if n >= 2 then begin
+                   let actionable =
+                     List.for_all group ~f:(fun sp ->
+                       sp.Tape.start >= 0
+                       && sp.Tape.stop <= Array.length main
+                       && not
+                            (has_marker
+                               (Array.sub main ~pos:sp.Tape.start
+                                  ~len:(sp.Tape.stop - sp.Tape.start))))
+                   in
+                   if actionable then begin
+                     let slices =
+                       List.map group ~f:(fun sp ->
+                         Array.sub main ~pos:sp.Tape.start
+                           ~len:(sp.Tape.stop - sp.Tape.start))
+                     in
+                     (* The sort key is raw tape shortlex. A value-aware
+                        key (distance from the shrink target) WAS tried
+                        and rejected: it generates the right proposal
+                        for bound5 (-1 before -32768), but the whole-image
+                        acceptance gate rejects the result, because a
+                        permutation preserves total length and the first
+                        differing choice ranks -1's three-entry slice
+                        ABOVE -32768's two-entry one. Custom acceptance
+                        for permutation proposals, or fixing the
+                        non_uniform encoding, are the known next steps;
+                        neither is this pass's job. *)
+                     let sorted =
+                       List.sort slices ~compare:Tape.compare_shortlex
+                     in
+                     let already =
+                       List.for_all2_exn slices sorted ~f:(fun a b ->
+                         Tape.compare_shortlex a b = 0)
+                     in
+                     if not already then begin
+                       let pieces = ref [] in
+                       let pos = ref parent.Tape.start in
+                       List.iter2_exn group sorted ~f:(fun sp slice ->
+                         pieces
+                           := Array.sub main ~pos:!pos
+                                ~len:(sp.Tape.start - !pos)
+                              :: !pieces;
+                         pieces := slice :: !pieces;
+                         pos := sp.Tape.stop);
+                       pieces
+                         := Array.sub main ~pos:!pos
+                              ~len:(parent.Tape.stop - !pos)
+                            :: !pieces;
+                       let rebuilt = Array.concat (List.rev !pieces) in
+                       let proposal =
+                         Array.concat
+                           [ Array.sub main ~pos:0 ~len:parent.Tape.start
+                           ; rebuilt
+                           ; Array.sub main ~pos:parent.Tape.stop
+                               ~len:(Array.length main - parent.Tape.stop)
+                           ]
+                       in
+                       if attempt (seg_set !best s proposal) then begin
+                         improved_any := true;
+                         failures := 0;
+                         restart := true
+                       end
+                       else Int.incr failures
+                     end
+                   end
+                 end
+               end)
+           end)
+         )
+    done;
+    !improved_any
+  in
+
+  (* Port of Hypothesis's [minimize_duplicated_choices]
+     (shrinker.py:1398), whole-tape with a kind gate instead of a span
+     capability. See WAVE2-REORDER-AND-DUPLICATES.md.
+
+     Group main-stream positions by equal (kind, value, lo, hi) — equal
+     bounds matter because replay clamps a proposed value independently
+     per position, so equal values in different ranges can replay apart
+     and destroy the group. For each group of at least two non-trivial
+     values, bisect the shared value toward zero for all members at
+     once. Every acceptance restarts the pass: a value change can shift
+     downstream tape structure, so positions captured before the
+     acceptance are not trusted. *)
+  let minimize_duplicated_choices () =
+    let improved_any = ref false in
+    let failures = ref 0 in
+    let live () =
+      match max_pass_failures with
+      | None -> true
+      | Some n -> !failures < n
+    in
+    let restart = ref true in
+    while !restart && budget_ok () && live () do
+      restart := false;
+      (match segment_for_key !best Tape.root with
+       | None -> ()
+       | Some s ->
+         let arr = seg_get !best s in
+         let groups = Hashtbl.create (module String) in
+         Array.iteri arr ~f:(fun i c ->
+           let key =
+             match c with
+             | Tape.Integer { value; lo; hi } ->
+               Some (Printf.sprintf "I %Ld %Ld %Ld" value lo hi)
+             | Tape.Float { value; lo; hi } ->
+               Some (Printf.sprintf "F %h %h %h" value lo hi)
+             | Tape.Bool _ | Tape.Marker -> None
+           in
+           match key with
+           | None -> ()
+           | Some k -> Hashtbl.add_multi groups ~key:k ~data:i);
+         (* Deterministic: visit groups by their first position. *)
+         let keys =
+           Hashtbl.to_alist groups
+           |> List.map ~f:(fun (k, _) -> k)
+           |> List.sort ~compare:String.compare
+         in
+         List.iter keys ~f:(fun k ->
+           if (not !restart) && budget_ok () && live () then begin
+             let positions =
+               List.sort ~compare:Int.compare
+                 (List.rev (Hashtbl.find_multi groups k))
+             in
+             let n = List.length positions in
+             if n >= 2 then begin
+               let i0 = List.hd_exn positions in
+               (* [mutate] rewrites one group member's value; each call
+                 site supplies its own numeric type. *)
+              let proposal ~mutate arr =
+                let proposal = Array.copy arr in
+                List.iter positions ~f:(fun i ->
+                  proposal.(i) <- mutate arr.(i));
+                proposal
+              in
+               (match arr.(i0) with
+                | Tape.Integer { value; lo; hi } ->
+                  let target = clamp64 0L ~lo ~hi in
+                  let int_image v =
+                    seg_set !best s
+                      (proposal
+                         ~mutate:(fun c ->
+                           match c with
+                           | Tape.Integer { lo; hi; _ } ->
+                             Tape.Integer { value = v; lo; hi }
+                           | c -> c)
+                         (seg_get !best s))
+                  in
+                  if not (Int64.equal value target) then begin
+                    let try_all v = attempt (int_image v) in
+                    (* Try the endpoint first, mirroring [minimize_float]:
+                       bisection alone stops one step short of it. *)
+                    if try_all target then begin
+                      improved_any := true;
+                      failures := 0;
+                      restart := true
+                    end
+                    else begin
+                      Int.incr failures;
+                      (* [lo]/[hi] bracket the search numerically;
+                         [target] (the endpoint, just rejected) sits on
+                         one side and [value] (the current best, still
+                         failing) on the other. A rejected mid moves the
+                         side holding [target] toward the failing side;
+                         an accepted candidate restarts the pass rather
+                         than continuing, since the replay may have
+                         shifted downstream positions. *)
+                      let lo = ref (Int64.min target value) in
+                      let hi = ref (Int64.max target value) in
+                      let rec bisect () =
+                        if
+                          (not !restart)
+                          && budget_ok ()
+                          && live ()
+                          && Int64.(!hi - !lo > 1L)
+                        then begin
+                          let mid = Int64.(!lo + ((!hi - !lo) / 2L)) in
+                          if try_all mid then begin
+                            improved_any := true;
+                            failures := 0;
+                            restart := true
+                          end
+                          else begin
+                            Int.incr failures;
+                            if Int64.( < ) target value then lo := mid
+                            else hi := mid;
+                            bisect ()
+                          end
+                        end
+                      in
+                      bisect ()
+                    end
+                  end
+                | Tape.Float { value; lo; hi } ->
+                  let target = clampf 0. ~lo ~hi in
+                  let float_image v =
+                    seg_set !best s
+                      (proposal
+                         ~mutate:(fun c ->
+                           match c with
+                           | Tape.Float { lo; hi; _ } ->
+                             Tape.Float { value = v; lo; hi }
+                           | c -> c)
+                         (seg_get !best s))
+                  in
+                  if Float.( <> ) value target then begin
+                    let try_value v = attempt (float_image v) in
+                    if try_value target then begin
+                      improved_any := true;
+                      failures := 0;
+                      restart := true
+                    end
+                    else begin
+                      Int.incr failures;
+                      let rounded = Float.round_down value in
+                      if
+                        (not !restart)
+                        && Float.( <> ) rounded value
+                        && try_value rounded
+                      then begin
+                        improved_any := true;
+                        failures := 0;
+                        restart := true
+                      end
+                      else begin
+                        if Float.( <> ) rounded value then Int.incr failures;
+                        (* [lo]/[hi] bracket the search numerically;
+                           [target] (the endpoint, just rejected) sits
+                           on one side and [value] (the current best,
+                           still failing) on the other. A rejected mid
+                           moves the side holding [target] toward the
+                           failing side. *)
+                        let lo = ref (Float.min target value) in
+                        let hi = ref (Float.max target value) in
+                        let steps = ref 0 in
+                        while
+                          (not !restart)
+                          && !steps < 40
+                          && budget_ok ()
+                          && live ()
+                        do
+                          Int.incr steps;
+                          let mid = Float.(!lo + ((!hi - !lo) / 2.)) in
+                          if try_value mid then begin
+                            improved_any := true;
+                            failures := 0;
+                            restart := true
+                          end
+                          else begin
+                            Int.incr failures;
+                            if Float.( < ) target value then lo := mid
+                            else hi := mid
+                          end
+                        done
+                      end
+                    end
+                  end
+                | Tape.Bool _ | Tape.Marker -> ())
+             end
+           end)
+         )
     done;
     !improved_any
   in
@@ -1991,6 +2331,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a7 = !attempts in
     let improved = pass_to_descendant () || improved in
     pass_costs.(7) <- pass_costs.(7) + (!attempts - a7);
+    let a8 = !attempts in
+    let improved = reorder_spans () || improved in
+    pass_costs.(8) <- pass_costs.(8) + (!attempts - a8);
     let a1 = !attempts in
     let improved = delete_spans () || improved in
     pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
@@ -2003,6 +2346,40 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let a3 = !attempts in
     let improved = minimize_choices () || improved in
     pass_costs.(3) <- pass_costs.(3) + (!attempts - a3);
+    (* ON, and the PLACEMENT is load-bearing: this must run after the
+       deletion and lowering passes. Run early it pre-zeroes duplicated
+       payload values, which removes the raw material
+       [lower_and_delete] needs for its combined lower-then-delete move,
+       and the poisoned-containers guard drops 21/48 to 17/48. Moved
+       here it is 21/48, per-case identical to the pass being off.
+
+       Measured at n=1000 on same seeds before enabling (raw output in
+       ../tapecheck-notes/challenge-1000-duplate-20260814.txt against
+       challenge-1000-reorder-20260813.txt):
+
+         difference_must_not_be_zero  98.0 -> 85.5 mean evaluations
+         large_union_list           1338.8 -> 1344.8
+         nestedlists                 640.9 -> 645.5
+         bound5                      284.8 -> 285.0
+         binheap                    1175.6 -> 1175.4
+
+       Every quality column across all thirteen challenges is unchanged;
+       the only material move is the 12.8% cost reduction on the one
+       challenge whose failing inputs are a duplicated pair, which is
+       what this pass is for. See WAVE2-REORDER-AND-DUPLICATES.md.
+
+       To A/B it, edit this boolean, exactly as with
+       [sort_siblings_enabled] below. *)
+    let minimize_duplicated_choices_enabled = true in
+    let improved =
+      if minimize_duplicated_choices_enabled then begin
+        let a9 = !attempts in
+        let r = minimize_duplicated_choices () || improved in
+        pass_costs.(9) <- pass_costs.(9) + (!attempts - a9);
+        r
+      end
+      else improved
+    in
     let improved = lower_together () || improved in
     (* OFF by default. See SORT-SIBLINGS.md.
 
@@ -2666,12 +3043,20 @@ let run_with_db (type a) ~(db : Tape_db.t) ~(db_key : string)
    | None -> ());
   outcome
 
+(* [?observe] answers issue #2: a property whose BODY collapses varied
+   inputs to one point produces a green run with a large case count and
+   nothing warns, because every existing check looks at the generated
+   data, which was fine. Labelling the value handed to the property --
+   rather than requiring an [event] call inside the test body -- lets
+   the engine answer "did this run actually exercise anything?" without
+   any test body changing. Silent when not supplied. *)
 let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
     ?(max_seconds : float option = None) ?(max_shrinks = 500)
     ?(max_stall : int option = None)
     ?(max_pass_failures : int option = Some 20) ?(domains = 1)
     ?(realign : realign = `Consume) ?stats ?health
-    ?(suppress_health_check = []) (gen : a Base_quickcheck.Generator.t)
+    ?(suppress_health_check = []) ?(observe : (a -> string) option)
+    (gen : a Base_quickcheck.Generator.t)
     ~(test : a -> bool) : a result =
   let stats = match stats with Some s -> s | None -> no_stats () in
   let health = match health with Some h -> h | None -> Tape_health.create () in
@@ -2758,6 +3143,14 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
              in
              if is_valid then stats.cases_valid <- stats.cases_valid + 1
              else stats.cases_invalid <- stats.cases_invalid + 1;
+             (* Only VALID cases: a discarded case never reached the
+                property, so its observation says nothing about what
+                the property exercised. *)
+             (match observe with
+              | Some f when is_valid ->
+                Tape_health.record_observation health
+                  ~suppress:suppress_health_check (f value)
+              | Some _ | None -> ());
              if timed then begin
                let choices = Tape.image_size out.Tape.image in
                (* [natural_example_choices] replays this case's tape, so

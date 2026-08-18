@@ -34,9 +34,9 @@ let attach ~production_callbacks random tape =
     else
       { hooks with
         on_span_start =
-          (fun _ ~deletable:_ ~discardable:_ ~descendable:_ -> ())
+          (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ -> ())
       ; on_span_stop =
-          (fun ~deletable:_ ~discardable:_ ~descendable:_ ~discarded:_ () -> ())
+          (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () -> ())
       }
   in
   Splittable_random.with_intercept random hooks

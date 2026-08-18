@@ -140,13 +140,13 @@ let () =
     ; bool_with_probability =
         (fun state ~probability ~forced:_ ~default -> default state ~probability)
     ; on_span_start =
-        (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ->
+        (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ->
           span_events := "start" :: !span_events;
           Int.incr starts;
           Int.incr depth;
           max_depth := Int.max !max_depth !depth)
     ; on_span_stop =
-        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~discarded:_ () ->
+        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () ->
           span_events := "stop" :: !span_events;
           check "list span stop has a matching start" (!depth > 0);
           Int.decr depth;

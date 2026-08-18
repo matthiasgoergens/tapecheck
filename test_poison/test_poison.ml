@@ -234,13 +234,11 @@ let () =
   in
   Test_support.report "stock poison-position rate has not regressed" (ok >= 12)
     (Printf.sprintf "%d/%d (floor 12)" ok total);
+  Test_support.report "stock poison-position rate has not silently improved"
+    (ok <= 12)
+    (Printf.sprintf "%d/%d (ceiling 12)" ok total);
   Test_support.report "the benchmark actually ran" (total = 34)
     (Printf.sprintf "%d testable positions (expected 34)" total);
-  if ok > 12 then
-    Stdio.printf
-      "\n  NOTE: %d/%d beats the recorded 12/34. If a shrink pass changed,\n\
-      \        raise the floor and update the header measurement.\n"
-      ok total;
   let structural_ok, structural_total =
     measure ~name:"poisoned trees, descendable generator" ~spans:true
   in

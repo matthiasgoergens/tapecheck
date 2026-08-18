@@ -71,7 +71,7 @@ change to `base_quickcheck` described in
 | calculator | **1000/1000**, 103.3 | 16/1000, 912.0 | 14/1000, 910.0 |
 | bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 | 52/1000, 293.0 |
 | lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 | **1000/1000**, 82.8 |
-| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, 98.0 | 1000/1000, 98.0 |
+| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, **85.5** | 1000/1000, 98.0† |
 | difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **97.5** | 1000/1000, **97.5** |
 | difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **98.6** | 1000/1000, **98.6** |
 
@@ -82,6 +82,19 @@ inline below.
 Both tapecheck columns re-measured 2026-08-08 at `3aa0a47`; raw output
 in `../tapecheck-notes/challenge-1000-20260808.txt` and
 `challenge-1000-patched-20260808.txt`.
+
+**`difference_must_not_be_zero` re-measured 2026-08-14** at 98.0 to
+85.5 mean evaluations, when `minimize_duplicated_choices` was enabled
+by default (raw:
+`../tapecheck-notes/challenge-1000-duplate-20260814.txt`). That pass
+lowers a whole group of equal-valued choices at once, which is exactly
+this challenge's shape; quality is unchanged at 1000/1000, and every
+other row in this table moved by under 1%. † The `+patch` column was
+measured on 2026-08-08, before that pass existed, and has not been
+re-measured; expect it to move the same way, but it is not measured
+here. The pass must run after the deletion and lowering passes — placed before them it costs the
+poisoned-containers guard 21/48 to 17/48, measured, see
+`WAVE2-REORDER-AND-DUPLICATES.md`.
 
 **lengthlist now normalises, which is the row that moved.** It was
 716/1000 at 261.0 when this table was first written and is 1000/1000 at
