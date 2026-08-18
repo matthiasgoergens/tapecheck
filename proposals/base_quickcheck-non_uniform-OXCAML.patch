@@ -2,7 +2,7 @@ diff --git a/src/generator.ml b/src/generator.ml
 index 2146854..46898f1 100644
 --- a/src/generator.ml
 +++ b/src/generator.ml
-@@ -569,11 +569,33 @@ module%template For_integer (Integer : Int_with_random) = struct
+@@ -569,11 +569,43 @@ module%template For_integer (Integer : Int_with_random) = struct
    ;;
  
    let non_uniform f lo hi =
@@ -14,11 +14,21 @@ index 2146854..46898f1 100644
 +    (* Draw the branch selector FIRST, always draw the general value, and
 +       order the branches lo / general / hi.
 +
-+       Distribution is unchanged: the selector is independent of the
-+       value, so this is a pure reassociation of the same three-way
-+       choice. What changes is how the draws are RECORDED, which matters
-+       to any tool that reduces a counterexample by editing the recorded
-+       choice sequence.
++       The branch distribution is unchanged, by count rather than by
++       assertion: over the 2^53-point selector grid both formulations
++       send 450359962737050 selectors to lo, 450359962737050 to hi and
++       8106479329266892 to general.
++
++       Which selector reaches which branch does change, on whole
++       intervals: stock's cumulative weights are [0.05; 0.10; 1.0], so
++       hi occupies (0.05, 0.10], where here it occupies [0.95, 1). That
++       is the intended effect -- it is what lets position 0 order lo <
++       general < hi. It is visible only to something that forces a
++       selector value; the sampler itself never returns 1.0.
++
++       What changes materially is how the draws are RECORDED, which
++       matters to any tool that reduces a counterexample by editing the
++       recorded choice sequence.
 +
 +       Previously [return lo] and [return hi] drew nothing further while
 +       [f lo hi] drew more, so [int] reached max_value through a shorter

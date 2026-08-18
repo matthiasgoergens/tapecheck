@@ -12,9 +12,10 @@ opam exec --switch=5.2.0+ox -- dune exec --profile oxcaml \
     test_regression/regression_guard.exe                            # regression_guard: all guards passed
 ```
 
-Every benchmark reproduces exactly: 38 / 22 / 178 / 173 / 90 / 56,
-zig-zag 83 of 83 at 30 calls, deep bind 158, self_len 47/100 at 170.
-Not merely "it compiles" — the engine behaves identically.
+The current regression guard reproduces the stock-OCaml results exactly (all
+quality and cost guards pass). The literal figures previously copied here
+became stale as the engine improved; the executable is now the single source
+of truth. This is not merely "it compiles" — the engine behaves identically.
 
 The repo already carries an `oxcaml` dune profile, and a guard rule that
 detects an ox switch and fails with *"OxCaml switch detected: build with

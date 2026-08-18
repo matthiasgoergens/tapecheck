@@ -1,5 +1,12 @@
 open! Base
 
+type Splittable_random.span_label +=
+  | List_element
+  | Structural_list_element
+  | Recursive_attempt
+  | Recursive_layer
+  | Reorderable_span
+
 module T : sig
   type +'a t
 
@@ -193,6 +200,81 @@ let recursive_union nonrec_list ~f =
   weighted_recursive_union (weighted nonrec_list) ~f:(fun self -> weighted (f self))
 ;;
 
+let recursive_with_max_leaves
+  ?(max_leaves = 100)
+  ?(max_attempts = 1_000)
+  base
+  ~f
+  =
+  if max_leaves <= 0
+  then
+    raise_s
+      [%message
+        "Base_quickcheck.Generator.recursive_with_max_leaves: max_leaves <= 0"
+          (max_leaves : int)];
+  if max_attempts <= 0
+  then
+    raise_s
+      [%message
+        "Base_quickcheck.Generator.recursive_with_max_leaves: max_attempts <= 0"
+          (max_attempts : int)];
+  create (fun ~size ~random ->
+    (* A fresh exception constructor prevents a nested leaf-budget generator
+       from mistaking its caller's limit signal for one of its own retries. *)
+    let exception Leaf_limit_reached in
+    let remaining = ref max_leaves in
+    let limit_reached = ref false in
+    let limited_base =
+      create (fun ~size ~random ->
+        if !remaining <= 0
+        then begin
+          (* A user's [try ... with _] can intercept any OCaml exception.
+             Remember the breach independently so swallowing our private
+             signal cannot defeat the leaf cap. *)
+          limit_reached := true;
+          Stdlib.raise_notrace Leaf_limit_reached
+        end;
+        Int.decr remaining;
+        generate base ~size ~random)
+    in
+    let layer generator =
+      create (fun ~size ~random ->
+        Splittable_random.with_span ~descendable:true random Recursive_layer
+          ~f:(fun () -> generate generator ~size ~random))
+    in
+    let select strategies = layer (union strategies) in
+    let strategies = ref [ limited_base; f (select [ limited_base ]) ] in
+    let capacity = ref 2 in
+    let keep_growing = ref true in
+    while !keep_growing && !capacity <= max_leaves do
+      strategies := !strategies @ [ f (select !strategies) ];
+      if !capacity > max_leaves / 2
+      then keep_growing := false
+      else capacity := !capacity * 2
+    done;
+    let strategy = select !strategies in
+    let rec attempt attempts =
+      if attempts >= max_attempts
+      then
+        raise_s
+          [%message
+            "Base_quickcheck.Generator.recursive_with_max_leaves: generation repeatedly exceeded the leaf cap"
+              (max_leaves : int)
+              (max_attempts : int)];
+      remaining := max_leaves;
+      limit_reached := false;
+      try
+        Splittable_random.with_span ~discard_on_exception:true random
+          Recursive_attempt ~f:(fun () ->
+          let value = generate strategy ~size ~random in
+          if !limit_reached then Stdlib.raise_notrace Leaf_limit_reached;
+          value)
+      with
+      | Leaf_limit_reached -> attempt (attempts + 1)
+    in
+    attempt 0)
+;;
+
 let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
   create (fun ~size ~random ->
     assert (min_length <= max_length);
@@ -239,7 +321,11 @@ let result ok_t err_t =
 
 let list_generic ?min_length ?max_length elt_gen =
   let%bind sizes = sizes ?min_length ?max_length () in
-  List.map sizes ~f:(fun size -> with_size ~size elt_gen) |> all
+  List.map sizes ~f:(fun size ->
+    create (fun ~size:_ ~random ->
+      Splittable_random.with_span random List_element ~f:(fun () ->
+        generate elt_gen ~size ~random)))
+  |> all
 ;;
 
 let list elt_gen = list_generic elt_gen
@@ -247,6 +333,99 @@ let list_non_empty elt_gen = list_generic ~min_length:1 elt_gen
 
 let list_with_length elt_gen ~length =
   list_generic ~min_length:length ~max_length:length elt_gen
+;;
+
+let bits_to_represent n =
+  let rec loop n bits =
+    if n = 0 then bits else loop (Int.shift_right n 1) (bits + 1)
+  in
+  loop n 0
+;;
+
+let log_uniform_bucket_bounds value =
+  let bits = bits_to_represent value in
+  let bucket_lo = if bits = 0 then 0 else Int.shift_left 1 (bits - 1) in
+  let bucket_hi =
+    if bits = 0
+    then 0
+    else if bits >= Stdlib.Sys.int_size - 1
+    then Int.max_value
+    else Int.shift_left 1 bits - 1
+  in
+  bucket_lo, bucket_hi
+;;
+
+let log_uniform_bucket_size ~lo ~hi value =
+  let bucket_lo, bucket_hi = log_uniform_bucket_bounds value in
+  Int.min hi bucket_hi - Int.max lo bucket_lo + 1
+;;
+
+let log_uniform_tail_weight ~lo ~hi first =
+  let rec loop value total =
+    let _, bucket_hi = log_uniform_bucket_bounds value in
+    let stop = Int.min hi bucket_hi in
+    let count = stop - value + 1 in
+    let bucket_size = log_uniform_bucket_size ~lo ~hi value in
+    let total = total +. (Float.of_int count /. Float.of_int bucket_size) in
+    if stop = hi then total else loop (stop + 1) total
+  in
+  loop first 0.
+;;
+
+let list_structural ?(min_length = 0) ?(max_length = Int.max_value) elt_gen =
+  if min_length < 0
+  then
+    raise_s
+      [%message
+        "Base_quickcheck.Generator.list_structural: min_length < 0"
+          (min_length : int)];
+  if min_length > max_length
+  then
+    raise_s
+      [%message
+        "Base_quickcheck.Generator.list_structural: min_length > max_length"
+          (min_length : int)
+          (max_length : int)];
+  create (fun ~size ~random ->
+    let upper_bound = min_length + size in
+    let hi =
+      if upper_bound >= min_length
+      then Int.min max_length upper_bound
+      else max_length
+    in
+    let rec required remaining acc =
+      if remaining = 0
+      then optional min_length acc
+      else
+        required
+          (remaining - 1)
+          (generate elt_gen ~size ~random :: acc)
+    and optional length acc =
+      let at_maximum = length = hi in
+      let probability =
+        if at_maximum
+        then 0.
+        else
+          let weight =
+            1.
+            /. Float.of_int
+                 (log_uniform_bucket_size ~lo:min_length ~hi length)
+          in
+          let tail = log_uniform_tail_weight ~lo:min_length ~hi length in
+          1. -. (weight /. tail)
+      in
+      let forced = if at_maximum then Some false else None in
+      match
+        Splittable_random.with_span ~deletable:true random
+          Structural_list_element ~f:(fun () ->
+          if Splittable_random.bool_with_probability random ~probability ?forced
+          then Some (generate elt_gen ~size ~random)
+          else None)
+      with
+      | None -> List.rev acc
+      | Some value -> optional (length + 1) (value :: acc)
+    in
+    required min_length [])
 ;;
 
 let list_filtered elts =
@@ -852,3 +1031,13 @@ module Debug = struct
       value)
   ;;
 end
+
+
+(* Opt-in structural capability: wrap [t] so the recorder retains a
+   reorderable span around its draws. Reordering is only meaningful for
+   generators whose children are also wrapped in reorderable spans
+   sharing this label; see WAVE2-REORDER-AND-DUPLICATES.md. *)
+let with_reorderable_span t =
+  create (fun ~size ~random ->
+    Splittable_random.with_span ~reorderable:true random Reorderable_span
+      ~f:(fun () -> generate t ~size ~random))

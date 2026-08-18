@@ -43,8 +43,123 @@ let () =
   let out2 = Tape.finish tape in
   check "replay reproduces" (v2 = v1);
   check "replay not overrun" (not out2.Tape.overrun);
+  (* [equal_choices]: "identically" is a claim about the recording, and
+     compare_shortlex is the shrink order, which can rank two different
+     recordings equal. *)
   check "replay re-records identically"
-    (Tape.compare_shortlex out1.Tape.choices out2.Tape.choices = 0);
+    (Tape.equal_choices out1.Tape.choices out2.Tape.choices);
+
+  (* Deletable span boundaries are runtime metadata over half-open choice
+     ranges.  They are reconstructed on replay rather than becoming part of
+     the persisted image.  An observational outer span is filtered without
+     disturbing its nested deletable range. *)
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false
+    ~discardable:false ~descendable:false ~reorderable:false;
+  ignore
+    (Tape.draw_int tape ~lo:0L ~hi:10L
+       ~sample:(fun ~lo:_ ~hi:_ -> 4L)
+     : int64);
+  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true
+    ~discardable:false ~descendable:false ~reorderable:false;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:false
+    ~descendable:false ~reorderable:false ~discarded:false;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
+    ~descendable:false ~reorderable:false ~discarded:false;
+  let spanned = Tape.finish tape in
+  check "only deletable nested spans are retained"
+    (Array.to_list spanned.Tape.spans
+     = [ { Tape.stream = Tape.root
+         ; label = 23
+         ; deletable = true
+         ; discarded = false
+         ; descendable = false
+         ; reorderable = false
+         ; depth = 0
+         ; start = 1
+         ; stop = 2
+         }
+       ]);
+  Tape.start_replay_image tape spanned.Tape.image;
+  Tape.on_span_start tape ~stream:Tape.root ~label:17 ~deletable:false
+    ~discardable:false ~descendable:false ~reorderable:false;
+  ignore
+    (Tape.draw_int tape ~lo:0L ~hi:10L
+       ~sample:(fun ~lo:_ ~hi:_ -> 9L)
+     : int64);
+  Tape.on_span_start tape ~stream:Tape.root ~label:23 ~deletable:true
+    ~discardable:false ~descendable:false ~reorderable:false;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> false) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:false
+    ~descendable:false ~reorderable:false ~discarded:false;
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
+    ~descendable:false ~reorderable:false ~discarded:false;
+  let respanned = Tape.finish tape in
+  check "replay reconstructs span boundaries"
+    (Array.to_list spanned.Tape.spans = Array.to_list respanned.Tape.spans);
+
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:29 ~deletable:false
+    ~discardable:true ~descendable:false ~reorderable:false;
+  ignore
+    (Tape.draw_int tape ~lo:0L ~hi:10L
+       ~sample:(fun ~lo:_ ~hi:_ -> 6L)
+     : int64);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:true
+    ~descendable:false ~reorderable:false ~discarded:true;
+  let discarded = Tape.finish tape in
+  check "exceptional discardable span is retained"
+    (match Array.to_list discarded.Tape.spans with
+     | [ span ] ->
+       span.label = 29
+       && span.start = 0
+       && span.stop = 1
+       && span.discarded
+       && not span.deletable
+       && not span.descendable
+     | _ -> false);
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:29 ~deletable:false
+    ~discardable:true ~descendable:false ~reorderable:false;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> false) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:true
+    ~descendable:false ~reorderable:false ~discarded:false;
+  let successful = Tape.finish tape in
+  check "successful discardable span is filtered"
+    (Array.length successful.Tape.spans = 0);
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:31 ~deletable:false
+    ~discardable:false ~descendable:true ~reorderable:false;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
+    ~descendable:true ~reorderable:false ~discarded:false;
+  let descendable = Tape.finish tape in
+  check "successful descendable span is retained"
+    (match Array.to_list descendable.Tape.spans with
+     | [ span ] -> span.label = 31 && span.descendable && not span.discarded
+     | _ -> false);
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:31 ~deletable:false
+    ~discardable:false ~descendable:true ~reorderable:false;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:false ~discardable:false
+    ~descendable:true ~reorderable:false ~discarded:true;
+  let failed_descendable = Tape.finish tape in
+  check "failed descendable span is not a replacement candidate"
+    (Array.length failed_descendable.Tape.spans = 0);
+  Tape.start_recording tape;
+  Tape.on_span_start tape ~stream:Tape.root ~label:37 ~deletable:true
+    ~discardable:true ~descendable:true ~reorderable:false;
+  ignore (Tape.draw_bool tape ~sample:(fun () -> true) : bool);
+  Tape.on_span_stop tape ~stream:Tape.root ~deletable:true ~discardable:true
+    ~descendable:true ~reorderable:false ~discarded:true;
+  let failed_actionable = Tape.finish tape in
+  check "failed actionable span is retained only as discarded input"
+    (match Array.to_list failed_actionable.Tape.spans with
+     | [ span ] ->
+       span.discarded && not span.deletable && not span.descendable
+     | _ -> false);
 
   (* Editing a choice steers generation: flip the bool to false and the
      dependent draw disappears; the output tape is shorter, hence
@@ -87,7 +202,7 @@ let () =
   let bytes = Tape.serialize sample in
   (match Tape.deserialize bytes with
   | Some back ->
-    check "serialize round-trips" (Tape.compare_shortlex sample back = 0);
+    check "serialize round-trips" (Tape.equal_choices sample back);
     check "same length" (Array.length back = Array.length sample)
   | None -> failwith "FAILED: deserialize returned None");
   (* Cutting mid-record is rejected; cutting at a record boundary

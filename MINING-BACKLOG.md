@@ -23,19 +23,20 @@ changed substantially in the choice-sequence rework.
 
 ## Not mined, highest value first
 
-### 1. `datatree.py` — two distinct features, both absent here
+### 1. `datatree.py` — exact versions of two partially ported features
 
 Tracks which choice-prefixes have been explored. Gives:
 
-- **Exhaustion detection**: knowing the search space is finished, so a
-  run stops early instead of re-drawing the same cases. tapecheck has no
-  notion of this.
-- **Non-deterministic generator detection**, which is a health check we
-  do not have at all. Their message is worth stealing verbatim:
+- **Exhaustion detection**: tapecheck now stops after a long run of repeated
+  generated images, but this is a heuristic. Hypothesis's prefix tree knows
+  when a finite search space is actually exhausted.
+- **Non-deterministic generator detection**: tapecheck now replays and checks
+  a bounded sample in normal `run`/`resume` paths. Hypothesis's DataTree tracks
+  this continuously and exactly. Their message remains worth stealing:
   *"Inconsistent data generation! Data generation behaved differently
   between different runs. Is your data generation depending on external
   state?"* Raised as `Flaky`. A generator reading a clock or a global
-  currently produces silent nonsense in tapecheck.
+  can still escape a bounded replay sample here.
 
 Also `Killed` nodes: marking subtrees as not worth exploring.
 
@@ -66,21 +67,23 @@ Worth understanding even if not ported: "your shrinker is
 non-deterministic and here is a way to measure and fix that" is a strong
 thing to be able to discuss.
 
-### 3. `optimiser.py` + `pareto.py` — `target()`, already on the roadmap
+### 3. `optimiser.py` + `pareto.py` — richer targeting
 
-`target()` is queued in `outreach/ro-roadmap.md` and unstarted. The
-implementation is a hill climber that regenerates parts of a test case
+`Tape_engine.run_target` now provides a single-objective kernel. What remains
+is test-body `target()` calls, labels, multiple objectives, tape growth and a
+Pareto front. Hypothesis's implementation is a hill climber that regenerates parts of a test case
 (`optimiser.py`), and `pareto.py` maintains a Pareto front for
 multi-objective targeting. Note it reuses `find_integer`, which we now
 have. Their own docstring is refreshingly modest: *"not expected to
 produce amazing results, because it is designed to be run [in a
 limited budget]"* — that honesty is quotable.
 
-### 4. `database.py` — failure replay across runs
+### 4. `database.py` — richer failure corpora and defaults
 
-tapecheck has `resume` from a pasted tape, which is the manual version.
-A real database keyed by test identity, replaying last-known failures
-first, is a distinct feature and a common ask.
+`Tape_db` is wired through `Tape_test`: it replays the last failure first and
+deletes stale entries after a fix. Hypothesis remains ahead with default test
+identity and primary/secondary/Pareto corpora rather than one explicitly keyed
+image.
 
 ### 5. `shrinking/{integer,lexical,ordering,floats}.py`
 
@@ -91,10 +94,9 @@ behind `reorder_examples`, and `Lexical` drives
 
 ### 6. Smaller
 
-`statistics.py` (the RO6 reporting surface — the
-`statistics-and-health` branch covers some of this), `control.py`
-(`assume`, `note`, `event`), `provisional.py`, `stateful.py` (compare
-against the port already made).
+`statistics.py`/`control.py` (the port now has summaries, `assume`, and
+`event`, but not the full surface), `provisional.py`, and the broader
+`RuleBasedStateMachine` API beyond the deliberately narrower `Stateful` port.
 
 ## Beyond Hypothesis
 

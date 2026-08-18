@@ -1,56 +1,63 @@
-# What is on master, and what is not
+# Integration status
 
-Updated 2026-07-31 after upstreaming.
+Updated 2026-08-13. Earlier update 2026-08-10 after Wave 1 was merged into
+local `master`.
 
-## Merged and pushed
+## Wave 2 on `master`, and the active branch
 
-- **`budgets-and-resume`** (34 commits) — the shrinker investigation and
-  everything that came out of it: the per-pass failure cutoff,
-  `find_integer`, `lower_together` (the zig-zag defence), the failure
-  database (`tape_db.ml`), non-deterministic generator detection (**available but NOT wired into `run`/`resume`/`Tape_test` — only diagnostic tests call it**), the
-  `~domains` clamp, the regression guard, all the diagnostic probes, and
-  the write-ups.
-- **`stateful-testing`** (10 commits) — `Stateful`, `Bisim`, the
-  per-operation mutual-raise health check and its adversarial tests, and
-  the head-to-head against `qcheck-stm` with its independent
-  verification.
+`origin/master` has advanced past Wave 1 to `26d3dcd`: the Wave 2
+continuation-list seams landed via PRs #31 and #30.
 
-Both merged cleanly. Full `dune test` passes on the merged tree: all
-nine regression guards, the bisim health and adversarial assertions,
-stateful shrink-coherence, resume, explain, round-trip, fn-shrink.
+The active line is now `wave2/span-deletion` (local, not yet pushed). On top
+of the continuation lists it adds the capability-split span seam (deletable /
+discardable / descendable), `remove_discarded`, the opt-in
+`pass_to_descendant` pass (poisoned leaves 12/34 to 34/34, matching
+Hypothesis; calculator replay attempts 501.3 to 438.6 mean, discovery
+unchanged), and Hypothesis-style recursive leaf budgets. See
+`WAVE2-PASS-TO-DESCENDANT.md` for the checkpoint and its measured next
+candidates: `reorder_spans` and `minimize_duplicated_choices` behind explicit
+capabilities, then first-class string/bytes choices.
 
-## NOT merged: `statistics-and-health`
+Open on GitHub: PR #20 (`docs/wave-2-design`, design note) and PR #29
+(`wave2/monotone-list-sizes`, DRAFT, unresolved size-bound/distribution
+trade-off). Issue #2 (trivial-only health check) is open; the adversarial
+review issues #4-#15 are all closed via Wave 1.
 
-Conflicts in three files, aborted rather than resolved at the end of a
-long session:
+## Wave 1 merged locally
 
-```
-CONFLICT (content): engine/tape_test.ml
-CONFLICT (content): test_bq/dune
-Recorded preimage for 'engine/tape_engine.ml'
-```
+The unchanged-generator path is complete in this integration branch. It
+contains budgets and resumable shrinking, database replay, determinism checks,
+statistics and health checks, generated-function streams, parallel execution,
+stateful and bisimulation testing, targeting and multi-failure kernels, plus
+the domain identity/order correction and their property laws.
 
-The branch is RO6 work — `event()`/discard counting and Hypothesis's four
-health checks — plus two real bug fixes made while building it:
-`assume`'s exception being swallowed by `Or_error` wrapping (every
-discard became a false failure), and `data_too_large` unreachable via
-double-counting.
+The remaining Wave 1 topic branches were consolidated here: the dead-pass
+cleanup, challenge refresh and two-sided guard, documentation/test fixes,
+`non_uniform` proposal evidence, relation verification, structural identity
+laws, `sort_siblings` evidence, and the current Hypothesis-gap inventory.
+`Tape_test` now also exposes `with_sample` and `with_sample_exn`, rejects a
+half-configured database, reports explicit-example failures, and database
+writes use unique same-directory temporary files.
 
-It conflicts because `tape_engine.ml` has changed a great deal on master
-since that branch was cut — the cutoff, `find_integer`, `lower_together`,
-the database hooks and the determinism check all landed after it. The
-merge wants doing deliberately, with the guard suite as the check, not
-squeezed in at the tail of a session.
+Wave 1 was published to `origin/master` at `2904855` on 2026-08-10. The
+resulting GitHub Actions run passed the full forced suite, regression guard,
+top-level engine-name guard, and deterministic vendor-provenance check. The
+engine-name guard protects the specific class of merge loss it was written
+for; it is not a complete OCaml API-compatibility proof.
 
-Worth noting the ordering cost, which is the same one flagged in
-`MULTI-BUG.md`: branches cut before the engine work get dearer to merge
-the longer they wait. This one should go next, before anything else
-touches `tape_engine.ml`.
+## Deliberately outside Wave 1
 
-## Also unmerged
+- `docs/wave-2-design`: generator-aware spans and the later pass work.
+- `bug/nested-list-length`: the reproducer for anti-monotone list budgeting.
+- `wave2/monotone-list-sizes`: the list-generator rewrite and its unresolved
+  size-bound/distribution trade-off.
+- `hypothesis-baseline`: the separate Python comparison harness.
 
-- `experiment/try-both-realign` — 0 commits ahead of master; already in.
-- `hypothesis-baseline` — deliberately separate, unrelated history. It is
-  the Python comparison harness and does not belong in the OCaml tree;
-  people who just want to use tapecheck should not get the Python
-  baggage.
+## External publication dependency
+
+The repository remains a source-workspace proof of concept rather than an opam
+package. A linked consumer needs the patched `splittable_random` underneath a
+recompiled `base_quickcheck`; upstream `janestreet/splittable_random#2` is still
+open. Vendoring proves the unchanged-generator integration, but publishing the
+vendored libraries under the same findlib names would conflict with the normal
+packages rather than constitute a safe drop-in release.

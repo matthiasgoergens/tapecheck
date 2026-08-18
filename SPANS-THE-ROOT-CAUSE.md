@@ -3,6 +3,11 @@
 Written 2026-07-31, after mining Hypothesis's shrinker for the third
 time in a day and finding the same wall each time.
 
+Status update, 2026-08-12: the span seam, `remove_discarded`, and an opt-in
+`pass_to_descendant` now exist. The unchanged poison-tree arm remains 12/34;
+adding recursive span brackets reaches 34/34. See
+`WAVE2-PASS-TO-DESCENDANT.md`. The historical diagnosis below is retained.
+
 ## The three gaps, which looked unrelated
 
 1. **`remove_discarded`** — filtered generators leave rejected draws on
@@ -117,7 +122,8 @@ measurement, leaving two.
   without any cooperation from generator authors. It does not work, and
   the reason is decisive rather than a matter of tuning:
   `Splittable_random.split` appears **exactly once in all of
-  base_quickcheck's `generator.ml`** (line 87), inside `fn` — the
+  base_quickcheck's `generator.ml`** (`vendor/base_quickcheck/generator.ml:26`,
+  re-checked 2026-08-08), inside `fn` — the
   FUNCTION generator — where it gives a function's body an independent
   stream so that repeated calls with the same argument stay
   deterministic. `perturb` serves the same purpose for arguments.
@@ -151,12 +157,27 @@ measurement, leaving two.
 
   So this is not a free win, and it is a bigger change than it first
   looks: it needs matching shrinker work, not just a generator change.
-  One encouraging detail — tapecheck already has a `delete_streams` pass
-  that measures **0 attempts on every property**, dormant only because
-  nothing ever splits. Under split generators it becomes the
-  element-deletion primitive, and `pass_to_descendant` becomes
-  promote-a-substream. The machinery is half-built for a world that does
-  not currently exist.
+  There *was* an encouraging detail here: tapecheck had a
+  `delete_streams` pass measuring 0 attempts on every property, dormant
+  only because nothing ever splits, which under split generators would
+  become the element-deletion primitive.
+
+  **It was removed on 2026-08-09 (issue #8), and the encouraging reading
+  did not survive being measured.** It is not that the pass had no
+  workload; it is that on the workload built specifically to favour it —
+  a generated function probed at twelve arguments where only one decides
+  the verdict, so eleven whole streams are removable noise — it reached
+  the *same* minimal while costing 38% more attempts (63 against 39).
+  The existing fn tests agree: identical minimals, 16→15, 22→18 and 7→5
+  attempts without it, and the whole challenge suite at n=1000 is
+  byte-identical with it gone. A pass that cannot pay on its own best
+  case is not half-built machinery, it is cost.
+
+  If split generators ever land, the element-deletion primitive should
+  be written against the structure that actually exists then, rather
+  than resurrected from this one on the strength of the name matching.
+  `probe_deadpasses/` is kept so that argument can be re-run rather than
+  re-remembered.
 
   Whether the change is a good idea remains open. It is a breaking change
   to generated values (versionable, per the discussion below), it costs
@@ -301,17 +322,23 @@ Three details of theirs are load-bearing and worth keeping when porting:
 - **Every position, not just one.** First and last are the easy cases.
 
 Ported to `test_poison/`. Same three sizes (2, 5, 10) and two seeds as
-theirs, hence the same 34 leaf positions. Measured 2026-08-01:
+theirs, hence the same 34 leaf positions. First measured 2026-08-01,
+re-measured 2026-08-08:
 
 | | positions fully reduced |
 |---|---|
 | Hypothesis 6.152.9 (their own test) | 34/34 |
-| tapecheck | 10/34 |
+| tapecheck | 12/34 (10/34 on 2026-08-01) |
 
 The failure has a shape, which is what makes it evidence rather than a
-score. Positions 0 and 1 reduce fully; from position 2 onward the
-surviving tree grows monotonically with how deep the poison sits in the
-tape. For the 10-leaf tree: 4, 5, 6, 8, 10, 10, 10, 10 leaves left.
+score. The ENDS reduce and the middle does not: for the 10-leaf tree
+only positions 0 and 9 come out, and between them the surviving tree
+grows monotonically with how deep the poison sits in the tape — 3, 4,
+5, 6, 8, 10, 10, 10 leaves left at positions 1 through 8. The 5-leaf
+tree reduces at 0, 1 and 4 and sticks at 4 and 5 leaves in the middle.
+(The 2026-08-01 measurement recorded positions 0 and 1 reducing, with
+4, 5, 6, 8, 10, 10, 10, 10 left; the extra two positions in the 12/34
+total are the last leaf of each 10-leaf tree.)
 
 The mechanism is legible. Poison early in the tape can be isolated by
 deleting what *follows* it, and suffix deletion is a pass we have.

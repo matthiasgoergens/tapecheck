@@ -75,8 +75,7 @@ type policy =
    of appending duplicates. [input]/[rpos] is the replay side; [known]
    distinguishes a stream present in the replay image (exhausting it is
    an overrun) from a brand-new stream (all draws fresh, no flags: new
-   salts appear whenever an edit changes an argument's hash, and
-   whole-stream deletion relies on absent streams sampling fresh). *)
+   salts appear whenever an edit changes an argument's hash). *)
 type stream = {
   mutable written : choice array;
   mutable wlen : int;
@@ -100,6 +99,36 @@ type image = {
   streams : (key * choice array) array;
 }
 
+(* Actionable structural boundaries observed while generating one image.
+   They are deliberately runtime metadata rather than part of [image]: labels
+   are an extensible variant owned by generator libraries and are not
+   serialisable, while replay deterministically reconstructs the boundaries
+   from the generator.  Purely observational spans are filtered at the
+   callback; retained spans explicitly opt into deletion, discard cleanup, or
+   same-labelled descendant replacement. Positions are half-open choice ranges
+   within one stream. *)
+type span = {
+  stream : key;
+  label : int;
+  deletable : bool;
+  discarded : bool;
+  descendable : bool;
+  reorderable : bool;
+  depth : int;
+  start : int;
+  stop : int;
+}
+
+type open_span = {
+  open_stream : key;
+  open_label : int;
+  open_deletable : bool;
+  open_discardable : bool;
+  open_descendable : bool;
+  open_reorderable : bool;
+  open_start : int;
+}
+
 let image_of_main main = { main; streams = [||] }
 
 type t = {
@@ -110,6 +139,8 @@ type t = {
   streams : (key, stream) Hashtbl.t;
   (* Split ordinal counters, per parent key, reset each run. *)
   splits : (key, int) Hashtbl.t;
+  mutable open_spans : open_span list;
+  mutable spans_rev : span list;
 }
 
 let create () =
@@ -120,13 +151,17 @@ let create () =
     misaligned = false;
     streams = Hashtbl.create 8;
     splits = Hashtbl.create 8;
+    open_spans = [];
+    spans_rev = [];
   }
 
 let reset t =
   Hashtbl.reset t.streams;
   Hashtbl.reset t.splits;
   t.overrun <- false;
-  t.misaligned <- false
+  t.misaligned <- false;
+  t.open_spans <- [];
+  t.spans_rev <- []
 
 let get_stream t k =
   match Hashtbl.find_opt t.streams k with
@@ -161,6 +196,7 @@ type output = {
          callers want, and what all pre-stream code compiled against. *)
   overrun : bool;
   misaligned : bool;
+  spans : span array;
 }
 
 let stream_written (s : stream) = Array.sub s.written 0 s.wlen
@@ -183,13 +219,101 @@ let finish t =
   let image = { main; streams = Array.of_list subs } in
   let overrun = t.overrun in
   let misaligned = t.misaligned in
+  if not (List.is_empty t.open_spans) then
+    invalid_arg "Tape.finish: unclosed structural span";
+  let spans =
+    List.rev t.spans_rev
+    |> List.sort (fun a b ->
+      let c = compare_key a.stream b.stream in
+      if c <> 0 then c
+      else
+        let c = compare a.start b.start in
+        if c <> 0 then c
+        else
+          let c = compare a.stop b.stop in
+          if c <> 0 then c
+          else
+            let c = compare a.label b.label in
+            if c <> 0 then c
+            else
+              let c = compare a.deletable b.deletable in
+              if c <> 0 then c
+              else
+                let c = compare a.discarded b.discarded in
+                if c <> 0 then c
+                else
+                  let c = compare a.descendable b.descendable in
+                  if c <> 0 then c
+                  else
+                    let c = compare a.reorderable b.reorderable in
+                    if c <> 0 then c else compare a.depth b.depth)
+    |> Array.of_list
+  in
   t.mode <- Off;
   reset t;
-  { image; choices = image.main; overrun; misaligned }
+  { image; choices = image.main; overrun; misaligned; spans }
 
 (* Overrun so far: lets the engine skip running the test on a proposal
    that already truncated during generation. Monotone within a run. *)
 let overrun_now (t : t) = t.overrun
+
+let on_span_start t ~stream ~label ~deletable ~discardable ~descendable
+    ~reorderable =
+  if not (deletable || discardable || descendable || reorderable)
+  then ()
+  else match t.mode with
+  | Off -> ()
+  | Recording | Replaying ->
+    let s = get_stream t stream in
+    t.open_spans <-
+      { open_stream = stream
+      ; open_label = label
+      ; open_deletable = deletable
+      ; open_discardable = discardable
+      ; open_descendable = descendable
+      ; open_reorderable = reorderable
+      ; open_start = s.wpos
+      }
+      :: t.open_spans
+
+let on_span_stop t ~stream ~deletable ~discardable ~descendable ~reorderable
+    ~discarded =
+  if not (deletable || discardable || descendable || reorderable)
+  then ()
+  else match t.mode with
+  | Off -> ()
+  | Recording | Replaying ->
+    (match t.open_spans with
+     | { open_stream; open_label; open_deletable; open_discardable
+       ; open_descendable; open_reorderable; open_start } :: rest
+       when compare_key open_stream stream = 0
+            && Bool.equal open_deletable deletable
+            && Bool.equal open_discardable discardable
+            && Bool.equal open_descendable descendable
+            && Bool.equal open_reorderable reorderable ->
+       let s = get_stream t stream in
+       t.open_spans <- rest;
+       let retained_deletable = open_deletable && not discarded in
+       let retained_descendable = open_descendable && not discarded in
+       let retained_reorderable = open_reorderable && not discarded in
+       if retained_deletable
+          || retained_descendable
+          || retained_reorderable
+          || (open_discardable && discarded)
+       then
+         t.spans_rev <-
+           { stream
+           ; label = open_label
+           ; deletable = retained_deletable
+           ; discarded = open_discardable && discarded
+           ; descendable = retained_descendable
+           ; reorderable = retained_reorderable
+           ; depth = List.length rest
+           ; start = open_start
+           ; stop = s.wpos
+           }
+           :: t.spans_rev
+     | _ -> invalid_arg "Tape.on_span_stop: unbalanced structural span")
 
 (* Record into a stream with rewrite-over semantics: at a call boundary
    [wpos] rewinds, and re-recording an identical prefix advances through
@@ -418,15 +542,15 @@ let draw_float ?(stream = root) t ~lo ~hi
     record_in s (Float { value; lo; hi });
     value
 
-let draw_bool ?(stream = root) t ~(sample : unit -> bool) : bool =
+let draw_bool ?(stream = root) ?forced t ~(sample : unit -> bool) : bool =
   match t.mode with
   | Off -> sample ()
   | Recording | Replaying ->
     let s = get_stream t stream in
     let value =
       match pop t s ~matches:(function Bool _ -> true | _ -> false) with
-      | Some (Bool b) -> b
-      | _ -> sample ()
+      | Some (Bool b) -> Option.value forced ~default:b
+      | _ -> (match forced with Some value -> value | None -> sample ())
     in
     record_in s (Bool value);
     value
@@ -732,6 +856,119 @@ let compare_choice a b =
   | Bool _, _ -> -1
   | _, Bool _ -> 1
 
+(* The shrink order, and the target it descends toward, in ONE place.
+
+   These used to be two definitions in two files: [compare_choice] here
+   said what "smaller" means, while [choice_at_target] and
+   [trivial_choice] in tape_engine.ml independently said what the
+   minimum IS. Nothing tied them together, so they could disagree
+   silently -- and a shrinker whose notion of "smaller" and notion of
+   "smallest" disagree walks past its own answer.
+
+   [Domain] is the single statement of both, and test_domain_laws/
+   property-tests the relationship rather than trusting it:
+
+     target is a lower bound       compare (target c) c <= 0
+     at_target agrees with compare at_target c  <->  compare c (target c) = 0
+     target is idempotent          target (target c) = target c
+
+   Note what is deliberately NOT claimed: this is a total PREORDER, not
+   a total order. Two distinct floats equidistant from the target
+   compare equal, because [float_key] is a distance. That is fine for
+   the shrinker -- acceptance requires a STRICT decrease, so equal
+   proposals are rejected and the descent still terminates -- but
+   "compare = 0" must not be read as "structurally equal". *)
+module Domain = struct
+  let target = function
+    | Integer { lo; hi; _ } ->
+      Integer { value = clamp_int64 0L ~lo ~hi; lo; hi }
+    | Float { lo; hi; _ } -> Float { value = clamp_float 0. ~lo ~hi; lo; hi }
+    | Bool _ -> Bool false
+    | Marker -> Marker
+
+  let at_target = function
+    | Integer { value; lo; hi } -> Int64.equal value (clamp_int64 0L ~lo ~hi)
+    | Float { value; lo; hi } ->
+      let t = clamp_float 0. ~lo ~hi in
+      (* Not [Float.equal]: a NaN value is never at target, and
+         [nan = nan] is already false, so plain [=] is what is wanted
+         here. Spelled out because the opposite is the usual bug. *)
+      value = t
+    | Bool b -> not b
+    | Marker -> true
+
+  let compare = compare_choice
+
+  (* Structural identity, which [compare] is NOT a test for.
+
+     Needed because two consumers ask "is this the same recording?" and
+     the order cannot answer: [check_generator_determinism] compares
+     successive replays, and [Tape_explain] deduplicates alternatives.
+     Both used [compare ... = 0], and both could therefore treat
+     genuinely different recordings as identical -- 0.0 drawn from
+     [0,1] and 5.0 drawn from [5,6] are both at their targets, so their
+     distance keys are both zero.
+
+     Floats compare by BIT PATTERN rather than by [=], so that a
+     recorded NaN equals itself. Identity here means "the same bytes on
+     the tape", and a replay that reproduces a NaN has reproduced the
+     recording; [nan = nan] being false is the right answer for
+     arithmetic and the wrong one for this question. *)
+  let equal a b =
+    match (a, b) with
+    | Integer a, Integer b ->
+      Int64.equal a.value b.value && Int64.equal a.lo b.lo
+      && Int64.equal a.hi b.hi
+    | Float a, Float b ->
+      let bits = Int64.bits_of_float in
+      Int64.equal (bits a.value) (bits b.value)
+      && Int64.equal (bits a.lo) (bits b.lo)
+      && Int64.equal (bits a.hi) (bits b.hi)
+    | Bool a, Bool b -> a = b
+    | Marker, Marker -> true
+    | _ -> false
+
+  (* A total order on the STRUCTURE, for callers that need to sort or
+     deduplicate recordings rather than rank them by how small they are.
+     Floats order by bit pattern, so this is consistent with [equal] and
+     NaN has a definite place. Not the shrink order and not a substitute
+     for it. *)
+  let kind_rank = function
+    | Integer _ -> 0
+    | Float _ -> 1
+    | Bool _ -> 2
+    | Marker -> 3
+
+  let compare_structural a b =
+    match (a, b) with
+    | Integer a, Integer b ->
+      let c = Int64.compare a.value b.value in
+      if c <> 0 then c
+      else
+        let c = Int64.compare a.lo b.lo in
+        if c <> 0 then c else Int64.compare a.hi b.hi
+    | Float a, Float b ->
+      let bits = Int64.bits_of_float in
+      let c = Int64.compare (bits a.value) (bits b.value) in
+      if c <> 0 then c
+      else
+        let c = Int64.compare (bits a.lo) (bits b.lo) in
+        if c <> 0 then c else Int64.compare (bits a.hi) (bits b.hi)
+    (* [Stdlib.compare]: inside this module [compare] is the SHRINK
+       order, which takes choices, not bools or ints. *)
+    | Bool a, Bool b -> Stdlib.compare a b
+    | Marker, Marker -> 0
+    | a, b -> Stdlib.compare (kind_rank a) (kind_rank b)
+end
+
+let equal_choices (a : choice array) (b : choice array) =
+  Array.length a = Array.length b
+  &&
+  let rec go i =
+    i >= Array.length a || (Domain.equal a.(i) b.(i) && go (i + 1))
+  in
+  go 0
+
 let compare_shortlex (a : choice array) (b : choice array) =
   let la = Array.length a and lb = Array.length b in
   if la <> lb then compare la lb
@@ -748,7 +985,14 @@ let compare_shortlex (a : choice array) (b : choice array) =
 (* Image order: total choice count first (a deleted stream is a smaller
    tape), then the main stream shortlex, then fewer streams, then the
    sorted stream lists pairwise (key order, then per-stream shortlex).
-   A total order, so shrink acceptance stays a strict descent. *)
+   A total PREORDER, not a total order, and the difference is worth
+   being exact about: [compare_choice] on floats compares a DISTANCE
+   from the target, so -1.0 and 1.0 about a target of 0.0 compare equal
+   while being different tapes. Shrink acceptance is still a strict
+   descent, because it requires [< 0] and therefore rejects the equal
+   case -- the preorder is enough for termination, which is all the
+   engine needs. What it does not license is reading [compare_image = 0]
+   as "the same tape". Pinned in test_domain_laws/. *)
 let image_size (img : image) =
   Array.fold_left
     (fun acc (_, arr) -> acc + Array.length arr)
@@ -780,3 +1024,17 @@ let compare_image (a : image) (b : image) =
       end
     end
   end
+
+(* Structural identity of whole images: "is this the same recording?",
+   which [compare_image = 0] does not answer (see [Domain.equal]). *)
+let equal_image (a : image) (b : image) =
+  equal_choices a.main b.main
+  && Array.length a.streams = Array.length b.streams
+  &&
+  let rec go i =
+    i >= Array.length a.streams
+    ||
+    let ka, arr_a = a.streams.(i) and kb, arr_b = b.streams.(i) in
+    compare_key ka kb = 0 && equal_choices arr_a arr_b && go (i + 1)
+  in
+  go 0

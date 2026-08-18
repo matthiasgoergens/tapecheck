@@ -13,7 +13,7 @@ https://github.com/matthiasgoergens/tapecheck/blob/master/docs/porting-conjectur
 
 Short version: on the cross-language
 [Shrinking Challenge](https://github.com/jlink/shrinking-challenge),
-Hypothesis normalises 9/9 at 100/100 and the port manages 3/9. So your
+Hypothesis normalises 9/9 at 100/100 and the port manages 4/9. So your
 third objection — that this does not fit `base_quickcheck`'s model of
 shrinking — is one I would now put more strongly than you did. It is a
 different model, and on the benchmark that model is currently behind.

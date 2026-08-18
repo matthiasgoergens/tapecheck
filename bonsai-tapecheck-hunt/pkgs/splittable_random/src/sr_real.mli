@@ -19,6 +19,9 @@ open! Base
 
 type t
 
+(** Extensible structural labels for property-testing engines. *)
+type span_label = ..
+
 (** Create a new [t] seeded from the given random state. This allows nondeterministic
     initialization, for example in the case that the input state was created using
     [Random.make_self_init].
@@ -44,7 +47,6 @@ val copy : t -> t
     [t], i.e., [t] will return different values than if this hadn't been called. *)
 val split : t -> t
 
-(** Legacy aliases for the preceding definitions. *)
 (** Interception hooks for property-testing engines that need to observe,
     record, or replay the stream of bounded draws (for example, choice-tape
     shrinkers in the style of Python Hypothesis's Conjecture engine).
@@ -62,7 +64,13 @@ val split : t -> t
     and may return replacement hooks for this state ([None] keeps the
     current hooks). Engines use these to key split-off streams, so that
     randomly generated functions become observable and shrinkable; see
-    design/stream-keyed-tapes.md. *)
+    design/stream-keyed-tapes.md.
+
+    This is an experimental, unreleased seam.  Its record shape may change
+    while Tapecheck is prototyping the structural information that an
+    upstream API would need.  Once published, adding required record fields
+    would break clients that construct interceptors, so the accepted API must
+    either freeze this shape or provide an abstraction that can evolve. *)
 module Intercept : sig
   type state := t
 
@@ -81,16 +89,46 @@ module Intercept : sig
         -> float
     ; unit_float : state -> default:(state -> float) -> float
     ; bool : state -> default:(state -> bool) -> bool
+    ; bool_with_probability :
+        state
+        -> probability:float
+        -> forced:bool option
+        -> default:(state -> probability:float -> bool)
+        -> bool
+        (** Intercepts weighted choices, including forced choices.  Probability
+            controls sampling; [forced] constrains replay without advancing the
+            underlying random state. *)
+    ; on_span_start :
+        span_label
+        -> deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> reorderable:bool
+        -> unit
+    ; on_span_stop :
+        deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> reorderable:bool
+        -> discarded:bool
+        -> unit
+        -> unit
+      (** Span callbacks must not raise.  They are notifications rather than
+          recovery boundaries; an exception from a callback is propagated and
+          may prevent the body from running.  If both the body and stop
+          callback raise, [Exn.Finally] preserves both exceptions.
+          [discarded] is true exactly when [with_span]'s body raised. *)
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }
 end
 
-(** [with_intercept t hooks] is a state sharing [t]'s underlying PRNG whose
-    draws consult [hooks]. [copy] preserves hooks; [split] produces
-    hook-free states (after calling [on_split], so an observer can keep its
-    record aligned); [perturb] calls [on_perturb] before mixing in the
-    salt. *)
+(** [with_intercept t hooks] returns a snapshot copy of [t] whose draws
+    consult [hooks]; [t] itself is unchanged. [copy] preserves hooks;
+    [split] calls [on_split] and installs whatever hooks it returns on the
+    freshly split state ([None] leaves the split state hook-free);
+    [perturb] calls [on_perturb] before mixing in the salt and installs
+    whatever hooks it returns ([None] keeps the current hooks). *)
 val with_intercept : t -> Intercept.t -> t
 
 module State : sig
@@ -108,6 +146,37 @@ end
 
 (** Produces a random, fair boolean. *)
 val bool : t -> bool
+
+(** [bool_with_probability t ~probability] is true with the given probability.
+    [probability] must be finite and between zero and one, inclusive.  A
+    [forced] result and the probability-zero/one cases do not advance [t], but
+    are still reported to an interceptor so a replay tree retains the forced
+    structural node.  A forced value with zero probability is rejected. *)
+val bool_with_probability : ?forced:bool -> t -> probability:float -> bool
+
+(** [with_span t label ~f] notifies an attached observer of a structurally
+    related region around [f].  [deletable] declares that removing the whole
+    region is meaningful to replay; observational spans leave it false.  With
+    no interceptor it calls [f] directly.
+    A started span is stopped even if [f] raises.  Observer callbacks must not
+    raise; if they do, their exception is propagated.  If both [f] and the
+    stop callback raise, [Exn.Finally] preserves both exceptions.
+    [discard_on_exception] asks the observer to retain the region only when
+    [f] raises, for input consumed by an abandoned generation attempt.
+    [descendable] declares that a same-labelled nested region represents a
+    value which may replace this one during replay. Deletion and descendant
+    replacement capabilities apply only when [f] returns successfully; a
+    region which raises is retained solely as discarded input when
+    [discard_on_exception] is set. *)
+val with_span
+  :  ?deletable:bool
+  -> ?discard_on_exception:bool
+  -> ?descendable:bool
+  -> ?reorderable:bool
+  -> t
+  -> span_label
+  -> f:(unit -> 'a)
+  -> 'a
 
 (** Produce a random number uniformly distributed in the given inclusive range.  (In the
     case of [float], [hi] may or may not be attainable, depending on rounding.)  *)

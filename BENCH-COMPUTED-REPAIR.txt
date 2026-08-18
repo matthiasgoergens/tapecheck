@@ -1,3 +1,10 @@
+SUPERSEDED -- this is the v1 arm of the computed repair, kept as a
+record of what v1 measured, NOT as the current result. The lengthlist
+row below (990/1000 at 126.6 mean calls) was overtaken by v3; see
+LENGTH-REPAIR.md and CHALLENGE.md for the figure that holds at HEAD.
+Marked 2026-08-08 (issue #12, item 6) because nothing in the file said
+which arm it was, so it read as current.
+
 property     arm               minimal           95% CI  mean calls   median           IQR
 --------------------------------------------------------------------------------------------
 lengthlist   master       719/1000       69.0-74.6           266.0      159   119-584    

@@ -65,7 +65,7 @@ cost**](docs/porting-conjecture-to-ocaml.md) — what the port delivers
 against the recommendations in *Property-Based Testing in Practice*,
 what it scores on the cross-language [Shrinking
 Challenge](https://github.com/jlink/shrinking-challenge) (Hypothesis
-9/9, tapecheck 3/9), and a diagnosis of each loss: one defect in
+9/9, tapecheck 4/9), and a diagnosis of each loss: one defect in
 `base_quickcheck`'s integer encoding, one structural gap from recording
 below the strategy layer, and one of my own that I fixed and then had to
 revert.
@@ -114,10 +114,16 @@ as well as reducers. It no longer does.
 
 ## Usage
 
-`Tape_test` mirrors `Base_quickcheck.Test` (same `Config`, same
-`(module S)`, same `run`/`run_exn`/`result`); existing suites switch
-by replacing the module name. The `quickcheck_shrinker` your types
-already declare is accepted and ignored.
+`Tape_test` exposes the same five callable entry points as
+`Base_quickcheck.Test` (plus the same `Config` and `(module S)` shape), so
+ordinary property calls switch by replacing the module name. This is
+source-level compatibility, not identical semantics: the
+`quickcheck_shrinker` your types already declare is accepted and ignored.
+Likewise, `with_sample` and `with_sample_exn` delegate to base_quickcheck and
+preserve its stock sample sequence. They are useful sampling utilities, but do
+**not** satisfy Base's promise to preview the values that this module's `run`
+would see: Tapecheck's three test-running entry points use their own taped,
+edge-biased generation schedule.
 
 ```ocaml
 Tape_test.run_exn
@@ -165,7 +171,15 @@ on `Generator.fixed_point`/`recursive_union` memoize through OCaml's
 `Lazy`, which is not concurrency-safe, and a race surfaces as a raised
 exception (never a hang or corruption; the engine re-raises worker
 exceptions on the calling domain). On a rare-failure workload with a
-~100us test body the pool is a 4.6x wall-clock win at 8-16 domains.
+~100us test body the pool is a 6.3x wall-clock win at 8 domains and
+11.9x at 16 — but only while the run is dominated by GENERATION. When
+shrinking dominates it is a net **loss**: 0.86x at 8 domains and 0.70x
+at 32, because speculative batch evaluation raises the attempt count
+(582 sequential to 1618 at 32 domains) without shortening the critical
+path. `bench_domains/` measures all three cases; raw output in
+`../tapecheck-notes/bench-domains-20260809.txt`. A single "parallel
+speedup" number for this engine would be a choice of workload rather
+than a property of the pool.
 
 ## How the interception works
 
@@ -179,9 +193,13 @@ base_quickcheck compiles against the shim unmodified; that is the
 entire integration. Details and design history:
 [design/choice-tape-for-base-quickcheck.md](design/choice-tape-for-base-quickcheck.md).
 
-Known limitation: `Generator.fn` splits the random state; split-off
-streams are untaped, so generated functions do not shrink (Hypothesis
-has the same limitation).
+`Generator.fn` splits the random state. Split-off streams used to be
+untaped, so generated functions did not shrink at all; stream-keyed
+tapes fixed that, and `test_bq/test_fn_shrink.ml` pins it — `fn/point`
+reaches `f(0)=100`, `fn/sum` reaches `f(1)+f(2)=100`,
+and no orphan seed shrinks to a stuck result (the test asserts
+that, plus that more than 15 of the 40 seeds find a failure at all; the
+run behind this paragraph found 40 of 40).
 
 ## Edge-case-biased generation
 
@@ -193,7 +211,7 @@ towards in the first place — an exact bound, zero, or (famously,
 one number being an exact multiple of another. This is a direct port
 of [Python Hypothesis](https://hypothesis.readthedocs.io/)'s
 Conjecture provider
-([`draw_integer`/`draw_float`](outreach/hypothesis-sources/providers_hypothesis.py)):
+([`draw_integer`/`draw_float`](https://github.com/HypothesisWorks/hypothesis/blob/master/hypothesis-python/src/hypothesis/internal/conjecture/providers.py)):
 a fresh draw (nothing recorded on the tape yet to replay) rolls a
 biased distribution instead of a plain uniform one — a boundary
 candidate (the range's ends, one step in from each, the shrink target)
@@ -227,10 +245,17 @@ integer draw on top of the ~110ns a recording tape already costs (vs.
 
 ## Building
 
+This proof-of-concept is currently consumed as a source workspace, not as an
+installable opam package. The patched `splittable_random` must sit underneath a
+recompiled `base_quickcheck`; upstream
+[splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)
+is the seam that removes that constraint. `tape.opam` is therefore a dependency
+manifest for contributors, and `opam install . --deps-only` is intentional.
+
 ```
 opam switch create 5.3.0
-opam install dune base stdio ppx_jane
-dune test
+opam install . --deps-only --with-test
+dune runtest --force
 ```
 
 (No opam install of splittable_random or base_quickcheck is needed or
@@ -239,7 +264,7 @@ used: the workspace's vendored copies shadow them; see Vendoring.)
 Building and testing need the 5.3.0 switch created above: on a switch
 missing `stdio`/`ppx_sexp_conv` and the other ppx deps, most test
 directories fail to build and dune silently runs only what remains.
-Also, plain `dune test`/`dune runtest` can exit 0 without running
+Also, plain `dune test`/`dune runtest` can exit 0 without re-running
 anything, because dune caches test actions and replays a cached success
 instead of re-executing. The reliable way to actually run the suite is
 
@@ -273,29 +298,48 @@ swap a library underneath it. For base_quickcheck to draw through the
 tape shim it must be recompiled against the shim, and a dune
 workspace with vendored sources is the only way to arrange that
 without touching your opam switch. It doubles as the proof of the
-zero-changes claim: the vendored copies are pristine release
-tarballs, and the short list of exceptions is right here. (Two paths
+zero-changes claim: the vendored copies are pinned release sources
+plus the short, reviewed patches in `vendor/patches/`. (Two paths
 make the copies unnecessary later: an `opam pin` of a patched
 splittable_random, which would rebuild the whole switch against the
 shim, or upstreaming the tape hooks, a dozen functions defaulting to
 no-ops.)
 
 This repo is MIT (LICENSE.md). `vendor/` contains Jane Street code,
-also MIT, vendored from the v0.17 opam release tarballs with a
-LICENSE.md in each directory:
+also MIT. `vendor/upstream.lock` pins both the release tag and peeled
+Git commit: base_quickcheck v0.17.1 at `f8035fdf...` and
+splittable_random v0.17.0 at `0f4a6ef5...`. Their LICENSE.md is kept
+with each copied component:
 
 - `vendor/base_quickcheck`: unmodified except the dune file (dropped
   `public_name`) and one portability fix in `generator.ml`
   (deduplication via `Set.Using_comparator` instead of a `Comparator`
   record field, for Base v0.17/v0.18 compatibility).
 - `vendor/sr_real`: `splittable_random`'s implementation, module
-  renamed, with a small Base v0.17/v0.18 compat block and upstream's
-  inline test/bench blocks stripped (they use APIs that drifted in
-  v0.18 previews; originals in the release tarball).
+  renamed, with the interception seam and split/perturb hook propagation,
+  a small Base v0.17/v0.18 compat block, and upstream's inline test/bench
+  blocks stripped (they use APIs that drifted in v0.18 previews; originals
+  are recoverable by reversing the declared patch).
 - `vendor/splittable_random`: OUR shim, implementing the upstream
   public interface over `sr_real` plus the tape hooks.
 - `vendor/ppx_quickcheck{,_expander,_runtime}`: unmodified except dune
   files (names, workspace-local runtime deps, oxcaml profile gate).
+
+The source provenance is executable rather than documentary:
+
+```
+./scripts/check_vendor_provenance.sh
+./scripts/refresh_vendor.sh
+./scripts/sync_consumer_snapshot.sh --check
+```
+
+The check fetches each pinned tag, rejects a changed tag-to-commit mapping,
+applies the declared patches to a temporary checkout, and byte-compares every
+upstream-derived vendored `.ml`, `.mli`, and licence. The locally authored
+`vendor/splittable_random` shim is covered by normal tests and snapshot checks,
+not by upstream provenance. The refresh command regenerates the canonical
+upstream-derived copies and then the package-shaped Core consumer; it does not
+copy dune/opam packaging templates. CI runs both check-only paths.
 
 ## Status
 

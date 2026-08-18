@@ -1,0 +1,38 @@
+RAW LENGTH DISTRIBUTION (size 10, 20k samples)
+  stock            mean length 3.591
+  continuation     mean length 3.579
+  stock vs continuation two-sample chi-square 7.68 (11 bins)
+
+TAPED LENGTH DISTRIBUTION AND COST (size 10, 20k samples)
+  stock            mean length 3.554, choices 17.11, choices/element 4.82
+  length-int       mean length 3.554, choices 8.70, choices/element 2.45
+  continuation     mean length 3.579, choices 11.26, choices/element 3.15
+  stock vs continuation two-sample chi-square 30.41 (11 bins)
+  continuation-f   mean length 3.363, choices 10.82, choices/element 3.22
+  continuation-i   mean length 3.124, choices 10.29, choices/element 3.29
+
+SHRINK QUALITY (100 seeds)
+  length >= 3 (minimum [0;0;0])
+    stock            found 100, minimal 100,  151 shrink attempts/failure
+    length-int       found 100, minimal 100,  201 shrink attempts/failure
+    continuation     found 100, minimal  92,  108 shrink attempts/failure
+  sum >= 100 (minimum [100])
+    stock            found 100, minimal 100,   94 shrink attempts/failure
+    length-int       found 100, minimal  99,   51 shrink attempts/failure
+    continuation     found 100, minimal  54,  114 shrink attempts/failure
+  hd = length (minimum [1])
+    stock            found  98, minimal  47,  134 shrink attempts/failure
+    length-int       found  99, minimal  74,  104 shrink attempts/failure
+    continuation     found 100, minimal  46,   84 shrink attempts/failure
+  ten strings (minimum ten empty strings)
+    stock            found 100, minimal   0,  369 shrink attempts/failure
+    length-int       found 100, minimal   0,  304 shrink attempts/failure
+    continuation     found 100, minimal   0,  380 shrink attempts/failure
+
+GENERATION TAILS
+  stock strings    mean 27.03, max 50 (10000 samples, size 50)
+  running strings  mean 20.40, max 50 (10000 samples, size 50)
+  continuation str mean 20.19, max 50 (10000 samples, size 50)
+  stock tree       mean 9.50, max 50 (10000 samples, size 50)
+  running tree     mean 8.66, max 50 (10000 samples, size 50)
+  continuation tree mean 8.65, max 50 (10000 samples, size 50)

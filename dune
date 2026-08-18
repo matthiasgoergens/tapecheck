@@ -8,6 +8,29 @@
 ; would otherwise still pull it into this build as a second project.
 (data_only_dirs bonsai-tapecheck-hunt)
 
+; The consumer is intentionally a copied, package-shaped workspace. A green
+; run there is evidence about this tree only while those source copies match.
+(rule
+ (alias runtest)
+ (deps
+  scripts/check_consumer_snapshot.sh
+  scripts/sync_consumer_snapshot.sh
+  (source_tree engine)
+  (source_tree tape)
+  (source_tree vendor/splittable_random)
+  (source_tree vendor/sr_real)
+  (source_tree vendor/base_quickcheck)
+  (source_tree vendor/ppx_quickcheck)
+  (source_tree vendor/ppx_quickcheck_expander)
+  (source_tree vendor/ppx_quickcheck_runtime)
+  (source_tree bonsai-tapecheck-hunt/engine)
+  (source_tree bonsai-tapecheck-hunt/pkgs/splittable_random/src)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/src)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/ppx_quickcheck)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/expander)
+  (source_tree bonsai-tapecheck-hunt/pkgs/base_quickcheck/runtime))
+ (action (run sh %{dep:scripts/check_consumer_snapshot.sh})))
+
 ; Fail fast on profile/compiler mismatches: an OxCaml switch without
 ; --profile oxcaml would miscompile the ppx pieces against a divergent
 ; parsetree, and --profile oxcaml on a stock switch would silently drop

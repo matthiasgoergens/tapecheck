@@ -34,6 +34,8 @@ let int64_popcount (x : int64) : int =
 
 open Int64.O
 
+type span_label = ..
+
 let ( lxor ) = Int64.bit_xor
 let ( lor ) = Int64.bit_or
 let ( land ) = Int64.bit_and
@@ -66,6 +68,27 @@ and intercept =
       t -> lo:float -> hi:float -> default:(t -> lo:float -> hi:float -> float) -> float
   ; unit_float : t -> default:(t -> float) -> float
   ; bool : t -> default:(t -> bool) -> bool
+  ; bool_with_probability :
+      t
+      -> probability:float
+      -> forced:bool option
+      -> default:(t -> probability:float -> bool)
+      -> bool
+  ; on_span_start :
+      span_label
+      -> deletable:bool
+      -> discardable:bool
+      -> descendable:bool
+      -> reorderable:bool
+      -> unit
+  ; on_span_stop :
+      deletable:bool
+      -> discardable:bool
+      -> descendable:bool
+      -> reorderable:bool
+      -> discarded:bool
+      -> unit
+      -> unit
   ; on_split : unit -> intercept option
   ; on_perturb : int -> intercept option
   }
@@ -252,6 +275,65 @@ let unit_float state =
   | Some i -> i.unit_float state ~default:unit_float_default
 ;;
 
+let bool_with_probability_default state ~probability =
+  Float.(unit_float_default state < probability)
+;;
+
+let bool_with_probability ?forced state ~probability =
+  if Float.is_nan probability || Float.(probability < 0. || probability > 1.)
+  then raise_s [%message "bool_with_probability: invalid probability" (probability : float)];
+  (match forced with
+   | Some value
+     when (value && Float.equal probability 0.)
+          || ((not value) && Float.equal probability 1.) ->
+     raise_s
+       [%message
+         "bool_with_probability: forced value has zero probability"
+           (probability : float)
+           (forced : bool option)]
+   | None | Some _ -> ());
+  let forced =
+    match forced with
+    | Some _ as forced -> forced
+    | None when Float.equal probability 0. -> Some false
+    | None when Float.equal probability 1. -> Some true
+    | None -> None
+  in
+  let sample state ~probability =
+    match forced with
+    | Some value -> value
+    | None -> bool_with_probability_default state ~probability
+  in
+  match state.intercept with
+  | None -> sample state ~probability
+  | Some i -> i.bool_with_probability state ~probability ~forced ~default:sample
+;;
+
+let with_span
+  ?(deletable = false)
+  ?(discard_on_exception = false)
+  ?(descendable = false)
+  ?(reorderable = false)
+  state
+  label
+  ~f
+  =
+  match state.intercept with
+  | None -> f ()
+  | Some i ->
+    i.on_span_start label ~deletable ~discardable:discard_on_exception
+      ~descendable ~reorderable;
+    let discarded = ref true in
+    Exn.protect
+      ~f:(fun () ->
+        let result = f () in
+        discarded := false;
+        result)
+      ~finally:(fun () ->
+        i.on_span_stop ~deletable ~discardable:discard_on_exception ~descendable
+          ~reorderable ~discarded:!discarded ())
+;;
+
 (* Note about roundoff error:
 
    Although [float state ~lo ~hi] is nominally inclusive of endpoints, we are relying on
@@ -394,6 +476,27 @@ module Intercept = struct
         -> float
     ; unit_float : state -> default:(state -> float) -> float
     ; bool : state -> default:(state -> bool) -> bool
+    ; bool_with_probability :
+        state
+        -> probability:float
+        -> forced:bool option
+        -> default:(state -> probability:float -> bool)
+        -> bool
+    ; on_span_start :
+        span_label
+        -> deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> reorderable:bool
+        -> unit
+    ; on_span_stop :
+        deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> reorderable:bool
+        -> discarded:bool
+        -> unit
+        -> unit
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }

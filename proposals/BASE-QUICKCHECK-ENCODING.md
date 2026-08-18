@@ -115,10 +115,16 @@ Distribution, 400 000 draws of `Generator.int` each
 | other | 88.570% | 88.534% |
 | negative | 50.023% | 50.051% |
 
-Magnitude bit-length histogram over 63 buckets: chi-square 36.5 on 63
-degrees of freedom. Statistically indistinguishable, as intended — the
-selector is independent of the value, so the change is a pure
-reassociation.
+Magnitude bit-length histogram over 63 buckets: chi-square 36.5. That
+figure is not a valid two-sample test — both arms were drawn from the
+same seed stream, so the arms are correlated and the statistic reads
+far below its null expectation — but the exact selector-grid count
+(`selector-grid-count.py`, committed with the PR) supersedes sampling.
+Over the 2^53 selector values, stock and proposed hit lo / general /
+hi in exactly 450359962737050 / 8106479329266892 / 450359962737050
+each — identical to the value. Distribution preservation is by
+construction: the selector is independent of the value, so the change
+is a pure reassociation.
 
 Shrink quality, Shrinking Challenge, 100 runs each:
 
@@ -192,8 +198,14 @@ not rediscovered from scratch.
 `base_quickcheck` does not use conditional compilation to span stock
 OCaml and OxCaml. `master` and the `oxcaml` branch carry the same
 mode-annotated source (their `non_uniform` is byte-identical); the stock
-releases are separate branches. `src/generator.ml` differs by 783 lines
-between `master` and `v0.17`.
+releases are separate branches. `src/generator.ml` differs by 783
+changed lines between `master` and `v0.17` — 502 added and 281 removed,
+per `git diff --numstat v0.17 master -- src/generator.ml`, with `master`
+at 1a5d1f5 (`v0.18~preview.130.100+614`, 2026-05-15). Pinning the SHA
+because `master` moves and the figure otherwise decays. Stating the
+metric because it is easy to measure something adjacent and conclude the
+figure is stale: adding `src/generator.mli` to the same command gives
+999, and the raw `git diff` output is 1136 lines.
 
 So there are two patches:
 
@@ -209,7 +221,16 @@ So there are two patches:
 
 - **Stock variant: compiled.** Applied to a clean checkout of upstream
   `v0.17.1` and built with OCaml 5.3.0 — `dune build src/` clean,
-  `base_quickcheck__Generator.cmi` produced.
+  `base_quickcheck__Generator.cmi` produced. Re-checked after the
+  `let general` hoist (issue #13): the patch applies to
+  `vendor/base_quickcheck/generator.ml` — the same stock source — and
+  `dune build vendor/` is clean.
+- **Both patches: application re-checked, 2026-08-08.** `patch
+  --dry-run` succeeds for the stock patch against the vendored
+  generator and for the OxCaml patch against upstream `master` at
+  `1a5d1f5`. Worth stating separately from "compiles", because an
+  edited patch can stop applying while the code it describes is still
+  fine.
 - **OxCaml variant: NOT compiled, and it cannot be from outside.** This
   was chased properly rather than assumed, and the conclusion is a
   pincer:

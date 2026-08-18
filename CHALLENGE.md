@@ -21,15 +21,40 @@ first:
 
 - Their published Hypothesis numbers are from **5.23.11, in 2020**.
   Quoting them against a 2026 tapecheck would be unfair in both
-  directions, so current Hypothesis (6.164.0) is re-measured under the
-  same harness. It has improved a lot: `reverse` went from mean 45.95
-  evaluations to 17.65.
+  directions, so current Hypothesis (6.164.0) is re-measured from ported
+  challenge definitions with the same evaluation-count convention. It has
+  improved a lot: `reverse` went from mean 45.95 evaluations to 17.65.
 - Their harness runs with `max_examples = 10**6`. An earlier tapecheck
   run used `count = 500` and reported 11/100 found on
   `difference_must_not_be_one` — which says nothing about the shrinker
   and everything about a generation budget two thousand times too
   small. At matched budget it is 100/100. **The corrected numbers are
   the ones below.**
+- The current tapecheck harness uses that one-million generation budget by
+  default, but overrides `calculator` to 20,000 and `bound5` to 200,000.
+  Those lower caps make failures harder to find and therefore do not flatter
+  tapecheck's normalisation score, but they are an asymmetry and are now stated
+  explicitly. `calculator` also runs at size 8 because the corresponding
+  `recursive_union` grows exponentially at the default size 30.
+- Tapecheck shrinking is capped at 20,000 total replay proposals and 500
+  accepted shrinks. Selected passes start with a 20-failure allowance;
+  `lower_and_delete` can earn additional patience after successes. Hypothesis
+  uses its own accepted-shrink and stall limits rather than those exact
+  controls. The total tape budget was non-binding in these measurements (the
+  largest observed run used 7,881 proposals), but the protocols are not
+  identical and the table should be read as comparative evidence, not a
+  controlled timing benchmark.
+
+The OCaml harness defaults to 100 runs for quick local use. Reproduce the
+reported sample size with:
+
+```
+TAPECHECK_RUNS=1000 dune exec challenge/challenge.exe
+```
+
+The `+patch` column requires applying
+`proposals/base_quickcheck-non_uniform.patch` first. The Hypothesis column
+comes from the separate `hypothesis-baseline` branch, not this executable.
 
 ## Results
 
@@ -40,19 +65,60 @@ change to `base_quickcheck` described in
 
 | challenge | Hypothesis 6.164.0 | tapecheck | tapecheck +patch |
 |---|---|---|---|
-| reverse | **1000/1000**, 17.7 | 0/1000, 285.5 | 452/1000, 275.6 |
-| distinct | **1000/1000**, 49.1 | 0/1000, 424.4 | 116/1000, 421.6 |
-| large_union_list | **1000/1000**, 211.3 | 0/1000, 1295.6 | 0/1000, 1255.5 |
-| calculator | **1000/1000**, 103.3 | 17/1000, 886.1 | 15/1000, 874.9 |
-| bound5 | **1000/1000**, 154.8 | 159/1000, 266.9 | 52/1000, 281.9 |
-| lengthlist | **1000/1000**, 87.9 | 716/1000, 261.0 | 716/1000, 261.0 |
-| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, 94.0 | 1000/1000, 94.0 |
-| difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **93.5** | 1000/1000, **93.5** |
-| difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **94.6** | 1000/1000, **94.6** |
+| reverse | **1000/1000**, 17.7 | 0/1000, 293.8 | 452/1000, 284.4 |
+| distinct | **1000/1000**, 49.1 | 0/1000, 436.7 | 116/1000, 437.1 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1338.8 | 0/1000, 1306.2 |
+| calculator | **1000/1000**, 103.3 | 16/1000, 912.0 | 14/1000, 910.0 |
+| bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 | 52/1000, 293.0 |
+| lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 | **1000/1000**, 82.8 |
+| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, **85.5** | 1000/1000, 98.0† |
+| difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **97.5** | 1000/1000, **97.5** |
+| difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **98.6** | 1000/1000, **98.6** |
 
 Cells are `normalised / mean evaluations`, **1000 runs each**. 95%
 Wilson intervals are in the raw output; the ones that matter are quoted
 inline below.
+
+Both tapecheck columns re-measured 2026-08-08 at `3aa0a47`; raw output
+in `../tapecheck-notes/challenge-1000-20260808.txt` and
+`challenge-1000-patched-20260808.txt`.
+
+**`difference_must_not_be_zero` re-measured 2026-08-14** at 98.0 to
+85.5 mean evaluations, when `minimize_duplicated_choices` was enabled
+by default (raw:
+`../tapecheck-notes/challenge-1000-duplate-20260814.txt`). That pass
+lowers a whole group of equal-valued choices at once, which is exactly
+this challenge's shape; quality is unchanged at 1000/1000, and every
+other row in this table moved by under 1%. † The `+patch` column was
+measured on 2026-08-08, before that pass existed, and has not been
+re-measured; expect it to move the same way, but it is not measured
+here. The pass must run after the deletion and lowering passes — placed before them it costs the
+poisoned-containers guard 21/48 to 17/48, measured, see
+`WAVE2-REORDER-AND-DUPLICATES.md`.
+
+**lengthlist now normalises, which is the row that moved.** It was
+716/1000 at 261.0 when this table was first written and is 1000/1000 at
+82.8 now: three times the quality at a third of the cost, from the
+computed repair rather than from any budget increase. That makes
+tapecheck 4/9 rather than 3/9. The discussion further down still
+describes it as an open frontier in places; that text is kept as the
+history of how it was reached, not as a current description.
+
+The four challenges ported later are measured too, and are the honest
+remainder of the suite rather than a separate category:
+
+| challenge | tapecheck | tapecheck +patch |
+|---|---|---|
+| deletion | 17/1000, 2158.2 | 295/1000, 2248.4 |
+| nestedlists | 18/1000, 640.9 | 18/1000, 640.9 |
+| coupling | 18/1000, 2335.8 | 18/1000, 2335.8 |
+| binheap | 93/1000, 1175.6 | 93/1000, 1175.6 |
+
+`<= optimal size` is worth reading alongside `exact` for these: bound5
+reaches 998/1000 and 1000/1000 at-or-below optimal size in the two arms
+while scoring 158 and 52 exact, because the challenge scores one exact
+permutation of five symmetric slots. Same for binheap, 299/1000
+at-or-below against 93 exact.
 
 ## Reading it
 
@@ -60,14 +126,15 @@ inline below.
 headline and it is not close. It is also better than their own 2020
 report, so it is current work rather than legacy.
 
-**tapecheck reaches full normalisation on three of nine** — the three `difference` variants.
+**tapecheck reaches full normalisation on four of nine** — `lengthlist` and the
+three `difference` variants.
 
 **bound5's score is not a shrink-quality result at all, in either
 column.** Measured directly over 1000 runs (`diag2/probe_bound5.ml`):
 **all 1000 reduce to exactly two elements, and 998 of them to the right
 content** — two singleton lists holding `-1` and `-32768`, three
 empties. What varies is *which of the five slots* the singletons land
-in, and the challenge scores one exact permutation. So the 159/1000
+in, and the challenge scores one exact permutation. So the 158/1000
 score measures positional canonicalisation, not reduction.
 
 That reframes the `+patch` column too. It gains 50 points on `reverse`
@@ -99,17 +166,34 @@ through a two-choice tape and `1` through a four-choice tape. Shortlex
 is length-first, so `max_int` ranks below `1` and the shrinker
 converges, correctly by its own order, onto answers full of
 `4611686018427387903`. Diagnosis and a distribution-preserving fix in
-`proposals/BASE-QUICKCHECK-ENCODING.md`: `reverse` 0/100 → 50/100,
-`distinct` 0/100 → 12/100, and cost *down* on all three.
+`proposals/BASE-QUICKCHECK-ENCODING.md`. The 100-run pilot measured
+`reverse` 0/100 → 50/100 and `distinct` 0/100 → 12/100 with cost down
+on all three; the 1000-run table above gives the current figures,
+`reverse` 452/1000 and `distinct` 116/1000.
 
 **calculator and bound5 are the span gap, in a third and fourth dress.**
 calculator's misses are long inert chains — `('+', ('+', ('+', 0, 0),
 0), 0)` — wrapped around a small failing subterm the shrinker cannot
 promote to the root. That is `pass_to_descendant`, the same thing
-`test_poison/` prices at 10/34 (see `SPANS-THE-ROOT-CAUSE.md`). The
+`test_poison/` priced at 10/34 when this was written (see
+`SPANS-THE-ROOT-CAUSE.md`). The
 `max_int` issue shows here too but only as flavour: with the patch the
 divisors become `('/', 0, -1)` instead of `('/', 0, max_int)`, and the
 inert chains remain, so the score does not move.
+
+**Update, 2026-08-12: `pass_to_descendant` landed** on
+`wave2/span-deletion` behind an opt-in `descendable` capability. The
+poisoned trees go 12/34 to 34/34 with the capability, matching
+Hypothesis, and the test asserts both arms. It does not rescue
+calculator's exact normalisation: on the paired diag2 sample the
+descendant pass removes every inert recursive wrapper (replay attempts
+501.3 to 438.6, nodes 5.6 to 5.0) but exact canonical renderings move
+1/100 to 0/100 — too sparse to distinguish from seed variation, and the
+five-node residue can still hold the wrong operator or literal
+arrangement. That residue belongs to choice minimisation, sibling
+reordering (`reorder_spans`) and duplicate-span handling, not to
+another descendant pass. The table above is therefore unchanged by the
+pass and remains the honest current score.
 
 **lengthlist: earned patience helps a little.** A shrink pass's failure
 allowance is now the flat base plus one extra per success it has already
@@ -137,10 +221,25 @@ prevent. Measured at divisors 3, 4, 6, 8: at 3 it binds and poison
 breaks; at 4 and above it never binds and nothing changes. No window.
 
 The real fix is *earned* patience — a pass's allowance scaled by its own
-success rate, in the spirit of `fixate_shrink_passes` — which is a
-design change rather than a constant, and is not done. lengthlist is
-recorded as a frontier in `test_regression/regression_guard.ml` so it
-cannot silently get worse, and an improvement is flagged too.
+success rate, in the spirit of `fixate_shrink_passes`.
+
+**Superseded, 2026-08-08.** Earned patience landed, and then the
+computed repair took lengthlist to 1000/1000 at 82.8 without raising
+any bound and without costing `test_poison`, which went 10/34 to 12/34
+rather than down. Everything above this paragraph is the record of a
+problem that is now solved; it is kept because the *reasoning* about
+why the flat cutoff and the proportional floor both fail is still
+correct and still worth not rediscovering.
+
+lengthlist is guarded in `test_regression/regression_guard.ml` so it
+cannot silently get worse — and, since 2026-08-08, so that an
+improvement cannot silently pass either. The claim that "an improvement
+is flagged too" was made here long before anything implemented it, and
+the gap is exactly how the 716 → 1000 move went unnoticed in this file:
+`check` applied a one-sided floor, so a property that had reached
+100/100 kept printing `ok` under a name asserting it had not. There is
+now a `high_minimal` bound that fails on improvement, kill-tested by
+lowering it and confirming the failure.
 
 **Where we win, we win on what the suite calls hardest.** The
 `difference` family requires holding a dependency between two
@@ -182,7 +281,8 @@ arrangement for a recursive generator.
 
 `binheap` is the eleventh upstream case, a GENERATION challenge rather
 than a shrinking one, and is implemented in `challenge/challenge.ml`.
-Measured at n=100 a side, same seeds:
+Measured at n=100 a side, using the same integer seed labels (the different
+engines do not thereby receive paired generated inputs):
 
 | | exact | 95% CI | <= optimal size | distinct | mean evaluations |
 |---|---|---|---|---|---|

@@ -166,7 +166,7 @@ let () =
      that generates none shrinks nothing and would sail past a floor of
      20 by never being counted), and none may be cut off, since a
      cut-off run measures the cutoff rather than the shrinker. *)
-  let recorded = 22 in
+  let recorded = 21 in
   let floor = 20 in
   let ok = ref true in
   if found <> !cases then begin
@@ -188,15 +188,17 @@ let () =
       "  FAIL  exact minima %d < floor %d (recorded %d, Hypothesis 48/48)\n"
       exact floor recorded
   end
-  else if exact > recorded then
+  else if exact > recorded then begin
+    ok := false;
     Stdio.printf
-      "  ****  IMPROVED: %d > the recorded %d. The frontier moved -- raise \
-       both numbers here and update CHALLENGE.md.\n"
+      "  FAIL  exact minima silently improved: %d > the recorded %d. The \
+       frontier moved -- raise both numbers here and update CHALLENGE.md.\n"
       exact recorded
+  end
   else
     Stdio.printf
-      "  ok    exact minima %d/%d (floor %d, Hypothesis 48/48)\n" exact found
-      floor;
+      "  ok    exact minima %d/%d (floor %d, ceiling %d, Hypothesis 48/48)\n"
+      exact found floor recorded;
 
   if not !ok then begin
     Stdio.printf

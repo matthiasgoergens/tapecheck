@@ -152,8 +152,12 @@ let () =
     (match Tape.deserialize_image serialized with
     | None -> failwith "round-trip: failed to deserialize a freshly serialized image"
     | Some round_tripped ->
+      (* [equal_image], not [compare_image = 0]: the latter is the
+         SHRINK order, which ranks floats by distance from target and so
+         cannot tell 0.0 in [0,1] from 5.0 in [5,6]. An assertion whose
+         own text says "bit-for-bit" must not be tested with a preorder. *)
       check "round-trip: image is bit-for-bit identical"
-        (Tape.compare_image image round_tripped = 0);
+        (Tape.equal_image image round_tripped);
       let replayed, () =
         Tape_engine.replay_image_and_apply pair_gen ~size:10 round_tripped
           ~f:(fun _ -> ())
@@ -291,5 +295,43 @@ let () =
      Stdlib.Sys.remove regressions_path;
      check "regression-entry failure prints the summary line"
        (String.is_substring printed_regression ~substring:"tapecheck:"));
+
+  (* User-supplied examples bypass the engine's generated-case loop.  They
+     must still take the same reporting exit as every other failure. *)
+  let no_generated_cases =
+    { Tape_test.default_config with test_count = 0; sizes = Sequence.empty }
+  in
+  let printed_example =
+    capture_stdout (fun () ->
+      match
+        Tape_test.result
+          ~f:(fun v -> if test v then Ok () else Error "too big")
+          ~config:no_generated_cases ~examples:[ 123_457 ]
+          (module M : Base_quickcheck.Test.S with type t = int)
+      with
+      | Ok () -> failwith "expected the explicit example to fail"
+      | Error _ -> ())
+  in
+  check "explicit-example failure prints the summary line"
+    (String.is_substring printed_example ~substring:"tapecheck:");
+  check "explicit-example failure is counted"
+    (String.is_substring printed_example ~substring:"1 failing");
+
+  (* A changed generator can consume none of a saved image and still fail.
+     Resume must start from the confirmation replay's normalised image, so the
+     returned value, image, and structural spans describe the same execution. *)
+  let stale_image =
+    Tape.image_of_main
+      [| Tape.Integer { value = 7L; lo = 0L; hi = 10L } |]
+  in
+  (match
+     Tape_engine.resume (G.return 5) stale_image ~budget:0
+       ~test:(fun _ -> false)
+   with
+   | Tape_engine.Passed _ -> failwith "normalised stale tape stopped failing"
+   | Tape_engine.Failed { minimal; image; _ } ->
+     check "resume keeps the replayed value" (minimal = 5);
+     check "resume normalises a stale image before shrinking"
+       (Array.is_empty image.Tape.main && Array.is_empty image.Tape.streams));
 
   Stdlib.print_endline "test_resume: all passed"

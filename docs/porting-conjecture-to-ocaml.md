@@ -73,9 +73,13 @@ shorter or simpler.
 The payoff is that generators need to know nothing. Every existing
 `base_quickcheck` generator — including everything `[@@deriving
 quickcheck]` emits — becomes shrinkable with zero changes, no ppx and no
-rewriting. The cost is that we have no spans, and four of Hypothesis's
+rewriting. The cost was that we had no spans, and four of Hypothesis's
 passes need them: `remove_discarded`, `pass_to_descendant`,
-`reorder_spans`, `minimize_duplicated_choices`.
+`reorder_spans`, `minimize_duplicated_choices`. Two of the four have
+since landed behind the opt-in capability on `wave2/span-deletion` —
+see the poisoned-trees table above and
+`WAVE2-PASS-TO-DESCENDANT.md` — and the two that remain are the span
+gap this post keeps meeting.
 
 That trade is the subject of most of what follows.
 
@@ -96,28 +100,36 @@ challenge, what the shrinker *normalises* to (does it reach the same
 canonical answer regardless of where it started?) and what that costs in
 test evaluations. Quality and cost together.
 
-1000 runs per challenge, their harness's protocol and budget. Their
-published Hypothesis numbers are from 5.23.11 in 2020, so I re-measured
-against current Hypothesis rather than citing them — it has improved
-substantially since (`reverse` went from mean 45.95 evaluations to
+1000 runs per challenge, using ported challenge definitions and the same
+evaluation-count convention. The execution controls are not identical:
+tapecheck uses lower generation caps for `calculator` and `bound5`, a smaller
+size for the exponentially growing calculator generator, and different shrink
+limits. [CHALLENGE.md](../CHALLENGE.md) records the exact protocol and rerun
+command. The published Hypothesis numbers are from 5.23.11 in 2020, so I
+re-measured against current Hypothesis rather than citing them — it has
+improved substantially since (`reverse` went from mean 45.95 evaluations to
 17.65).
 
 | challenge | Hypothesis 6.164.0 | tapecheck |
 |---|---|---|
-| reverse | **1000/1000**, 17.7 | 0/1000, 285.5 |
-| distinct | **1000/1000**, 49.1 | 0/1000, 424.4 |
-| large_union_list | **1000/1000**, 211.3 | 0/1000, 1295.6 |
-| calculator | **1000/1000**, 103.3 | 17/1000, 886.1 |
-| bound5 | **1000/1000**, 154.8 | 159/1000, 266.9 |
-| lengthlist | **1000/1000**, 87.9 | 683/1000, 283.3 |
-| difference (= 0) | 1000/1000, 40.5 | 1000/1000, 94.0 |
-| difference (small) | 1000/1000, 721.6 | 1000/1000, **93.5** |
-| difference (= 1) | 1000/1000, 885.2 | 1000/1000, **94.6** |
+| reverse | **1000/1000**, 17.7 | 0/1000, 293.8 |
+| distinct | **1000/1000**, 49.1 | 0/1000, 436.7 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1338.8 |
+| calculator | **1000/1000**, 103.3 | 16/1000, 912.0 |
+| bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 |
+| lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 |
+| difference (= 0) | 1000/1000, 40.5 | 1000/1000, 85.5 |
+| difference (small) | 1000/1000, 721.6 | 1000/1000, **97.5** |
+| difference (= 1) | 1000/1000, 885.2 | 1000/1000, **98.6** |
 
-Cells are `normalised / mean evaluations`, 1000 runs each.
+Cells are `normalised / mean evaluations`, 1000 runs each. tapecheck
+column re-measured 2026-08-08 at `3aa0a47`; see `CHALLENGE.md` for the
+patched arm and the four later-ported cases.
 
-Hypothesis normalises all nine at 1000/1000. tapecheck reaches full normalisation on three — the difference family. That
-is the headline and it is not close.
+Hypothesis normalises all nine at 1000/1000. tapecheck reaches full
+normalisation on four — the difference family, and lengthlist, which
+was 683/1000 when this was written and is the one row the computed
+repair moved. That is still the headline and it is still not close.
 
 The rest of this post is what happened when I went through the losses
 one at a time, because each turned out to have a different cause and
@@ -232,7 +244,12 @@ Ported with the same three sizes and two seeds as theirs, hence the same
 | | positions reduced to the poisoned leaf |
 |---|---|
 | Hypothesis 6.152.9 (their own test) | 34/34 |
-| tapecheck | 10/34 |
+| tapecheck, unchanged generators | 12/34 |
+| tapecheck, opt-in descendable brackets | **34/34** |
+
+The 12/34 floor is asserted in `test_poison/`; the 34/34 row needs the
+opt-in capability that landed with `pass_to_descendant` on
+`wave2/span-deletion` (see `WAVE2-PASS-TO-DESCENDANT.md`).
 
 What makes this evidence rather than a score is that the failure has a
 shape. Positions 0 and 1 reduce fully; from position 2 onward the
@@ -244,8 +261,9 @@ deleting what *follows* it, and suffix deletion is a pass we have.
 Poison late requires deleting what *precedes* it — which shifts the
 poison's own two draws into the position where a branch coin is read.
 They get re-parsed as structure, the tree changes shape, and the poison
-is destroyed. Span boundaries are exactly what would let the subtree be
-relocated intact, which is all `pass_to_descendant` is.
+is destroyed. Span boundaries are exactly what let the subtree be
+relocated intact, which is all `pass_to_descendant` is — and it now
+exists, behind the opt-in capability.
 
 `calculator` is the same gap in different clothing. Its misses are long
 inert chains — `('+', ('+', ('+', 0, 0), 0), 0)` — wrapped around a
@@ -315,9 +333,10 @@ separately-drawn integers. The challenge's own spec singles out
 because shrinking parameters individually will never lead to a smaller
 and falsifying sample".
 
-tapecheck matches Hypothesis's answer 100/100 at **9.3× lower cost**,
-and near-deterministically: our evaluation range is 94..95 against their
-54..1056.
+tapecheck matches Hypothesis's answer 1000/1000 at **9.0× lower mean
+cost** — 98.6 evaluations against their 885.2 — and
+near-deterministically (the 100-seed pilot measured an evaluation range
+of 94..95 against their 54..1056).
 
 That is `lower_together`, a port of Hypothesis's own
 `lower_integers_together`, doing what it was ported to do. It got there
@@ -339,7 +358,10 @@ cooperation the shrinker needs from the generator**:
   generator returns its own shrink candidates, and the engine takes the
   first that still fails.
 - **tapecheck**: no cooperation at all, over unmodified generators — and
-  the four missing passes look like the price of exactly that.
+  since `wave2/span-deletion`, an opt-in capability that marks which
+  labelled spans the recorder retains, which is how the first two of the
+  four missing passes landed. The axis has therefore become a measured
+  spectrum rather than a binary question.
 
 I tried recovering spans from the PRNG's split topology. It fails for a
 specific reason: `base_quickcheck` calls `split` exactly once in the

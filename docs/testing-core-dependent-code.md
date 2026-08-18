@@ -22,6 +22,11 @@ It property-tests two libraries copied out of
 engine. It is excluded from the root build (see the root `dune`); treat it as
 its own project.
 
+Because this workspace is package-shaped, it contains copies of the engine
+and tape seam rather than referencing the parent libraries. The root
+`runtest` alias runs `scripts/check_consumer_snapshot.sh` to prevent a green
+consumer run from silently validating an older snapshot.
+
 ## Layout
 
 - `bonsai-tapecheck-hunt/pkgs/splittable_random/` — the shim as an
@@ -57,8 +62,8 @@ opam install --switch=tapecheck-hunt --yes \
   core core_kernel ppx_sexp_conv ppx_compare ppx_let ppx_fields_conv \
   ppx_sexp_message ppx_sexp_value ppx_base ppxlib_jane
 cd bonsai-tapecheck-hunt
-opam exec --switch=tapecheck-hunt -- dune build
-opam exec --switch=tapecheck-hunt -- dune runtest
+opam exec --switch=tapecheck-hunt -- dune build --root .
+opam exec --switch=tapecheck-hunt -- dune runtest --root . --force
 ```
 
 Everything depending on the shimmed interfaces (`core` v0.17.2, `core_kernel`
@@ -68,7 +73,13 @@ problem (janestreet/bonsai#47) does not affect it.
 
 ## Evidence
 
-`dune runtest` prints one tape-engine summary line per property run:
+The explicit `--root .` is essential: without it, dune discovers the parent
+tapecheck workspace, where this nested project is marked `data_only`, and a
+nominally successful test command runs no consumer tests. `--force` makes the
+seven actions execute again rather than replaying dune's cache.
+
+The real nested `dune runtest --root . --force` prints one tape-engine summary
+line per property run:
 
 ```
 tapecheck: 10000 cases (10000 valid, 0 discarded, 0 failing)
@@ -84,11 +95,13 @@ libraries have no `public_name`, blocked on
 (the intercept-seam PR). The `pkgs/` packaging here is a proof of concept for
 what the installable shape could look like: the shim *is* the
 `splittable_random` package (with `Tape` as an extra module), so downstream
-opam builds get tape recording for free once the seam lands upstream. Remaining
-questions for integration:
+opam builds get tape recording for free once the seam lands upstream. Current
+integration shape and remaining questions:
 
-- Should `pkgs/` be generated from `vendor/` (single source of truth) instead
-  of checked in as copies?
+- `pkgs/` is a generated snapshot of the canonical `engine/`, `tape/`, and
+  `vendor/` sources. Refresh it with
+  `scripts/sync_consumer_snapshot.sh --update`; the root `runtest` alias and CI
+  compare every copied `.ml`/`.mli`, including the ppx sources.
 - The engine (`Tape_test` and friends) still needs its own public names and an
   opam package; here it is just copied into the consumer workspace.
 - Version alignment: the shims are v0.17-based while the Jane Street bleeding

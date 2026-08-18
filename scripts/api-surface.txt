@@ -21,6 +21,7 @@ default_attempts_per_choice
 default_config
 default_max_shrinks
 default_max_shrink_seconds
+delete_span
 distinct_proposals
 duplicate_proposals
 empty_case
@@ -69,6 +70,7 @@ pass_names
 path
 positions_of
 record
+record_observation
 remove
 replay
 replay_fresh_seed
@@ -99,6 +101,7 @@ search_note_shrink
 seed_int
 seg_count
 seg_get
+segment_for_key
 seg_set
 sexp_of_origin
 shrink
@@ -112,7 +115,7 @@ to_string
 to_string_hum
 trail_alternatives
 trivial_choice
-truncated_passes
+trivial_only_cases
 truncation_message
 try_candidate
 try_with_join_preserving_assume
@@ -121,4 +124,5 @@ warned_shrink_count
 warn_if_shrink_count_set
 with_choice
 with_deleted_block
-without_stream
+with_sample
+with_sample_exn
