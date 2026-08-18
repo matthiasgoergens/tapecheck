@@ -21,6 +21,7 @@ default_attempts_per_choice
 default_config
 default_max_shrink_seconds
 default_max_shrinks
+delete_span
 distinct_proposals
 duplicate_proposals
 empty_case
@@ -100,6 +101,7 @@ seed_int
 seg_count
 seg_get
 seg_set
+segment_for_key
 sexp_of_origin
 shrink
 split_header

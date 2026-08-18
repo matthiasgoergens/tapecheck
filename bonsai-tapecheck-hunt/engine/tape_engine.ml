@@ -109,6 +109,22 @@ let seg_set (img : Tape.image) s arr : Tape.image =
           if i = s - 1 then (k, arr) else (k, a))
     }
 
+let segment_for_key (img : Tape.image) key =
+  if Tape.compare_key key Tape.root = 0 then Some 0
+  else
+    Array.find_mapi img.streams ~f:(fun i (candidate, _) ->
+      if Tape.compare_key candidate key = 0 then Some (i + 1) else None)
+
+let delete_span (img : Tape.image) (span : Tape.span) =
+  Option.bind (segment_for_key img span.stream) ~f:(fun segment ->
+    let choices = seg_get img segment in
+    let len = span.stop - span.start in
+    if span.start < 0 || len <= 0 || span.stop > Array.length choices then None
+    else
+      Some
+        (seg_set img segment
+           (with_deleted_block choices ~pos:span.start ~len)))
+
 let image_all_trivial (img : Tape.image) =
   Array.for_all img.main ~f:choice_at_target
   && Array.for_all img.streams ~f:(fun (_, arr) ->
@@ -374,7 +390,7 @@ let eval_once (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
   let candidate =
     match tested with
     | Some Tape_stats.Case_failed when not out.Tape.overrun ->
-      Some (out.Tape.image, _value)
+      Some (out.Tape.image, out.Tape.spans, _value)
     | _ -> None
   in
   (out.Tape.misaligned, estats, candidate)
@@ -405,7 +421,7 @@ let eval_proposal (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
     | _ -> (es1, [ c1 ])
   in
   ( List.filter_opt cands
-    |> List.min_elt ~compare:(fun (a, _) (b, _) -> Tape.compare_image a b)
+    |> List.min_elt ~compare:(fun (a, _, _) (b, _, _) -> Tape.compare_image a b)
   , estats )
 
 (* Realignment strategy for kind mismatches during shrink replay.
@@ -518,10 +534,11 @@ let no_stats () =
    on a property Hypothesis finishes in 27 (see
    ../tapecheck-hypothesis-baseline/README.md). *)
 let pass_names =
-  [| "lower_and_delete"; "(removed: delete_streams)"; "redistribute_pairs"
-   ; "minimize_choices"; "pre-loop"; "sort_siblings" |]
+  [| "lower_and_delete"; "delete_spans"; "redistribute_pairs"
+   ; "minimize_choices"; "pre-loop"; "sort_siblings"; "remove_discarded"
+   ; "pass_to_descendant" |]
 
-let pass_costs = Array.create ~len:6 0
+let pass_costs = Array.create ~len:(Array.length pass_names) 0
 let greedy_cost = ref 0
 let duplicate_proposals = ref 0
 let distinct_proposals = ref 0
@@ -606,7 +623,8 @@ type 'a search =
   ; s_tape : Tape.t
   ; s_realign : realign
   ; s_stats : stats
-  ; s_pool : (Tape.image * 'a) option pool_payload Pool.t option
+  ; s_pool :
+      (Tape.image * Tape.span array * 'a) option pool_payload Pool.t option
         (* The payload is shared with the GENERATE phase, which runs on
            the same pool and needs to report each case's verdict back to
            the main domain -- worker domains cannot safely touch [stats]
@@ -625,6 +643,7 @@ type 'a search =
        location, no bulk rewrite of 69 call sites, and no risk of the
        two views drifting apart. *)
   ; s_best : Tape.image ref
+  ; s_best_spans : Tape.span array ref
   ; s_best_value : 'a ref
   ; s_trail : Tape.image list ref
   ; s_attempts : int ref
@@ -724,7 +743,7 @@ let search_candidate (type a) (st : a search) ~policy proposal =
     if out.Tape.overrun then (out.Tape.misaligned, None)
     else (
       if st.s_interesting verdict then
-        (out.Tape.misaligned, Some (out.Tape.image, value))
+        (out.Tape.misaligned, Some (out.Tape.image, out.Tape.spans, value))
       else (out.Tape.misaligned, None))
 
 let search_attempt (type a) (st : a search) proposal =
@@ -752,11 +771,13 @@ let search_attempt (type a) (st : a search) proposal =
     in
     let best_cand =
       List.filter_opt cands
-      |> List.min_elt ~compare:(fun (a, _) (b, _) -> Tape.compare_image a b)
+      |> List.min_elt ~compare:(fun (a, _, _) (b, _, _) -> Tape.compare_image a b)
     in
     match best_cand with
-    | Some (image, value) when st.s_accept ~best:!(st.s_best) image value ->
+    | Some (image, spans, value)
+      when st.s_accept ~best:!(st.s_best) image value ->
       st.s_best := image;
+      st.s_best_spans := spans;
       st.s_best_value := value;
       st.s_trail := image :: !(st.s_trail);
       search_note_shrink st;
@@ -769,8 +790,10 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(max_shrinks : int) ~(max_stall : int option)
     ~(max_pass_failures : int option) ~domains ~pool
     ~(realign : realign) ~(stats : stats) ~(initial_tape : Tape.image)
-    ~(initial_value : a) : a * int * Tape.image * Tape.image list * bool =
+    ~(initial_spans : Tape.span array) ~(initial_value : a) :
+    a * int * Tape.image * Tape.image list * bool =
   let best = ref initial_tape in
+  let best_spans = ref initial_spans in
   let best_value = ref initial_value in
   (* Every accepted image, oldest first once reversed at the end: cheap
      (an image is a compact recording, not a materialized value), and
@@ -880,6 +903,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     ; s_max_shrinks = max_shrinks
     ; s_deadline = deadline
     ; s_best = best
+    ; s_best_spans = best_spans
     ; s_best_value = best_value
     ; s_trail = trail
     ; s_attempts = attempts
@@ -902,7 +926,11 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let candidate ~policy proposal = search_candidate st ~policy proposal in
   let attempt proposal = search_attempt st proposal in
   ignore (note_shrink : unit -> unit);
-  ignore (candidate : policy:Tape.policy -> Tape.image -> bool * (Tape.image * a) option);
+  ignore
+    (candidate :
+      policy:Tape.policy ->
+      Tape.image ->
+      bool * (Tape.image * Tape.span array * a) option);
 
   (* Evaluate several independent proposals (in parallel domains when a
      pool exists) and accept the LOWEST-INDEX improvement, exactly the
@@ -963,21 +991,156 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
           List.foldi results ~init:None ~f:(fun i acc r ->
             match (acc, r) with
             | Some _, _ | _, ((None, _), _) -> acc
-            | None, ((Some (image, value), _), _) ->
+            | None, ((Some (image, spans, value), _), _) ->
               if Tape.compare_image image !best < 0 then
                 (* Map back to the position in the ORIGINAL batch. *)
-                Some (fst (List.nth_exn kept i), image, value)
+                Some (fst (List.nth_exn kept i), image, spans, value)
               else None)
         in
         match accepted with
-        | Some (i, image, value) ->
+        | Some (i, image, spans, value) ->
           best := image;
+          best_spans := spans;
           best_value := value;
           trail := image :: !trail;
           note_shrink ();
           Some i
         | None -> None
       end
+  in
+
+  (* Delete choices consumed by generator attempts which were explicitly
+     abandoned.  Unlike structural deletion, these ranges need no leading
+     continuation Boolean: the generator has declared that their result was
+     discarded.  Replay remains the oracle, and a successful edit restarts
+     from freshly observed offsets. *)
+  let remove_discarded () =
+    let compare_span (a : Tape.span) (b : Tape.span) =
+      let c = Tape.compare_key a.stream b.stream in
+      if c <> 0 then c
+      else
+        (* Prefer a containing (longer) discarded region, but retain nested
+           candidates as a fallback when replay rejects the outer edit. *)
+        let c = Int.compare (b.stop - b.start) (a.stop - a.start) in
+        if c <> 0 then c
+        else
+          let c = Int.compare b.start a.start in
+          if c <> 0 then c else Int.compare b.stop a.stop
+    in
+    let eligible (span : Tape.span) =
+      span.discarded
+      &&
+      match segment_for_key !best span.stream with
+      | None -> false
+      | Some segment ->
+        let choices = seg_get !best segment in
+        span.start >= 0
+        && span.stop <= Array.length choices
+        && span.stop > span.start
+    in
+    let improved_any = ref false in
+    let restart = ref true in
+    while !restart && budget_ok () do
+      restart := false;
+      let candidates =
+        Array.filter !best_spans ~f:eligible
+        |> Array.to_list
+        |> List.dedup_and_sort ~compare:compare_span
+      in
+      List.iter candidates ~f:(fun span ->
+        if (not !restart) && budget_ok () then
+          match delete_span !best span with
+          | None -> ()
+          | Some proposal ->
+            if attempt proposal then begin
+              improved_any := true;
+              restart := true
+            end)
+    done;
+    !improved_any
+  in
+
+  (* Replace a recursively generated value with one of its own same-labelled
+     descendants.  Generator-owned spans tell us which byte ranges are values
+     of the same recursive family; replay remains the semantic oracle.  Try
+     the largest reductions first and restart after acceptance because every
+     subsequent offset belongs to the newly replayed span tree. *)
+  let pass_to_descendant () =
+    let replace_span_with_descendant
+        (img : Tape.image)
+        ~(ancestor : Tape.span)
+        ~(descendant : Tape.span)
+      =
+      Option.bind (segment_for_key img ancestor.stream) ~f:(fun segment ->
+        let choices = seg_get img segment in
+        if Tape.compare_key ancestor.stream descendant.stream <> 0
+           || ancestor.start < 0
+           || ancestor.start > descendant.start
+           || descendant.stop > ancestor.stop
+           || ancestor.stop > Array.length choices
+           || descendant.stop <= descendant.start
+           || (ancestor.start = descendant.start
+               && ancestor.stop = descendant.stop)
+        then None
+        else
+          Some
+            (seg_set img segment
+               (Array.concat
+                  [ Array.sub choices ~pos:0 ~len:ancestor.start
+                  ; Array.sub choices ~pos:descendant.start
+                      ~len:(descendant.stop - descendant.start)
+                  ; Array.sub choices ~pos:ancestor.stop
+                      ~len:(Array.length choices - ancestor.stop)
+                  ])))
+    in
+    let candidates spans =
+      let pairs = ref [] in
+      Array.iter spans ~f:(fun (ancestor : Tape.span) ->
+        (* Salted generated-function streams rewind their output cursor at
+           every call.  Equal/contained offsets there do not yet prove runtime
+           ancestry, so this first pass is deliberately root-stream only. *)
+        if ancestor.descendable
+           && Tape.compare_key ancestor.stream Tape.root = 0
+        then
+          Array.iter spans ~f:(fun (descendant : Tape.span) ->
+            if descendant.descendable
+               && ancestor.label = descendant.label
+               && Tape.compare_key ancestor.stream descendant.stream = 0
+               && ancestor.start <= descendant.start
+               && descendant.stop <= ancestor.stop
+               && (ancestor.start < descendant.start
+                   || descendant.stop < ancestor.stop)
+            then pairs := (ancestor, descendant) :: !pairs));
+      List.dedup_and_sort !pairs ~compare:(fun (a1, d1) (a2, d2) ->
+        let removed1 = (a1.stop - a1.start) - (d1.stop - d1.start) in
+        let removed2 = (a2.stop - a2.start) - (d2.stop - d2.start) in
+        let c = Int.compare removed2 removed1 in
+        if c <> 0 then c
+        else
+          let c = Tape.compare_key a1.stream a2.stream in
+          if c <> 0 then c
+          else
+            let c = Int.compare a1.start a2.start in
+            if c <> 0 then c
+            else
+              let c = Int.compare d1.start d2.start in
+              if c <> 0 then c else Int.compare d1.stop d2.stop)
+    in
+    let improved_any = ref false in
+    let restart = ref true in
+    while !restart && budget_ok () do
+      restart := false;
+      List.iter (candidates !best_spans) ~f:(fun (ancestor, descendant) ->
+        if (not !restart) && budget_ok () then
+          match replace_span_with_descendant !best ~ancestor ~descendant with
+          | None -> ()
+          | Some proposal ->
+            if attempt proposal then begin
+              improved_any := true;
+              restart := true
+            end)
+    done;
+    !improved_any
   in
 
   (* Port of Hypothesis's [lower_blocks_together] (shrinker.py:1258),
@@ -1162,6 +1325,13 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     !improved
   in
 
+  (* Discarded attempts are pure recording debris, so remove them before the
+     global trivialisation proposal can accidentally turn one into a live
+     successful attempt. *)
+  let discarded_start = !attempts in
+  ignore (remove_discarded () : bool);
+  pass_costs.(6) <- pass_costs.(6) + (!attempts - discarded_start);
+
   (* Pass 1: everything to target at once, across all streams. *)
   let trivial = image_trivialized !best in
   if Tape.compare_image trivial !best < 0 then
@@ -1336,7 +1506,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                   last_recorded := None;
                   ignore
                     (candidate ~policy:Tape.Consume lowered_only
-                      : bool * (Tape.image * a) option);
+                      : bool * (Tape.image * Tape.span array * a) option);
                   match
                     Option.bind !last_recorded ~f:(fun rec_img ->
                       consumed_in_same_stream !best rec_img !s)
@@ -1734,12 +1904,98 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     !improved_any
   in
 
+  (* Delete one replay-observed structural unit at a time.  This pass is
+     intentionally narrower than general span rewriting: a candidate must be an explicitly
+     deletable leaf span whose first choice is [Bool true].  Here "leaf"
+     means that it contains no nested *deletable* span in the same tape stream:
+     observational child spans belong to the structural unit and are removed
+     with it. Cross-stream descendants remain replay-oracle validated. That is the
+     representation used by the Wave 2 continuation-list probe (continue +
+     element in one span).  The explicit capability matters when an element
+     itself consumes no choices, and prevents the current public Base list's
+     observational element spans from paying a futile deletion scan.
+
+     Restart after every accepted deletion.  Replay may change both the span
+     set and the choice count, so carrying old offsets across a successful edit
+     would make a later deletion target the wrong structural unit. *)
+  let delete_spans () =
+    let compare_span (a : Tape.span) (b : Tape.span) =
+      let c = Tape.compare_key a.stream b.stream in
+      if c <> 0 then c
+      else
+        let c = Int.compare a.start b.start in
+        if c <> 0 then c
+        else
+          let c = Int.compare a.stop b.stop in
+          if c <> 0 then c
+          else
+            let c = Int.compare a.label b.label in
+            if c <> 0 then c
+            else
+              let c = Bool.compare a.deletable b.deletable in
+              if c <> 0 then c else Bool.compare a.discarded b.discarded
+    in
+    let is_leaf spans (candidate : Tape.span) =
+      not
+        (Array.exists spans ~f:(fun (other : Tape.span) ->
+           other.deletable
+           && Tape.compare_key candidate.stream other.stream = 0
+           && candidate.start <= other.start
+           && other.stop <= candidate.stop
+           && (candidate.start < other.start || other.stop < candidate.stop)))
+    in
+    let eligible spans (span : Tape.span) =
+      span.deletable
+      && is_leaf spans span
+      &&
+      match segment_for_key !best span.stream with
+      | None -> false
+      | Some segment ->
+        let choices = seg_get !best segment in
+        span.start >= 0
+        && span.stop <= Array.length choices
+        && span.stop - span.start >= 1
+        && (match choices.(span.start) with Tape.Bool true -> true | _ -> false)
+    in
+    let improved_any = ref false in
+    let restart = ref true in
+    while !restart && budget_ok () do
+      restart := false;
+      let spans = !best_spans in
+      let candidates =
+        Array.filter spans ~f:(eligible spans)
+        |> Array.to_list
+        |> List.dedup_and_sort ~compare:compare_span
+        |> List.rev
+      in
+      List.iter candidates ~f:(fun span ->
+        if (not !restart) && budget_ok () then
+          match delete_span !best span with
+          | None -> ()
+          | Some proposal ->
+            if attempt proposal then begin
+              improved_any := true;
+              restart := true
+            end)
+    done;
+    !improved_any
+  in
+
   let continue_ = ref true in
   pass_costs.(4) <- !attempts;
   while !continue_ && budget_ok () do
     Int.incr sweeps;
+    let a6 = !attempts in
+    let improved = remove_discarded () in
+    pass_costs.(6) <- pass_costs.(6) + (!attempts - a6);
+    let a7 = !attempts in
+    let improved = pass_to_descendant () || improved in
+    pass_costs.(7) <- pass_costs.(7) + (!attempts - a7);
+    let a1 = !attempts in
+    let improved = delete_spans () || improved in
+    pass_costs.(1) <- pass_costs.(1) + (!attempts - a1);
     let a0 = !attempts in
-    let improved = lower_and_delete () in
+    let improved = lower_and_delete () || improved in
     pass_costs.(0) <- pass_costs.(0) + (!attempts - a0);
     let a2 = !attempts in
     let improved = redistribute_pairs () || improved in
@@ -1899,7 +2155,7 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
     ~(max_shrinks : int) ~(max_stall : int option)
     ~(max_pass_failures : int option) ~domains
     ~pool ~(realign : realign) ~(stats : stats) ~(image0 : Tape.image)
-    ~(value : a) : a result =
+    ~(spans0 : Tape.span array) ~(value : a) : a result =
   (* The single point at which the engine commits to a failing image.
      Every discovery path reaches here -- ordinary generation, the
      correlated-value mutation, the pooled batch, and [resume]'s replay
@@ -1938,7 +2194,7 @@ let finish_from_failure (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
     let _minimal, attempts, image, trail, converged =
       shrink ~tape ~gen ~size ~test ~budget ~max_seconds ~max_shrinks
         ~max_stall ~max_pass_failures ~domains ~pool ~realign ~stats
-        ~initial_tape:image0 ~initial_value:value
+        ~initial_tape:image0 ~initial_spans:spans0 ~initial_value:value
     in
     stats.shrink_time
       <- stats.shrink_time +. (Unix.gettimeofday () -. shrink_start);
@@ -2159,7 +2415,9 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
     a failure_report list =
   let stats = match stats with Some s -> s | None -> no_stats () in
   Stdlib.Printexc.record_backtrace true;
-  let found : (origin, Tape.image * a) Hashtbl.t = Hashtbl.Poly.create () in
+  let found : (origin, Tape.image * Tape.span array * a) Hashtbl.t =
+    Hashtbl.Poly.create ()
+  in
   let tape = Tape.create () in
   let last_origin = ref None in
   (* A wrapper that reports failure as [false] and records WHICH failure
@@ -2181,7 +2439,7 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
     in
     match !last_origin with
     | Some o when not (Hashtbl.mem found o) ->
-      Hashtbl.set found ~key:o ~data:(out.Tape.image, value)
+      Hashtbl.set found ~key:o ~data:(out.Tape.image, out.Tape.spans, value)
     | _ -> ()
   done;
   (* Shrink each origin separately. The whole point is the predicate:
@@ -2189,7 +2447,7 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
      origin, so shrinking bug A cannot slip into a smaller bug B and
      lose A. Everything else is the ordinary shrink pass suite, reused
      unchanged by handing it a different [~test]. *)
-  Hashtbl.fold found ~init:[] ~f:(fun ~key:o ~data:(img, v) acc ->
+  Hashtbl.fold found ~init:[] ~f:(fun ~key:o ~data:(img, spans, v) acc ->
     let same_origin_only value =
       match test value with
       | () -> true
@@ -2204,7 +2462,7 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
       shrink ~tape:shrink_tape ~gen ~size ~test:same_origin_only ~budget
         ~max_seconds:None ~max_shrinks:500 ~max_stall:None
         ~max_pass_failures:(Some 20) ~domains:1 ~pool:None ~realign ~stats
-        ~initial_tape:img ~initial_value:v
+        ~initial_tape:img ~initial_spans:spans ~initial_value:v
     in
     (* Rebuild from [image] rather than returning shrink's own value,
        exactly as [finish_from_failure] does and for the same reason:
@@ -2282,6 +2540,7 @@ let run_target (type a) ?(seed = 0) ?(size = 10) ?(max_improvements = 100)
   in
   let best_score = ref (objective value0) in
   let best = ref out0.Tape.image
+  and best_spans = ref out0.Tape.spans
   and best_value = ref value0
   and trail = ref []
   and attempts = ref 0
@@ -2302,6 +2561,7 @@ let run_target (type a) ?(seed = 0) ?(size = 10) ?(max_improvements = 100)
     ; s_max_shrinks = Int.max_value
     ; s_deadline = None
     ; s_best = best
+    ; s_best_spans = best_spans
     ; s_best_value = best_value
     ; s_trail = trail
     ; s_attempts = attempts
@@ -2488,7 +2748,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                 ONE of four ways a failure is discovered, and counting at
                 the discovery sites meant the correlated-value mutation's
                 failures were never counted at all. *)
-             found := Some (out.Tape.image, value)
+             found := Some (out.Tape.image, out.Tape.spans, value)
            | Some ((Tape_stats.Case_passed | Tape_stats.Case_invalid) as verdict)
              ->
              let is_valid =
@@ -2555,7 +2815,8 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                in
                match mtested with
                | Some Tape_stats.Case_failed when not mout.Tape.overrun ->
-                 first_correlated_failure := Some (mout.Tape.image, mvalue)
+                 first_correlated_failure :=
+                   Some (mout.Tape.image, mout.Tape.spans, mvalue)
                | _ -> ()));
           if !consecutive_repeats >= repeats_before_giving_up then
             exhausted_after := Some (!case + 1);
@@ -2606,7 +2867,8 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                     to report. *)
                  let failure =
                    match tested with
-                   | Some Tape_stats.Case_failed -> Some (out.Tape.image, value)
+                   | Some Tape_stats.Case_failed ->
+                     Some (out.Tape.image, out.Tape.spans, value)
                    | _ -> None
                  in
                  ((failure, no_eval_stats), tested)))
@@ -2656,7 +2918,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
        dies. Found in review of 061923e. *)
     match first_failure with
       | None -> Passed { cases = cases_run }
-      | Some (image0, value) ->
+      | Some (image0, spans0, value) ->
         (* Check determinism ONCE, on the failure path, before shrinking.
            This existed but nothing outside diagnostic tests called it --
            flagged in review, and fair: an unreachable check is not a
@@ -2675,7 +2937,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
         end;
         finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
           ~max_shrinks ~max_stall ~max_pass_failures ~domains ~pool ~realign
-          ~stats ~image0 ~value)
+          ~stats ~image0 ~spans0 ~value)
 
 (* Resumable shrinking: continue from a tape saved earlier (typically
    printed on a previous run that hit its budget -- see [Tape_test]'s
@@ -2715,7 +2977,12 @@ let resume (type a) ?(size = 10) ?(budget = 2000)
       | Some Tape_stats.Case_failed when not out.Tape.overrun ->
         finish_from_failure ~tape ~gen ~size ~test ~budget ~max_seconds
           ~max_shrinks ~max_stall ~max_pass_failures ~domains ~pool ~realign
-          ~stats ~image0:image ~value
+          (* Normalise all three starting artefacts to the confirmation
+             replay.  A changed generator or hand-edited tape can still fail
+             while re-recording a different image; pairing its spans and value
+             with the caller's stale image would make structural offsets
+             incoherent. *)
+          ~stats ~image0:out.Tape.image ~spans0:out.Tape.spans ~value
       | _ -> Passed { cases = 0 })
 
 let stats_summary_line (stats : stats) =

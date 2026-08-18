@@ -1,0 +1,3 @@
+stock: found 100/100, exact 1/100; mean attempts 933.6, nodes 10.5, rendered bytes 62.3
+structural: found 100/100, exact 0/100; mean attempts 438.6, nodes 5.0, rendered bytes 35.4
+paired exact transitions: stock->structural 0, structural->stock 1

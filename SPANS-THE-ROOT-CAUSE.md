@@ -3,6 +3,11 @@
 Written 2026-07-31, after mining Hypothesis's shrinker for the third
 time in a day and finding the same wall each time.
 
+Status update, 2026-08-12: the span seam, `remove_discarded`, and an opt-in
+`pass_to_descendant` now exist. The unchanged poison-tree arm remains 12/34;
+adding recursive span brackets reaches 34/34. See
+`WAVE2-PASS-TO-DESCENDANT.md`. The historical diagnosis below is retained.
+
 ## The three gaps, which looked unrelated
 
 1. **`remove_discarded`** — filtered generators leave rejected draws on

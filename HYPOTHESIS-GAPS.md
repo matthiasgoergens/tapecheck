@@ -53,8 +53,8 @@ because two of them point at the same structural cause as §3:
 
 | Hypothesis pass | here |
 |---|---|
-| `pass_to_descendant` | absent (1 hit, a comment saying it is blocked) |
-| `remove_discarded` | absent (0 hits) |
+| `pass_to_descendant` | implemented for explicitly descendable, same-labelled spans; opt-in recursive generators reach 34/34 poisoned leaves |
+| `remove_discarded` | implemented for explicitly discardable attempt spans |
 | `minimize_duplicated_choices` | absent (0 hits) |
 | `reorder_spans` | `sort_siblings` exists — **and is hard-disabled** |
 | string/unicode character passes | absent, and unrepresentable (§3) |

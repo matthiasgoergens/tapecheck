@@ -71,10 +71,13 @@ and intercept =
   ; bool_with_probability :
       t
       -> probability:float
+      -> forced:bool option
       -> default:(t -> probability:float -> bool)
       -> bool
-  ; on_span_start : span_label -> unit
-  ; on_span_stop : unit -> unit
+  ; on_span_start :
+      span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
+  ; on_span_stop :
+      deletable:bool -> discardable:bool -> descendable:bool -> discarded:bool -> unit -> unit
   ; on_split : unit -> intercept option
   ; on_perturb : int -> intercept option
   }
@@ -265,26 +268,57 @@ let bool_with_probability_default state ~probability =
   Float.(unit_float_default state < probability)
 ;;
 
-let bool_with_probability state ~probability =
+let bool_with_probability ?forced state ~probability =
   if Float.is_nan probability || Float.(probability < 0. || probability > 1.)
   then raise_s [%message "bool_with_probability: invalid probability" (probability : float)];
-  if Float.equal probability 0.
-  then false
-  else if Float.equal probability 1.
-  then true
-  else (
-    match state.intercept with
+  (match forced with
+   | Some value
+     when (value && Float.equal probability 0.)
+          || ((not value) && Float.equal probability 1.) ->
+     raise_s
+       [%message
+         "bool_with_probability: forced value has zero probability"
+           (probability : float)
+           (forced : bool option)]
+   | None | Some _ -> ());
+  let forced =
+    match forced with
+    | Some _ as forced -> forced
+    | None when Float.equal probability 0. -> Some false
+    | None when Float.equal probability 1. -> Some true
+    | None -> None
+  in
+  let sample state ~probability =
+    match forced with
+    | Some value -> value
     | None -> bool_with_probability_default state ~probability
-    | Some i ->
-      i.bool_with_probability state ~probability ~default:bool_with_probability_default)
+  in
+  match state.intercept with
+  | None -> sample state ~probability
+  | Some i -> i.bool_with_probability state ~probability ~forced ~default:sample
 ;;
 
-let with_span state label ~f =
+let with_span
+  ?(deletable = false)
+  ?(discard_on_exception = false)
+  ?(descendable = false)
+  state
+  label
+  ~f
+  =
   match state.intercept with
   | None -> f ()
   | Some i ->
-    i.on_span_start label;
-    Exn.protect ~f ~finally:(fun () -> i.on_span_stop ())
+    i.on_span_start label ~deletable ~discardable:discard_on_exception ~descendable;
+    let discarded = ref true in
+    Exn.protect
+      ~f:(fun () ->
+        let result = f () in
+        discarded := false;
+        result)
+      ~finally:(fun () ->
+        i.on_span_stop ~deletable ~discardable:discard_on_exception ~descendable
+          ~discarded:!discarded ())
 ;;
 
 (* Note about roundoff error:
@@ -432,10 +466,18 @@ module Intercept = struct
     ; bool_with_probability :
         state
         -> probability:float
+        -> forced:bool option
         -> default:(state -> probability:float -> bool)
         -> bool
-    ; on_span_start : span_label -> unit
-    ; on_span_stop : unit -> unit
+    ; on_span_start :
+        span_label -> deletable:bool -> discardable:bool -> descendable:bool -> unit
+    ; on_span_stop :
+        deletable:bool
+        -> discardable:bool
+        -> descendable:bool
+        -> discarded:bool
+        -> unit
+        -> unit
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }

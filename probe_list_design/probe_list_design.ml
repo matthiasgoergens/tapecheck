@@ -18,6 +18,73 @@ open! Base
 
 module G = Base_quickcheck.Generator
 
+type Splittable_random.span_label += Continuation_element | Recursive_attempt
+
+exception Leaf_limit_reached
+
+type leaf_cap_stats =
+  { mutable draws : int
+  ; mutable retries : int
+  ; mutable max_retries : int
+  ; mutable max_leaves_used : int
+  }
+
+let leaf_cap_stats =
+  { draws = 0; retries = 0; max_retries = 0; max_leaves_used = 0 }
+;;
+
+let reset_leaf_cap_stats () =
+  leaf_cap_stats.draws <- 0;
+  leaf_cap_stats.retries <- 0;
+  leaf_cap_stats.max_retries <- 0;
+  leaf_cap_stats.max_leaves_used <- 0
+;;
+
+(* A direct probe of Hypothesis's [RecursiveStrategy]: wrap the base strategy
+   in a shared counter, build a bounded tower of [extend] applications, and
+   retry the whole draw when it asks for more than [max_leaves] base values.
+   Retries deliberately continue from the advanced random/tape stream, as
+   Hypothesis continues drawing from the same ConjectureData. *)
+let recursive_with_max_leaves ~base ~extend ~max_leaves =
+  if max_leaves <= 0 then invalid_arg "recursive_with_max_leaves: non-positive cap";
+  G.create (fun ~size ~random ->
+    let remaining = ref max_leaves in
+    let limited_base =
+      G.create (fun ~size ~random ->
+        if !remaining <= 0 then Stdlib.raise_notrace Leaf_limit_reached;
+        Int.decr remaining;
+        G.generate base ~size ~random)
+    in
+    let strategies = ref [ limited_base; extend limited_base ] in
+    let capacity = ref 2 in
+    let keep_growing = ref true in
+    while !keep_growing && !capacity <= max_leaves do
+      strategies := !strategies @ [ extend (G.union !strategies) ];
+      if !capacity > max_leaves / 2
+      then keep_growing := false
+      else capacity := !capacity * 2
+    done;
+    let strategy = G.union !strategies in
+    let rec attempt retries =
+      remaining := max_leaves;
+      try
+        let value =
+          Splittable_random.with_span ~discard_on_exception:true random
+            Recursive_attempt ~f:(fun () -> G.generate strategy ~size ~random)
+        in
+        let leaves_used = max_leaves - !remaining in
+        leaf_cap_stats.draws <- leaf_cap_stats.draws + 1;
+        leaf_cap_stats.retries <- leaf_cap_stats.retries + retries;
+        leaf_cap_stats.max_retries <- Int.max leaf_cap_stats.max_retries retries;
+        leaf_cap_stats.max_leaves_used <-
+          Int.max leaf_cap_stats.max_leaves_used leaves_used;
+        value
+      with
+      | Leaf_limit_reached -> attempt (retries + 1)
+    in
+    attempt 0)
+;;
+
 let bounded_max_length ~size ~min_length ~requested =
   let upper_bound = min_length + size in
   if upper_bound >= min_length then Int.min requested upper_bound else requested
@@ -168,15 +235,61 @@ let list_continuation_float elt_gen =
 let list_continuation_int elt_gen = list_continuation_with continuation_length_int elt_gen
 let list_continuation elt_gen = list_continuation_with continuation_length_bool elt_gen
 
+(* Hypothesis-shaped representation: the continuation choice and all draws for
+   the element it guards occupy one structural span.  Unlike the earlier
+   continuation probe, decisions are interleaved with element generation so a
+   complete element can be deleted without leaving an unmatched continuation.
+
+   This arm isolates that structural question: element generation receives the
+   ambient size independently of list continuation.  It is deliberately not a
+   shippable recursive generator yet; Hypothesis uses a separate [max_leaves]
+   mechanism for that safety contract, which is the next design component. *)
+let list_continuation_spans elt_gen =
+  G.create (fun ~size ~random ->
+    let lo = 0 in
+    let hi = bounded_max_length ~size ~min_length:lo ~requested:Int.max_value in
+    let count = hi - lo + 1 in
+    let weights =
+      Array.init count ~f:(fun i ->
+        1. /. Float.of_int (bit_bucket_size ~lo ~hi (lo + i)))
+    in
+    let tails = Array.create ~len:count 0. in
+    for i = count - 1 downto 0 do
+      tails.(i) <- weights.(i) +. if i + 1 < count then tails.(i + 1) else 0.
+    done;
+    let rec loop length acc =
+      let at_maximum = length = hi in
+      let p_continue =
+        if at_maximum then 0. else 1. -. (weights.(length) /. tails.(length))
+      in
+      let forced = if at_maximum then Some false else None in
+      match
+        Splittable_random.with_span ~deletable:true random
+          Continuation_element ~f:(fun () ->
+          if
+            Splittable_random.bool_with_probability random
+              ~probability:p_continue ?forced
+          then begin
+            let value = G.generate elt_gen ~size ~random in
+            Some value
+          end
+          else None)
+      with
+      | None -> List.rev acc
+      | Some value -> loop (length + 1) (value :: acc)
+    in
+    loop 0 [])
+
 let count_choices image =
   Array.length image.Tape.main
   + Array.fold image.Tape.streams ~init:0 ~f:(fun n (_, xs) -> n + Array.length xs)
 ;;
 
-let quality ~name ~gen ~test ~is_minimal =
+let quality ~name ~gen ~test ~is_minimal ~show =
   let found = ref 0 in
   let minimal = ref 0 in
   let attempts = ref 0 in
+  let stuck = ref [] in
   for seed = 0 to 99 do
     match
       Tape_engine.run gen ~test ~seed:(seed * 1_000_003) ~count:200 ~size:10
@@ -185,7 +298,9 @@ let quality ~name ~gen ~test ~is_minimal =
     | Tape_engine.Failed { minimal = value; attempts = n; _ } ->
       Int.incr found;
       attempts := !attempts + n;
-      if is_minimal value then Int.incr minimal
+      if is_minimal value
+      then Int.incr minimal
+      else if List.length !stuck < 5 then stuck := show value :: !stuck
   done;
   Stdio.printf
     "    %-16s found %3d, minimal %3d, %4s shrink attempts/failure\n"
@@ -193,6 +308,9 @@ let quality ~name ~gen ~test ~is_minimal =
     !found
     !minimal
     (if !found = 0 then "n/a" else Int.to_string (!attempts / !found))
+  ;
+  if not (List.is_empty !stuck) then
+    Stdio.printf "      first non-minima: %s\n" (String.concat ~sep:"; " (List.rev !stuck))
 ;;
 
 let distribution ~name ~gen ~size ~samples =
@@ -261,7 +379,19 @@ let rec tree_nodes = function
   | Node children -> 1 + List.sum (module Int) children ~f:tree_nodes
 ;;
 
+let rec tree_leaves = function
+  | Leaf -> 1
+  | Node children -> List.sum (module Int) children ~f:tree_leaves
+;;
+
 let tree list = G.recursive_union [ G.return Leaf ] ~f:(fun self -> [ G.map (list self) ~f:(fun xs -> Node xs) ])
+
+let leaf_capped_tree list ~max_leaves =
+  recursive_with_max_leaves
+    ~base:(G.return Leaf)
+    ~extend:(fun self -> G.map (list self) ~f:(fun xs -> Node xs))
+    ~max_leaves
+;;
 
 let generation_tail ~name ~gen ~size ~samples ~measure =
   let total = ref 0 in
@@ -281,18 +411,112 @@ let generation_tail ~name ~gen ~size ~samples ~measure =
     size
 ;;
 
+let taped_generation_tail ~name ~gen ~size ~samples ~measure =
+  let total_measure = ref 0 in
+  let max_measure = ref 0 in
+  let total_choices = ref 0 in
+  let max_choices = ref 0 in
+  let total_discarded_choices = ref 0 in
+  for seed = 0 to samples - 1 do
+    (* Record exactly one fresh generation.  Going through [Tape_engine.run]
+       would add its eight determinism replays and final live-value replay,
+       contaminating a measurement of generation-time retry behaviour. *)
+    let tape = Tape.create () in
+    Tape.start_recording tape;
+    let random =
+      Splittable_random.For_tape.attach (Splittable_random.of_int seed) tape
+    in
+    let value = G.generate gen ~size ~random in
+    let out = Tape.finish tape in
+    let measured = measure value in
+    let choices = count_choices out.image in
+    let discarded_choices =
+      (* Recursive-attempt spans in this probe are sequential, never nested,
+         so summing their lengths counts each abandoned choice exactly once. *)
+      Array.sum
+        (module Int)
+        out.spans
+        ~f:(fun (span : Tape.span) ->
+          if span.discarded then span.stop - span.start else 0)
+    in
+    total_measure := !total_measure + measured;
+    max_measure := Int.max !max_measure measured;
+    total_choices := !total_choices + choices;
+    max_choices := Int.max !max_choices choices;
+    total_discarded_choices := !total_discarded_choices + discarded_choices
+  done;
+  Stdio.printf
+    "  %-16s mean value %.2f, max %d; mean choices %.2f, max %d; discarded %.2f (%d samples)\n"
+    name
+    (Float.of_int !total_measure /. Float.of_int samples)
+    !max_measure
+    (Float.of_int !total_choices /. Float.of_int samples)
+    !max_choices
+    (Float.of_int !total_discarded_choices /. Float.of_int samples)
+    samples
+;;
+
+let tree_quality ~name ~gen ~threshold =
+  let found = ref 0 in
+  let exact = ref 0 in
+  let attempts = ref 0 in
+  let choices = ref 0 in
+  let discarded_attempts = ref 0 in
+  let worst = ref 0 in
+  for seed = 0 to 49 do
+    match
+      Tape_engine.run gen ~seed:(seed * 1_000_003) ~count:200 ~size:50
+        ~budget:5_000 ~test:(fun tree -> tree_nodes tree < threshold)
+    with
+    | Tape_engine.Passed _ -> ()
+    | Tape_engine.Failed { minimal; attempts = n; image; _ } ->
+      let nodes = tree_nodes minimal in
+      Int.incr found;
+      attempts := !attempts + n;
+      choices := !choices + count_choices image;
+      discarded_attempts :=
+        !discarded_attempts
+        + List.Assoc.find_exn (Tape_engine.last_pass_costs ())
+            ~equal:String.equal "remove_discarded";
+      worst := Int.max !worst nodes;
+      if nodes = threshold then Int.incr exact
+  done;
+  Stdio.printf
+    "  %-16s found %2d, exact %2d, worst %d, %s attempts, %s choices/failure, %d discarded-pass total\n"
+    name
+    !found
+    !exact
+    !worst
+    (if !found = 0 then "n/a" else Int.to_string (!attempts / !found))
+    (if !found = 0 then "n/a" else Int.to_string (!choices / !found))
+    !discarded_attempts
+;;
+
 let () =
+  let show_ints xs =
+    "[" ^ String.concat ~sep:"; " (List.map xs ~f:Int.to_string) ^ "]"
+  in
+  let show_strings xs =
+    "["
+    ^ String.concat ~sep:"; " (List.map xs ~f:(Printf.sprintf "%S"))
+    ^ "]"
+  in
   let int100 = G.int_uniform_inclusive 0 100 in
   let int1000 = G.int_uniform_inclusive 0 1000 in
   let stock elt = G.list elt in
   let running elt = list_running elt in
   let continuation elt = list_continuation elt in
+  let continuation_spans elt = list_continuation_spans elt in
 
   Stdio.printf "RAW LENGTH DISTRIBUTION (size 10, 20k samples)\n";
   let raw_stock = raw_distribution ~name:"stock" ~gen:(stock int100) ~size:10 ~samples:20_000 in
   let raw_continuation =
     raw_distribution ~name:"continuation" ~gen:(continuation int100) ~size:10 ~samples:20_000
   in
+  ignore
+    (raw_distribution ~name:"continuation+span"
+       ~gen:(continuation_spans int100) ~size:10 ~samples:20_000
+     : int array);
   Stdio.printf
     "  stock vs continuation two-sample chi-square %.2f (%d bins)\n"
     (chi_square raw_stock raw_continuation)
@@ -304,6 +528,10 @@ let () =
   let continuation_counts =
     distribution ~name:"continuation" ~gen:(continuation int100) ~size:10 ~samples:20_000
   in
+  ignore
+    (distribution ~name:"continuation+span"
+       ~gen:(continuation_spans int100) ~size:10 ~samples:20_000
+     : int array);
   Stdio.printf
     "  stock vs continuation two-sample chi-square %.2f (%d bins)\n"
     (chi_square stock_counts continuation_counts)
@@ -325,26 +553,37 @@ let () =
      : int array);
 
   Stdio.printf "\nSHRINK QUALITY (100 seeds)\n";
-  let run_case : type a. string -> a G.t -> test:(a list -> bool) -> minimal:(a list -> bool) -> unit =
-    fun label elt ~test ~minimal ->
+  let run_case : type a.
+    string ->
+    a G.t ->
+    show:(a list -> string) ->
+    test:(a list -> bool) ->
+    minimal:(a list -> bool) ->
+    unit =
+    fun label elt ~show ~test ~minimal ->
     Stdio.printf "  %s\n" label;
-    quality ~name:"stock" ~gen:(stock elt) ~test ~is_minimal:minimal;
-    quality ~name:"length-int" ~gen:(running elt) ~test ~is_minimal:minimal;
-    quality ~name:"continuation" ~gen:(continuation elt) ~test ~is_minimal:minimal
+    quality ~name:"stock" ~gen:(stock elt) ~test ~is_minimal:minimal ~show;
+    quality ~name:"length-int" ~gen:(running elt) ~test ~is_minimal:minimal ~show;
+    quality ~name:"continuation" ~gen:(continuation elt) ~test ~is_minimal:minimal ~show;
+    quality ~name:"continuation+span" ~gen:(continuation_spans elt) ~test
+      ~is_minimal:minimal ~show
   in
   run_case
     "length >= 3 (minimum [0;0;0])"
     int100
+    ~show:show_ints
     ~test:(fun xs -> List.length xs < 3)
     ~minimal:(List.equal Int.equal [ 0; 0; 0 ]);
   run_case
     "sum >= 100 (minimum [100])"
     int1000
+    ~show:show_ints
     ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)
     ~minimal:(List.equal Int.equal [ 100 ]);
   run_case
     "hd = length (minimum [1])"
     (G.int_uniform_inclusive 0 50)
+    ~show:show_ints
     ~test:(fun xs ->
       match xs with
       | [] -> true
@@ -353,8 +592,14 @@ let () =
   run_case
     "ten strings (minimum ten empty strings)"
     G.string
+    ~show:show_strings
     ~test:(fun xs -> List.length xs < 10)
     ~minimal:(fun xs -> List.length xs = 10 && List.for_all xs ~f:String.is_empty);
+
+  Stdio.printf "\nRECURSIVE SHRINK QUALITY (50 seeds, fail at 20 nodes)\n";
+  tree_quality ~name:"stock tree" ~gen:(tree stock) ~threshold:20;
+  let capped_tree = leaf_capped_tree continuation_spans ~max_leaves:100 in
+  tree_quality ~name:"cont+span capped" ~gen:capped_tree ~threshold:20;
 
   Stdio.printf "\nGENERATION TAILS\n";
   generation_tail ~name:"stock strings" ~gen:(stock G.string) ~size:50 ~samples:10_000
@@ -363,10 +608,34 @@ let () =
     ~measure:(List.sum (module Int) ~f:String.length);
   generation_tail ~name:"continuation str" ~gen:(continuation G.string) ~size:50 ~samples:10_000
     ~measure:(List.sum (module Int) ~f:String.length);
+  generation_tail ~name:"cont+span str" ~gen:(continuation_spans G.string) ~size:50
+    ~samples:10_000 ~measure:(List.sum (module Int) ~f:String.length);
   generation_tail ~name:"stock tree" ~gen:(tree stock) ~size:50 ~samples:10_000
     ~measure:tree_nodes;
   generation_tail ~name:"running tree" ~gen:(tree running) ~size:50 ~samples:10_000
     ~measure:tree_nodes;
   generation_tail ~name:"continuation tree" ~gen:(tree continuation) ~size:50 ~samples:10_000
-    ~measure:tree_nodes
+    ~measure:tree_nodes;
+  reset_leaf_cap_stats ();
+  generation_tail ~name:"cont+span capped" ~gen:capped_tree ~size:50 ~samples:10_000
+    ~measure:tree_nodes;
+  generation_tail ~name:"  capped leaves" ~gen:capped_tree ~size:50 ~samples:10_000
+    ~measure:tree_leaves;
+  Stdio.printf
+    "  leaf-cap retries  %d over %d successful draws, max %d; max leaves charged %d\n"
+    leaf_cap_stats.retries
+    leaf_cap_stats.draws
+    leaf_cap_stats.max_retries
+    leaf_cap_stats.max_leaves_used;
+  Stdio.printf "\nTAPED RECURSIVE COSTS\n";
+  taped_generation_tail ~name:"stock tree" ~gen:(tree stock) ~size:50 ~samples:1_000
+    ~measure:tree_nodes;
+  reset_leaf_cap_stats ();
+  taped_generation_tail ~name:"cont+span capped" ~gen:capped_tree ~size:50 ~samples:1_000
+    ~measure:tree_nodes;
+  Stdio.printf
+    "  taped cap retries %d over %d successful draws, max %d\n"
+    leaf_cap_stats.retries
+    leaf_cap_stats.draws
+    leaf_cap_stats.max_retries
 ;;

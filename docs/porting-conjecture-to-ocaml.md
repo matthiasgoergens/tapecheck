@@ -78,7 +78,7 @@ passes need them: `remove_discarded`, `pass_to_descendant`,
 `reorder_spans`, `minimize_duplicated_choices`. Two of the four have
 since landed behind the opt-in capability on `wave2/span-deletion` —
 see the poisoned-trees table above and
-`WAVE2-PASS-TO-DESCENDANT.md` on the `wave2/span-deletion` branch — and the two that remain are the span
+`WAVE2-PASS-TO-DESCENDANT.md` — and the two that remain are the span
 gap this post keeps meeting.
 
 That trade is the subject of most of what follows.
@@ -249,7 +249,7 @@ Ported with the same three sizes and two seeds as theirs, hence the same
 
 The 12/34 floor is asserted in `test_poison/`; the 34/34 row needs the
 opt-in capability that landed with `pass_to_descendant` on
-`wave2/span-deletion` (see `WAVE2-PASS-TO-DESCENDANT.md` there).
+`wave2/span-deletion` (see `WAVE2-PASS-TO-DESCENDANT.md`).
 
 What makes this evidence rather than a score is that the failure has a
 shape. Positions 0 and 1 reduce fully; from position 2 onward the

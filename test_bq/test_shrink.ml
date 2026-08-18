@@ -6,6 +6,13 @@
 open! Base
 module G = Base_quickcheck.Generator
 
+type Splittable_random.span_label +=
+  | Continuation_element
+  | Observed_element
+  | Discarded_attempt
+
+exception Retry_attempt
+
 let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
 let () =
@@ -117,6 +124,194 @@ let () =
     | Tape_engine.Passed _ -> failwith "no failure: par arm"
   in
   check "domains-invariant minimal" (List.equal Int.equal seq par);
+
+  (* A continuation decision and the element it guards form one span.  The
+     supplied tape encodes [1; 100]; deleting the first complete span must
+     replay as [100], whereas deleting the bare element choice would leave a
+     true continuation with no value and overrun. *)
+  let continuation_values random draw_element =
+    let rec loop remaining acc =
+      let forced = if remaining = 0 then Some false else None in
+      match
+        Splittable_random.with_span ~deletable:true random
+          Continuation_element ~f:(fun () ->
+          if
+            Splittable_random.bool_with_probability random ~probability:0.5
+              ?forced
+          then
+            Some (draw_element random)
+          else None)
+      with
+      | None -> List.rev acc
+      | Some value -> loop (remaining - 1) (value :: acc)
+    in
+    loop 4 []
+  in
+  let continuation_list draw_element =
+    G.create (fun ~size:_ ~random -> continuation_values random draw_element)
+  in
+  let continuation_int =
+    continuation_list (fun random ->
+      Splittable_random.int random ~lo:0 ~hi:1000)
+  in
+  let int value = Tape.Integer { value = Int64.of_int value; lo = 0L; hi = 1000L } in
+  let continuation_image =
+    Tape.image_of_main
+      [| Tape.Bool true
+       ; int 1
+       ; Tape.Bool true
+       ; int 100
+       ; Tape.Bool false
+      |]
+  in
+  (match
+     Tape_engine.resume continuation_int continuation_image
+       ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)
+  with
+  | Tape_engine.Passed _ -> failwith "continuation tape stopped failing"
+  | Tape_engine.Failed { minimal; _ } ->
+    check "span deletion removes an irrelevant leading element"
+      (List.equal Int.equal minimal [ 100 ]));
+  let delete_span_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "delete_spans"
+  in
+  check "span deletion pass was exercised" (delete_span_attempts > 0);
+  (* An observational child span is part of its enclosing deletable unit.  It
+     must not make that unit look non-leaf and silently disable middle-element
+     deletion for composite generators. *)
+  let observed_continuation_int =
+    continuation_list (fun random ->
+      Splittable_random.with_span random Observed_element ~f:(fun () ->
+        Splittable_random.int random ~lo:0 ~hi:1000))
+  in
+  (match
+     Tape_engine.resume observed_continuation_int continuation_image
+       ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)
+   with
+   | Tape_engine.Passed _ ->
+     failwith "observed continuation tape stopped failing"
+   | Tape_engine.Failed { minimal; _ } ->
+     check "observational child span does not block parent deletion"
+       (List.equal Int.equal minimal [ 100 ]));
+  let observed_delete_span_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "delete_spans"
+  in
+  check "observed parent span deletion pass was exercised"
+    (observed_delete_span_attempts > 0);
+  (* The same edit must work in a split/keyed stream, as used by generated
+     functions, rather than accidentally assuming every span belongs to the
+     main stream. *)
+  let split_continuation_int =
+    G.create (fun ~size:_ ~random ->
+      let child = Splittable_random.split random in
+      continuation_values child (fun child ->
+        Splittable_random.int child ~lo:0 ~hi:1000))
+  in
+  let keyed_continuation_image : Tape.image =
+    { main = [| Tape.Marker |]
+    ; streams = [| [ Tape.Split 0 ], continuation_image.main |]
+    }
+  in
+  (match
+     Tape_engine.resume split_continuation_int keyed_continuation_image
+       ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)
+   with
+   | Tape_engine.Passed _ -> failwith "keyed continuation tape stopped failing"
+   | Tape_engine.Failed { minimal; _ } ->
+     check "span deletion edits a keyed stream"
+       (List.equal Int.equal minimal [ 100 ]));
+  let keyed_delete_span_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "delete_spans"
+  in
+  check "keyed span deletion pass was exercised" (keyed_delete_span_attempts > 0);
+  (* A failed generator attempt consumed choices but produced no part of the
+     returned value.  Its exceptional span should be removed as one discarded
+     region before ordinary value shrinking. *)
+  let retrying_int =
+    G.create (fun ~size:_ ~random ->
+      let rec attempt () =
+        try
+          Splittable_random.with_span ~discard_on_exception:true random
+            Discarded_attempt ~f:(fun () ->
+            let retry = Splittable_random.bool random in
+            let value = Splittable_random.int random ~lo:0 ~hi:1000 in
+            if retry then raise Retry_attempt else value)
+        with
+        | Retry_attempt -> attempt ()
+      in
+      attempt ())
+  in
+  let discarded_image =
+    Tape.image_of_main
+      [| Tape.Bool true; int 999; Tape.Bool false; int 100 |]
+  in
+  (match
+     Tape_engine.resume retrying_int discarded_image ~test:(fun value -> value < 100)
+   with
+   | Tape_engine.Passed _ -> failwith "discarded-attempt tape stopped failing"
+   | Tape_engine.Failed { minimal; image; _ } ->
+     check "discarded attempt leaves the same failing value" (minimal = 100);
+     check "discarded attempt choices are absent from the minimal tape"
+       (Array.length image.Tape.main <= 2));
+  let remove_discarded_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "remove_discarded"
+  in
+  check "remove_discarded pass was exercised" (remove_discarded_attempts > 0);
+  (match
+     Tape_engine.resume retrying_int discarded_image ~domains:2
+       ~test:(fun value -> value < 100)
+   with
+   | Tape_engine.Passed _ ->
+     failwith "pooled discarded-attempt tape stopped failing"
+   | Tape_engine.Failed { minimal; image; _ } ->
+     check "pooled remove_discarded preserves the failing value" (minimal = 100);
+     check "pooled remove_discarded removes the dead region"
+       (Array.length image.Tape.main <= 2));
+  let pooled_remove_discarded_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "remove_discarded"
+  in
+  check "pooled run exercises remove_discarded"
+    (pooled_remove_discarded_attempts > 0);
+  (match
+     Tape_engine.resume observed_continuation_int continuation_image ~domains:2
+       ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)
+   with
+   | Tape_engine.Passed _ ->
+     failwith "pooled observed continuation tape stopped failing"
+   | Tape_engine.Failed { minimal; _ } ->
+     check "pooled shrinking preserves deletable span metadata"
+       (List.equal Int.equal minimal [ 100 ]));
+  let pooled_delete_span_attempts =
+    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+      "delete_spans"
+  in
+  check "pooled run exercises span deletion" (pooled_delete_span_attempts > 0);
+  let maximum_length_image =
+    Tape.image_of_main
+      [| Tape.Bool true
+       ; int 1
+       ; Tape.Bool true
+       ; int 100
+       ; Tape.Bool true
+       ; int 0
+       ; Tape.Bool true
+       ; int 0
+       ; Tape.Bool false
+      |]
+  in
+  (match
+     Tape_engine.resume continuation_int maximum_length_image
+       ~test:(fun xs -> List.sum (module Int) xs ~f:Fn.id < 100)
+  with
+  | Tape_engine.Passed _ -> failwith "maximum-length continuation tape stopped failing"
+  | Tape_engine.Failed { minimal; _ } ->
+    check "forced terminal stop permits deletion at maximum length"
+      (List.equal Int.equal minimal [ 100 ]));
 
   (* A shape-changing generator: a bool tag selects (int,int) [sum
      test] vs (bool,int) [int test]. The canonical minimum lives in the

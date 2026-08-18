@@ -69,7 +69,8 @@ let () =
 
   (* Weighted structural decisions retain their sampling law outside the tape,
      but are represented by a first-class Bool choice when attached.  Forced
-     probabilities consume no randomness and need no tape entry. *)
+     probabilities consume no randomness but remain forced tape nodes, matching
+     Hypothesis's structural replay model. *)
   let random = Splittable_random.of_int 7 in
   check "probability zero is forced"
     (not (Splittable_random.bool_with_probability random ~probability:0.));
@@ -82,8 +83,16 @@ let () =
   check "attached probability one is forced"
     (Splittable_random.bool_with_probability attached ~probability:1.);
   let forced = Tape.finish tape in
-  check "forced probabilities record no choices"
-    (Array.length forced.Tape.choices = 0);
+  check "forced probabilities remain on the tape"
+    (Tape.equal_choices forced.Tape.choices
+       [| Tape.Bool false; Tape.Bool true |]);
+  Tape.start_replay tape [| Tape.Bool true |];
+  let attached = Splittable_random.For_tape.attach random tape in
+  check "forced replay cannot flip probability zero"
+    (not (Splittable_random.bool_with_probability attached ~probability:0.));
+  let forced_replay = Tape.finish tape in
+  check "forced replay rewrites the constrained value"
+    (Tape.equal_choices forced_replay.Tape.choices [| Tape.Bool false |]);
   Tape.start_recording tape;
   let attached = Splittable_random.For_tape.attach random tape in
   ignore
@@ -129,15 +138,15 @@ let () =
     ; unit_float = (fun state ~default -> default state)
     ; bool = (fun state ~default -> default state)
     ; bool_with_probability =
-        (fun state ~probability ~default -> default state ~probability)
+        (fun state ~probability ~forced:_ ~default -> default state ~probability)
     ; on_span_start =
-        (fun _ ->
+        (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ->
           span_events := "start" :: !span_events;
           Int.incr starts;
           Int.incr depth;
           max_depth := Int.max !max_depth !depth)
     ; on_span_stop =
-        (fun () ->
+        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~discarded:_ () ->
           span_events := "stop" :: !span_events;
           check "list span stop has a matching start" (!depth > 0);
           Int.decr depth;

@@ -1,0 +1,65 @@
+attached observational callbacks: 60 randomised paired blocks x 3000 cases, length 30
+ignored 411.312 ns/element; production 394.084
+paired geometric effect -4.19%, 95% t CI [-4.70%, -3.68%]
+practical slowdown margin +5.0%: excluded
+checksum 44335889
+  block 01 (production first): ignored 408.456, production 401.978, ratio 0.98414
+  block 02 (production first): ignored 411.944, production 385.978, ratio 0.93697
+  block 03 (ignored first): ignored 404.111, production 383.678, ratio 0.94944
+  block 04 (production first): ignored 418.700, production 385.956, ratio 0.92179
+  block 05 (production first): ignored 401.489, production 401.367, ratio 0.99970
+  block 06 (ignored first): ignored 409.056, production 417.433, ratio 1.02048
+  block 07 (production first): ignored 406.356, production 401.989, ratio 0.98925
+  block 08 (ignored first): ignored 408.811, production 390.211, ratio 0.95450
+  block 09 (production first): ignored 398.733, production 387.322, ratio 0.97138
+  block 10 (production first): ignored 415.033, production 382.178, ratio 0.92084
+  block 11 (production first): ignored 405.822, production 392.256, ratio 0.96657
+  block 12 (production first): ignored 396.700, production 381.567, ratio 0.96185
+  block 13 (production first): ignored 396.200, production 381.989, ratio 0.96413
+  block 14 (production first): ignored 399.089, production 383.022, ratio 0.95974
+  block 15 (production first): ignored 405.289, production 382.478, ratio 0.94372
+  block 16 (ignored first): ignored 404.133, production 386.644, ratio 0.95672
+  block 17 (ignored first): ignored 398.744, production 399.733, ratio 1.00248
+  block 18 (production first): ignored 398.911, production 383.433, ratio 0.96120
+  block 19 (ignored first): ignored 389.356, production 381.989, ratio 0.98108
+  block 20 (ignored first): ignored 411.944, production 390.900, ratio 0.94891
+  block 21 (ignored first): ignored 413.244, production 391.022, ratio 0.94622
+  block 22 (production first): ignored 415.222, production 391.667, ratio 0.94327
+  block 23 (ignored first): ignored 411.244, production 410.833, ratio 0.99900
+  block 24 (ignored first): ignored 425.067, production 404.656, ratio 0.95198
+  block 25 (ignored first): ignored 420.444, production 396.100, ratio 0.94210
+  block 26 (ignored first): ignored 407.422, production 394.778, ratio 0.96896
+  block 27 (ignored first): ignored 419.589, production 415.611, ratio 0.99052
+  block 28 (production first): ignored 420.867, production 422.322, ratio 1.00346
+  block 29 (ignored first): ignored 410.300, production 392.333, ratio 0.95621
+  block 30 (production first): ignored 413.044, production 396.578, ratio 0.96013
+  block 31 (production first): ignored 415.289, production 390.489, ratio 0.94028
+  block 32 (ignored first): ignored 421.022, production 397.500, ratio 0.94413
+  block 33 (production first): ignored 410.678, production 397.733, ratio 0.96848
+  block 34 (ignored first): ignored 423.367, production 402.822, ratio 0.95147
+  block 35 (production first): ignored 416.811, production 394.833, ratio 0.94727
+  block 36 (production first): ignored 407.767, production 392.122, ratio 0.96163
+  block 37 (ignored first): ignored 408.689, production 389.911, ratio 0.95405
+  block 38 (ignored first): ignored 408.578, production 396.989, ratio 0.97164
+  block 39 (ignored first): ignored 413.611, production 397.278, ratio 0.96051
+  block 40 (ignored first): ignored 417.900, production 389.644, ratio 0.93239
+  block 41 (ignored first): ignored 407.067, production 388.978, ratio 0.95556
+  block 42 (production first): ignored 408.433, production 389.189, ratio 0.95288
+  block 43 (production first): ignored 412.333, production 389.456, ratio 0.94452
+  block 44 (production first): ignored 409.789, production 393.311, ratio 0.95979
+  block 45 (ignored first): ignored 413.844, production 398.389, ratio 0.96265
+  block 46 (production first): ignored 416.344, production 399.800, ratio 0.96026
+  block 47 (production first): ignored 408.056, production 392.033, ratio 0.96074
+  block 48 (ignored first): ignored 410.000, production 388.578, ratio 0.94775
+  block 49 (production first): ignored 416.311, production 391.356, ratio 0.94006
+  block 50 (ignored first): ignored 413.900, production 391.956, ratio 0.94698
+  block 51 (ignored first): ignored 411.256, production 390.778, ratio 0.95021
+  block 52 (ignored first): ignored 411.833, production 391.100, ratio 0.94966
+  block 53 (ignored first): ignored 408.089, production 391.444, ratio 0.95921
+  block 54 (production first): ignored 419.822, production 393.500, ratio 0.93730
+  block 55 (ignored first): ignored 414.122, production 395.456, ratio 0.95492
+  block 56 (ignored first): ignored 411.500, production 393.989, ratio 0.95745
+  block 57 (production first): ignored 417.822, production 393.267, ratio 0.94123
+  block 58 (production first): ignored 419.911, production 397.778, ratio 0.94729
+  block 59 (production first): ignored 430.111, production 406.733, ratio 0.94565
+  block 60 (ignored first): ignored 429.144, production 400.600, ratio 0.93349
