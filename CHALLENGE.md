@@ -67,11 +67,11 @@ change to `base_quickcheck` described in
 |---|---|---|---|
 | reverse | **1000/1000**, 17.7 | 0/1000, 293.8 | 452/1000, 284.4 |
 | distinct | **1000/1000**, 49.1 | 0/1000, 436.7 | 116/1000, 437.1 |
-| large_union_list | **1000/1000**, 211.3 | 0/1000, 1338.8 | 0/1000, 1306.2 |
-| calculator | **1000/1000**, 103.3 | 16/1000, 912.0 | 14/1000, 910.0 |
-| bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 | 52/1000, 293.0 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1344.8 | 0/1000, 1314.7 |
+| calculator | **1000/1000**, 103.3 | 16/1000, 912.0 | 14/1000, 910.1 |
+| bound5 | **1000/1000**, 154.8 | 0/1000, 285.0 | 0/1000, 297.0 |
 | lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 | **1000/1000**, 82.8 |
-| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, **85.5** | 1000/1000, 98.0† |
+| difference_must_not_be_zero | 1000/1000, 40.5 | 1000/1000, **85.5** | 1000/1000, **85.5** |
 | difference_must_not_be_small | 1000/1000, 721.6 | 1000/1000, **97.5** | 1000/1000, **97.5** |
 | difference_must_not_be_one | 1000/1000, 885.2 | 1000/1000, **98.6** | 1000/1000, **98.6** |
 
@@ -89,10 +89,10 @@ by default (raw:
 `../tapecheck-notes/challenge-1000-duplate-20260814.txt`). That pass
 lowers a whole group of equal-valued choices at once, which is exactly
 this challenge's shape; quality is unchanged at 1000/1000, and every
-other row in this table moved by under 1%. † The `+patch` column was
-measured on 2026-08-08, before that pass existed, and has not been
-re-measured; expect it to move the same way, but it is not measured
-here. The pass must run after the deletion and lowering passes — placed before them it costs the
+other row in this table moved by under 1%. The `+patch` column was
+re-measured on 2026-08-19 against the same master
+(`../tapecheck-notes/challenge-1000-patched-20260819.txt`) and moves
+the same way, to 85.5. The pass must run after the deletion and lowering passes — placed before them it costs the
 poisoned-containers guard 21/48 to 17/48, measured, see
 `WAVE2-REORDER-AND-DUPLICATES.md`.
 
@@ -109,16 +109,28 @@ remainder of the suite rather than a separate category:
 
 | challenge | tapecheck | tapecheck +patch |
 |---|---|---|
-| deletion | 17/1000, 2158.2 | 295/1000, 2248.4 |
-| nestedlists | 18/1000, 640.9 | 18/1000, 640.9 |
+| deletion | 17/1000, 2158.2 | 296/1000, 2248.5 |
+| nestedlists | 18/1000, 645.5 | 18/1000, 645.5 |
 | coupling | 18/1000, 2335.8 | 18/1000, 2335.8 |
-| binheap | 93/1000, 1175.6 | 93/1000, 1175.6 |
+| binheap | 93/1000, 1175.4 | 93/1000, 1175.4 |
 
 `<= optimal size` is worth reading alongside `exact` for these: bound5
-reaches 998/1000 and 1000/1000 at-or-below optimal size in the two arms
-while scoring 158 and 52 exact, because the challenge scores one exact
-permutation of five symmetric slots. Same for binheap, 299/1000
-at-or-below against 93 exact.
+reaches 999/1000 at-or-below optimal size while scoring 0 exact,
+because the challenge scores one exact permutation of five symmetric
+slots. Same for binheap, 299/1000 at-or-below against 93 exact.
+
+**bound5's exact score fell to 0 in both arms when `reorder_spans`
+landed, and that is not a regression in reduction.** Before the pass,
+the answer set was 22 distinct arrangements of which 158/1000 happened
+to be the challenge's permutation; the pass canonicalises them to 2,
+with 999/1000 on a single arrangement — `([], [], [], [-32768], [-1])`
+rather than the expected `([], [], [], [-1], [-32768])`. Normalisation
+is what the suite asks for and the pass delivers it; it settles on the
+wrong representative because shortlex ranks the two-entry `-32768`
+recording ahead of `-1`'s three entries, which is the `non_uniform`
+encoding pathology showing through the sort key. A value-aware key was
+tried and rejected by measurement — see
+`WAVE2-REORDER-AND-DUPLICATES.md`.
 
 ## Reading it
 
@@ -134,8 +146,11 @@ column.** Measured directly over 1000 runs (`diag2/probe_bound5.ml`):
 **all 1000 reduce to exactly two elements, and 998 of them to the right
 content** — two singleton lists holding `-1` and `-32768`, three
 empties. What varies is *which of the five slots* the singletons land
-in, and the challenge scores one exact permutation. So the 158/1000
-score measures positional canonicalisation, not reduction.
+in, and the challenge scores one exact permutation. So the score
+measures positional canonicalisation, not reduction — which is why
+`reorder_spans` moved it to 0 while improving the thing the suite
+actually asks for. (The 158/1000 quoted below is the pre-`reorder_spans`
+figure; the reasoning it supports is unchanged.)
 
 That reframes the `+patch` column too. It gains 50 points on `reverse`
 and 12 on `distinct`, shaves cost on `large_union_list` and

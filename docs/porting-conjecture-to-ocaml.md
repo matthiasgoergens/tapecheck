@@ -75,11 +75,23 @@ The payoff is that generators need to know nothing. Every existing
 quickcheck]` emits — becomes shrinkable with zero changes, no ppx and no
 rewriting. The cost was that we had no spans, and four of Hypothesis's
 passes need them: `remove_discarded`, `pass_to_descendant`,
-`reorder_spans`, `minimize_duplicated_choices`. Two of the four have
-since landed behind the opt-in capability on `wave2/span-deletion` —
-see the poisoned-trees table above and
-`WAVE2-PASS-TO-DESCENDANT.md` — and the two that remain are the span
-gap this post keeps meeting.
+`reorder_spans`, `minimize_duplicated_choices`. **All four have since
+landed**, and the way they landed is the more interesting half of the
+answer: rather than adopting strategy-layer spans wholesale, the
+recorder gained opt-in capabilities that a generator sets on the
+regions it wants treated structurally, and unchanged generators still
+record nothing and pay nothing. `remove_discarded` and
+`pass_to_descendant` came first (see the poisoned-trees table above and
+`WAVE2-PASS-TO-DESCENDANT.md`); `reorder_spans` and
+`minimize_duplicated_choices` followed, with their measurements and
+their limits in `WAVE2-REORDER-AND-DUPLICATES.md`.
+
+What that does not mean is that the gap closed. `reorder_spans`
+normalises `bound5`'s answer set from 22 distinct arrangements to 2 but
+still reaches the wrong canonical permutation, because tapecheck's
+`non_uniform` encoding makes a two-entry `-32768` recording sort ahead
+of `-1`'s three entries. The capability pattern generalised; the
+shortlex order it feeds did not come out clean.
 
 That trade is the subject of most of what follows.
 

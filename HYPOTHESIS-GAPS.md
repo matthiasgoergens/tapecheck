@@ -55,8 +55,8 @@ because two of them point at the same structural cause as §3:
 |---|---|
 | `pass_to_descendant` | implemented for explicitly descendable, same-labelled spans; opt-in recursive generators reach 34/34 poisoned leaves |
 | `remove_discarded` | implemented for explicitly discardable attempt spans |
-| `minimize_duplicated_choices` | absent (0 hits) |
-| `reorder_spans` | `sort_siblings` exists — **and is hard-disabled** |
+| `minimize_duplicated_choices` | implemented whole-tape over equal `(kind, value, bounds)` groups, on by default; must run AFTER the deletion and lowering passes or it costs the poisoned-containers guard 21/48 to 17/48 |
+| `reorder_spans` | implemented for explicitly reorderable same-label sibling spans; the span-free `sort_siblings` approximation remains hard-disabled |
 | string/unicode character passes | absent, and unrepresentable (§3) |
 
 `sort_siblings` is the interesting one and it is not simply missing.
