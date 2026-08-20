@@ -5,7 +5,7 @@ Port Hypothesis's Conjecture engine to `base_quickcheck`, measure honestly, then
 send the outreach email to the ICSE-2024 PBT paper authors.
 
 ## State (verified)
-- master `9c5a179`, full suite green (25 assertions across 30 test dirs),
+- master `b442eae`, full suite green (25 assertions across 30 test dirs),
   **0 open issues**, 1 open PR (#29, draft). CI green on the last master push.
 - **All four** Hypothesis span-dependent passes exist (`remove_discarded`,
   `pass_to_descendant`, `reorder_spans`, `minimize_duplicated_choices`), merged
@@ -20,8 +20,10 @@ send the outreach email to the ICSE-2024 PBT paper authors.
 
 ## Property suites added this session (all kill-tested)
 - `test_span_invariants` — span bounds, nesting, depth monotonicity, and the
-  `reassemble_interval` laws (identity, length, permutation, precondition
-  rejection).
+  `reassemble_permutation` laws. That function returns an index MAPPING, so it
+  is a permutation by construction and the mapping is a checkable witness:
+  bijection, identity outside the children, each child moved as a contiguous
+  block, preconditions rejected rather than assumed.
 - `test_encoding_laws` — the decoder law: moving choices toward target must not
   LENGTHEN the re-recording. 0 growth on master, **+38/+18 on
   wave2/monotone-list-sizes**, which is #29's defect.
@@ -62,6 +64,19 @@ entropy cap, and `max_leaves` for recursion. `average_size` was deprecated in
 **3.51.0, 2018-03-24** (`hypothesis/docs/changelog.rst:14208`, verified):
 "it is more effective to simply describe what constitutes a valid example, and
 let our internals handle the distribution."
+
+## Tooling to look into
+- **`mutaml`** (github.com/jmid/mutaml) — an OCaml mutation tester by Jan
+  Midtgaard, the `qcheck-stm` author this repo already benchmarks against.
+  Funded by the OCaml Software Foundation, 0.3 released 2024-10-08. The
+  hand-rolled mutation experiment this session found a real suite gap in five
+  mutations; a proper tool would do it systematically. Strong candidate to
+  ADOPT here, not just read. See also `theofidry/awesome-mutation-testing` for
+  the wider field (PIT, Stryker, cargo-mutants, Mull).
+- The formal names for the claim behind it are the **competent programmer
+  hypothesis** and the **coupling effect** (faults are small deviations; tests
+  that catch simple mutants catch complex faults). Worth reading properly
+  before leaning on mutation scores.
 
 ## Next 3 actions
 1. **Run the continuation-list probe.** `list_structural` exists on master;
