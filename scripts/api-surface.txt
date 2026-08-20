@@ -69,6 +69,7 @@ pass_costs
 pass_names
 path
 positions_of
+reassemble_interval
 record
 record_observation
 remove

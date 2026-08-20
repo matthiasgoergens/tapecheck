@@ -130,6 +130,52 @@ let image_all_trivial (img : Tape.image) =
   && Array.for_all img.streams ~f:(fun (_, arr) ->
        Array.for_all arr ~f:choice_at_target)
 
+(* Rebuild [choices] with the intervals [children] replaced by
+   [slices], in order, leaving everything outside those intervals where
+   it was.
+
+   Extracted from reorder_spans because it had no law while it was a
+   mutable cursor threaded through a loop -- and that is exactly where
+   a mutation experiment found a defect the whole suite missed:
+   advancing the cursor to a child's START rather than its stop
+   duplicates the child's content into the following gap. Replay
+   re-records and quietly repairs the malformed proposal, so no outcome
+   moved; only the spread of answers did.
+
+   As a function it has laws worth stating: the result is a PERMUTATION
+   of the parent interval when the slices are a permutation of the
+   children's contents, and the identity when each child is given back
+   its own slice. [None] on a precondition violation -- children must
+   be ascending, disjoint and inside the parent -- so the precondition
+   is enforced rather than assumed, and cannot raise from [Array.sub]
+   in a caller that trusted it. *)
+let reassemble_interval (choices : Tape.choice array) ~parent_start ~parent_stop
+    ~(children : (int * int) list) ~(slices : Tape.choice array list) :
+    Tape.choice array option =
+  let n = Array.length choices in
+  let rec well_formed cursor = function
+    | [] -> true
+    | (a, b) :: rest ->
+      a >= cursor && b >= a && b <= parent_stop && well_formed b rest
+  in
+  if
+    parent_start < 0 || parent_stop > n || parent_stop < parent_start
+    || List.length children <> List.length slices
+    || not (well_formed parent_start children)
+  then None
+  else begin
+    let cursor, pieces =
+      List.fold2_exn children slices ~init:(parent_start, [])
+        ~f:(fun (cursor, acc) (child_start, child_stop) slice ->
+          let gap = Array.sub choices ~pos:cursor ~len:(child_start - cursor) in
+          (child_stop, slice :: gap :: acc))
+    in
+    let tail = Array.sub choices ~pos:cursor ~len:(parent_stop - cursor) in
+    let prefix = Array.sub choices ~pos:0 ~len:parent_start in
+    let suffix = Array.sub choices ~pos:parent_stop ~len:(n - parent_stop) in
+    Some (Array.concat ((prefix :: List.rev (tail :: pieces)) @ [ suffix ]))
+  end
+
 let image_trivialized (img : Tape.image) : Tape.image =
   { main = Array.map img.main ~f:trivial_choice
   ; streams =
@@ -1274,34 +1320,23 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                          Tape.compare_shortlex a b = 0)
                      in
                      if not already then begin
-                       let pieces = ref [] in
-                       let pos = ref parent.Tape.start in
-                       List.iter2_exn group sorted ~f:(fun sp slice ->
-                         pieces
-                           := Array.sub main ~pos:!pos
-                                ~len:(sp.Tape.start - !pos)
-                              :: !pieces;
-                         pieces := slice :: !pieces;
-                         pos := sp.Tape.stop);
-                       pieces
-                         := Array.sub main ~pos:!pos
-                              ~len:(parent.Tape.stop - !pos)
-                            :: !pieces;
-                       let rebuilt = Array.concat (List.rev !pieces) in
-                       let proposal =
-                         Array.concat
-                           [ Array.sub main ~pos:0 ~len:parent.Tape.start
-                           ; rebuilt
-                           ; Array.sub main ~pos:parent.Tape.stop
-                               ~len:(Array.length main - parent.Tape.stop)
-                           ]
-                       in
-                       if attempt (seg_set !best s proposal) then begin
-                         improved_any := true;
-                         failures := 0;
-                         restart := true
-                       end
-                       else Int.incr failures
+                       match
+                         reassemble_interval main
+                           ~parent_start:parent.Tape.start
+                           ~parent_stop:parent.Tape.stop
+                           ~children:
+                             (List.map group ~f:(fun sp ->
+                                (sp.Tape.start, sp.Tape.stop)))
+                           ~slices:sorted
+                       with
+                       | None -> ()
+                       | Some proposal ->
+                         if attempt (seg_set !best s proposal) then begin
+                           improved_any := true;
+                           failures := 0;
+                           restart := true
+                         end
+                         else Int.incr failures
                      end
                    end
                  end

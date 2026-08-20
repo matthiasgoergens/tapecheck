@@ -120,6 +120,75 @@ let () =
     (Printf.sprintf "%d violations" !depth_mono);
   check "the properties were not vacuous" (!spans_seen > 100)
     (Printf.sprintf "%d spans over %d images" !spans_seen !images);
+  (* Laws of the reconstruction, stateable only because it was
+     extracted from reorder_spans's mutable cursor. The design-pressure
+     argument in miniature: the code with no property to state is where
+     the mutation experiment found a bug, and the property appeared as
+     soon as the operation became a function. *)
+  let perm_bad = ref 0 and id_bad = ref 0 and len_bad = ref 0 in
+  let precond_bad = ref 0 and cases = ref 0 in
+  let multiset a = List.sort (Array.to_list a) ~compare:Tape.compare_choice in
+  for seed = 0 to 199 do
+    let tape = Tape.create () in
+    Tape.start_recording tape;
+    let random =
+      Splittable_random.For_tape.attach (Splittable_random.of_int seed) tape
+    in
+    let (_ : (int list * int list) * int list) =
+      G.generate subject ~size:12 ~random
+    in
+    let main = (Tape.finish tape).Tape.image.Tape.main in
+    let n = Array.length main in
+    if n >= 8 then begin
+      let q = n / 4 in
+      let children = [ (q, 2 * q); (2 * q, 3 * q) ] in
+      let slices =
+        List.map children ~f:(fun (a, b) -> Array.sub main ~pos:a ~len:(b - a))
+      in
+      Int.incr cases;
+      (match
+         Tape_engine.reassemble_interval main ~parent_start:0 ~parent_stop:n
+           ~children ~slices
+       with
+       | None -> Int.incr id_bad
+       | Some out -> if not (Tape.equal_choices out main) then Int.incr id_bad);
+      (match
+         Tape_engine.reassemble_interval main ~parent_start:0 ~parent_stop:n
+           ~children ~slices:(List.rev slices)
+       with
+       | None -> Int.incr perm_bad
+       | Some out ->
+         if Array.length out <> n then Int.incr len_bad;
+         if
+           not
+             (List.equal
+                (fun a b -> Tape.compare_choice a b = 0)
+                (multiset out) (multiset main))
+         then Int.incr perm_bad);
+      (match
+         Tape_engine.reassemble_interval main ~parent_start:0 ~parent_stop:n
+           ~children:[ (q, 3 * q); (2 * q, 3 * q) ] ~slices
+       with
+       | None -> ()
+       | Some _ -> Int.incr precond_bad);
+      match
+        Tape_engine.reassemble_interval main ~parent_start:0
+          ~parent_stop:(n + 5) ~children ~slices
+      with
+      | None -> ()
+      | Some _ -> Int.incr precond_bad
+    end
+  done;
+  check "reassembly with each child's own slice is the identity" (!id_bad = 0)
+    (Printf.sprintf "%d failed" !id_bad);
+  check "reassembly preserves length" (!len_bad = 0)
+    (Printf.sprintf "%d failed" !len_bad);
+  check "reassembly is a permutation of the original" (!perm_bad = 0)
+    (Printf.sprintf "%d failed" !perm_bad);
+  check "reassembly rejects overlapping/out-of-range intervals"
+    (!precond_bad = 0) (Printf.sprintf "%d accepted" !precond_bad);
+  check "  ^ were not vacuous" (!cases > 100)
+    (Printf.sprintf "%d subjects" !cases);
   if !failures > 0 then begin
     Stdio.printf "\ntest_span_invariants: %d FAILED\n" !failures;
     Stdlib.exit 1
