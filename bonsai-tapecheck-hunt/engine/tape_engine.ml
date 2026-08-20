@@ -130,51 +130,87 @@ let image_all_trivial (img : Tape.image) =
   && Array.for_all img.streams ~f:(fun (_, arr) ->
        Array.for_all arr ~f:choice_at_target)
 
-(* Rebuild [choices] with the intervals [children] replaced by
-   [slices], in order, leaving everything outside those intervals where
-   it was.
+(* Rearrange [choices] so the [children] intervals appear in the order
+   given by [order] (a permutation of the child indices), leaving
+   everything outside those intervals where it was.
 
-   Extracted from reorder_spans because it had no law while it was a
-   mutable cursor threaded through a loop -- and that is exactly where
-   a mutation experiment found a defect the whole suite missed:
-   advancing the cursor to a child's START rather than its stop
-   duplicates the child's content into the following gap. Replay
-   re-records and quietly repairs the malformed proposal, so no outcome
-   moved; only the spread of answers did.
+   Returns the INDEX MAPPING, not the array: [m.(i)] is the source
+   position output position [i] draws from. Two reasons, the second
+   being the point.
 
-   As a function it has laws worth stating: the result is a PERMUTATION
-   of the parent interval when the slices are a permutation of the
-   children's contents, and the identity when each child is given back
-   its own slice. [None] on a precondition violation -- children must
-   be ascending, disjoint and inside the parent -- so the precondition
-   is enforced rather than assumed, and cannot raise from [Array.sub]
-   in a caller that trusted it. *)
-let reassemble_interval (choices : Tape.choice array) ~parent_start ~parent_stop
-    ~(children : (int * int) list) ~(slices : Tape.choice array list) :
-    Tape.choice array option =
-  let n = Array.length choices in
+   It makes the operation a permutation BY CONSTRUCTION -- the array is
+   [Array.map (fun j -> choices.(j)) m], so no arithmetic slip can
+   invent, drop or duplicate a choice. A mutation can now only produce
+   a WRONG permutation, never a malformed tape.
+
+   And it is a checkable witness. A multiset comparison of the output
+   only says the same values are present, which a bug that also
+   shuffled the GAPS would satisfy; the mapping lets a test assert the
+   real contract -- a bijection, the identity outside the children, and
+   each child carried as a contiguous block.
+
+   This was a mutable cursor inlined in reorder_spans until a mutation
+   experiment found a defect the whole suite missed: advancing to a
+   child's START rather than its stop duplicated content into the
+   following gap, and replay quietly repaired the malformed proposal so
+   no outcome moved.
+
+   [None] on a precondition violation -- children ascending, disjoint,
+   inside the parent, and [order] a permutation of their indices -- so
+   callers cannot raise from [Array.sub]. *)
+let reassemble_permutation ~(n : int) ~parent_start ~parent_stop
+    ~(children : (int * int) list) ~(order : int list) : int array option =
+  let k = List.length children in
   let rec well_formed cursor = function
     | [] -> true
     | (a, b) :: rest ->
       a >= cursor && b >= a && b <= parent_stop && well_formed b rest
   in
+  let is_permutation =
+    List.length order = k
+    && (let seen = Array.create ~len:k false in
+        List.for_all order ~f:(fun i ->
+          if i < 0 || i >= k || seen.(i) then false
+          else begin
+            seen.(i) <- true;
+            true
+          end))
+  in
   if
     parent_start < 0 || parent_stop > n || parent_stop < parent_start
-    || List.length children <> List.length slices
-    || not (well_formed parent_start children)
+    || (not (well_formed parent_start children))
+    || not is_permutation
   then None
   else begin
-    let cursor, pieces =
-      List.fold2_exn children slices ~init:(parent_start, [])
-        ~f:(fun (cursor, acc) (child_start, child_stop) slice ->
-          let gap = Array.sub choices ~pos:cursor ~len:(child_start - cursor) in
-          (child_stop, slice :: gap :: acc))
-    in
-    let tail = Array.sub choices ~pos:cursor ~len:(parent_stop - cursor) in
-    let prefix = Array.sub choices ~pos:0 ~len:parent_start in
-    let suffix = Array.sub choices ~pos:parent_stop ~len:(n - parent_stop) in
-    Some (Array.concat ((prefix :: List.rev (tail :: pieces)) @ [ suffix ]))
+    let kids = Array.of_list children in
+    let out = ref [] in
+    let cursor = ref parent_start in
+    let slot = ref 0 in
+    List.iter order ~f:(fun src ->
+      let dst_start, dst_stop = kids.(!slot) in
+      for j = !cursor to dst_start - 1 do
+        out := j :: !out
+      done;
+      let src_start, src_stop = kids.(src) in
+      for j = src_start to src_stop - 1 do
+        out := j :: !out
+      done;
+      cursor := dst_stop;
+      Int.incr slot);
+    for j = !cursor to parent_stop - 1 do
+      out := j :: !out
+    done;
+    let inner = Array.of_list (List.rev !out) in
+    if Array.length inner <> parent_stop - parent_start then None
+    else begin
+      let m = Array.init n ~f:Fn.id in
+      Array.iteri inner ~f:(fun i src -> m.(parent_start + i) <- src);
+      Some m
+    end
   end
+
+let apply_permutation (choices : Tape.choice array) (m : int array) =
+  Array.map m ~f:(fun j -> choices.(j))
 
 let image_trivialized (img : Tape.image) : Tape.image =
   { main = Array.map img.main ~f:trivial_choice
@@ -1312,25 +1348,31 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                         for permutation proposals, or fixing the
                         non_uniform encoding, are the known next steps;
                         neither is this pass's job. *)
-                     let sorted =
-                       List.sort slices ~compare:Tape.compare_shortlex
+                     let slice_arr = Array.of_list slices in
+                     let order =
+                       List.init (Array.length slice_arr) ~f:Fn.id
+                       |> List.sort ~compare:(fun i j ->
+                         let c =
+                           Tape.compare_shortlex slice_arr.(i) slice_arr.(j)
+                         in
+                         if c <> 0 then c else Int.compare i j)
                      in
                      let already =
-                       List.for_all2_exn slices sorted ~f:(fun a b ->
-                         Tape.compare_shortlex a b = 0)
+                       List.for_alli order ~f:(fun slot src -> slot = src)
                      in
                      if not already then begin
                        match
-                         reassemble_interval main
+                         reassemble_permutation ~n:(Array.length main)
                            ~parent_start:parent.Tape.start
                            ~parent_stop:parent.Tape.stop
                            ~children:
                              (List.map group ~f:(fun sp ->
                                 (sp.Tape.start, sp.Tape.stop)))
-                           ~slices:sorted
+                           ~order
                        with
                        | None -> ()
-                       | Some proposal ->
+                       | Some m ->
+                         let proposal = apply_permutation main m in
                          if attempt (seg_set !best s proposal) then begin
                            improved_any := true;
                            failures := 0;

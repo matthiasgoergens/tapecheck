@@ -1,6 +1,7 @@
 accepted_shrinks
 already_fired
 analyze
+apply_permutation
 assume
 begin_case
 candidates_for
@@ -69,7 +70,7 @@ pass_costs
 pass_names
 path
 positions_of
-reassemble_interval
+reassemble_permutation
 record
 record_observation
 remove

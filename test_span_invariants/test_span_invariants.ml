@@ -120,14 +120,20 @@ let () =
     (Printf.sprintf "%d violations" !depth_mono);
   check "the properties were not vacuous" (!spans_seen > 100)
     (Printf.sprintf "%d spans over %d images" !spans_seen !images);
-  (* Laws of the reconstruction, stateable only because it was
-     extracted from reorder_spans's mutable cursor. The design-pressure
-     argument in miniature: the code with no property to state is where
-     the mutation experiment found a bug, and the property appeared as
-     soon as the operation became a function. *)
-  let perm_bad = ref 0 and id_bad = ref 0 and len_bad = ref 0 in
-  let precond_bad = ref 0 and cases = ref 0 in
-  let multiset a = List.sort (Array.to_list a) ~compare:Tape.compare_choice in
+  (* Laws of the rearrangement. It returns an index MAPPING rather
+     than an array, which buys two things: the operation is a
+     permutation by construction (the array is built by indexing the
+     input, so no arithmetic slip can invent or drop a choice), and the
+     mapping is a witness a test can check directly.
+
+     That witness is what makes the strong property expressible. A
+     multiset comparison of the output only says the same values are
+     present -- a bug that also shuffled the GAPS would satisfy it.
+     With the mapping we can assert the real contract: it is a
+     bijection, it is the identity everywhere outside the children, and
+     the children's contents move as whole blocks. *)
+  let bij_bad = ref 0 and outside_bad = ref 0 and id_bad = ref 0 in
+  let block_bad = ref 0 and precond_bad = ref 0 and cases = ref 0 in
   for seed = 0 to 199 do
     let tape = Tape.create () in
     Tape.start_recording tape;
@@ -142,50 +148,67 @@ let () =
     if n >= 8 then begin
       let q = n / 4 in
       let children = [ (q, 2 * q); (2 * q, 3 * q) ] in
-      let slices =
-        List.map children ~f:(fun (a, b) -> Array.sub main ~pos:a ~len:(b - a))
-      in
       Int.incr cases;
+      (* Identity order must give the identity mapping. *)
       (match
-         Tape_engine.reassemble_interval main ~parent_start:0 ~parent_stop:n
-           ~children ~slices
+         Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+           ~children ~order:[ 0; 1 ]
        with
        | None -> Int.incr id_bad
-       | Some out -> if not (Tape.equal_choices out main) then Int.incr id_bad);
+       | Some m ->
+         if not (Array.for_alli m ~f:(fun i j -> i = j)) then Int.incr id_bad);
+      (* Swapped order: a bijection, identity outside the children, and
+         each child's content carried as a contiguous block. *)
       (match
-         Tape_engine.reassemble_interval main ~parent_start:0 ~parent_stop:n
-           ~children ~slices:(List.rev slices)
+         Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+           ~children ~order:[ 1; 0 ]
        with
-       | None -> Int.incr perm_bad
-       | Some out ->
-         if Array.length out <> n then Int.incr len_bad;
-         if
-           not
-             (List.equal
-                (fun a b -> Tape.compare_choice a b = 0)
-                (multiset out) (multiset main))
-         then Int.incr perm_bad);
+       | None -> Int.incr bij_bad
+       | Some m ->
+         let seen = Array.create ~len:n false in
+         Array.iter m ~f:(fun j ->
+           if j < 0 || j >= n || seen.(j) then Int.incr bij_bad
+           else seen.(j) <- true);
+         if Array.length m <> n then Int.incr bij_bad;
+         Array.iteri m ~f:(fun i j ->
+           let inside_children =
+             (i >= q && i < 3 * q) || (j >= q && j < 3 * q)
+           in
+           if (not inside_children) && i <> j then Int.incr outside_bad);
+         (* The second child's block lands where the first began. *)
+         let len2 = 3 * q - (2 * q) in
+         for d = 0 to len2 - 1 do
+           if m.(q + d) <> (2 * q) + d then Int.incr block_bad
+         done);
       (match
-         Tape_engine.reassemble_interval main ~parent_start:0 ~parent_stop:n
-           ~children:[ (q, 3 * q); (2 * q, 3 * q) ] ~slices
+         Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+           ~children:[ (q, 3 * q); (2 * q, 3 * q) ] ~order:[ 0; 1 ]
+       with
+       | None -> ()
+       | Some _ -> Int.incr precond_bad);
+      (match
+         Tape_engine.reassemble_permutation ~n ~parent_start:0
+           ~parent_stop:(n + 5) ~children ~order:[ 0; 1 ]
        with
        | None -> ()
        | Some _ -> Int.incr precond_bad);
       match
-        Tape_engine.reassemble_interval main ~parent_start:0
-          ~parent_stop:(n + 5) ~children ~slices
+        Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+          ~children ~order:[ 0; 0 ]
       with
       | None -> ()
       | Some _ -> Int.incr precond_bad
     end
   done;
-  check "reassembly with each child's own slice is the identity" (!id_bad = 0)
+  check "identity order gives the identity mapping" (!id_bad = 0)
     (Printf.sprintf "%d failed" !id_bad);
-  check "reassembly preserves length" (!len_bad = 0)
-    (Printf.sprintf "%d failed" !len_bad);
-  check "reassembly is a permutation of the original" (!perm_bad = 0)
-    (Printf.sprintf "%d failed" !perm_bad);
-  check "reassembly rejects overlapping/out-of-range intervals"
+  check "the mapping is a bijection" (!bij_bad = 0)
+    (Printf.sprintf "%d failed" !bij_bad);
+  check "identity everywhere outside the children" (!outside_bad = 0)
+    (Printf.sprintf "%d positions moved" !outside_bad);
+  check "each child moves as a contiguous block" (!block_bad = 0)
+    (Printf.sprintf "%d positions wrong" !block_bad);
+  check "rejects overlapping, out-of-range, or non-permuted input"
     (!precond_bad = 0) (Printf.sprintf "%d accepted" !precond_bad);
   check "  ^ were not vacuous" (!cases > 100)
     (Printf.sprintf "%d subjects" !cases);
