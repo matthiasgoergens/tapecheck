@@ -40,38 +40,83 @@ let recorded seed =
   let (_ : _) = G.generate subject ~size:12 ~random in
   (Tape.finish tape).Tape.image
 
-(* Deterministic rubbish: random bytes, and mutations of valid tapes --
-   truncations, byte flips, doubled and spliced payloads. Mutation
-   matters more than pure noise, because a nearly-valid input gets
-   further into the parser before anything notices. *)
+(* Corruptions are GENERATED, not a fixed list: a mutation program is
+   drawn (which operators, how many, where), then interpreted. A fixed
+   corpus only ever tests the mutations someone thought of, and stops
+   finding anything the moment it passes once.
+
+   This is mutational fuzzing in the AFL mould rather than the
+   structure-aware generation tapecheck itself does -- seed corpus of
+   real serialised tapes, byte-level operators, no notion of validity.
+   That is the right shape for a PARSER, where the interesting inputs
+   are the nearly-valid ones. What it still lacks to be AFL proper is
+   coverage feedback to steer the operators and minimisation of any
+   crasher it finds. *)
+type op =
+  | Truncate of int
+  | Drop_prefix of int
+  | Flip of int * char
+  | Double
+  | Splice of int * int
+  | Insert of int * char
+
+let op_gen =
+  let open Base_quickcheck.Generator in
+  union
+    [ map (int_inclusive 0 100) ~f:(fun p -> Truncate p)
+    ; map (int_inclusive 0 100) ~f:(fun p -> Drop_prefix p)
+    ; map (both (int_inclusive 0 100) (char_print)) ~f:(fun (p, c) -> Flip (p, c))
+    ; return Double
+    ; map (both (int_inclusive 0 100) (int_inclusive 0 100)) ~f:(fun (a, b) ->
+        Splice (a, b))
+    ; map (both (int_inclusive 0 100) char_print) ~f:(fun (p, c) -> Insert (p, c))
+    ]
+
+(* Positions are drawn as percentages so they stay in range for any
+   input length; an operator that fell off the end would just be a
+   no-op and waste the draw. *)
+let at s pct =
+  let n = String.length s in
+  if n = 0 then 0 else Int.min (n - 1) (n * pct / 101)
+
+let apply_op s = function
+  | Truncate pct -> String.sub s ~pos:0 ~len:(at s pct)
+  | Drop_prefix pct ->
+    let i = at s pct in
+    String.sub s ~pos:i ~len:(String.length s - i)
+  | Flip (pct, c) ->
+    if String.is_empty s then s
+    else begin
+      let b = Bytes.of_string s in
+      Bytes.set b (at s pct) c;
+      Bytes.to_string b
+    end
+  | Double -> s ^ s
+  | Splice (a, b) ->
+    let i = at s a and j = at s b in
+    let lo = Int.min i j and hi = Int.max i j in
+    String.sub s ~pos:0 ~len:lo ^ String.sub s ~pos:hi ~len:(String.length s - hi)
+  | Insert (pct, c) ->
+    let i = at s pct in
+    String.sub s ~pos:0 ~len:i ^ String.of_char c
+    ^ String.sub s ~pos:i ~len:(String.length s - i)
+
 let corruptions () =
   let out = ref [] in
-  let rnd = Splittable_random.of_int 4242 in
-  for seed = 0 to 199 do
-    let s = Tape.serialize_image (recorded seed) in
-    let n = String.length s in
-    out := s :: !out;
-    if n > 2 then begin
-      let cut = Splittable_random.int rnd ~lo:1 ~hi:(n - 1) in
-      out := String.sub s ~pos:0 ~len:cut :: !out;
-      out := String.sub s ~pos:cut ~len:(n - cut) :: !out;
-      let i = Splittable_random.int rnd ~lo:0 ~hi:(n - 1) in
-      let b = Bytes.of_string s in
-      Bytes.set b i
-        (Char.of_int_exn (Splittable_random.int rnd ~lo:32 ~hi:126));
-      out := Bytes.to_string b :: !out;
-      out := (s ^ s) :: !out;
-      out := (String.sub s ~pos:0 ~len:cut ^ String.sub s ~pos:0 ~len:cut)
-             :: !out
-    end
-  done;
-  for i = 0 to 199 do
+  let program = G.list_with_length op_gen ~length:3 in
+  for seed = 0 to 299 do
+    let rnd = Splittable_random.of_int (seed * 7919) in
+    let ops = G.generate program ~size:8 ~random:rnd in
+    let base = Tape.serialize_image (recorded (seed % 60)) in
+    out := base :: List.fold ops ~init:base ~f:apply_op :: !out;
+    (* Pure noise too, as a control: it should mostly die at the first
+       parse step, and if it does not, the mutations are not reaching
+       any deeper than random bytes do. *)
     let len = Splittable_random.int rnd ~lo:0 ~hi:80 in
     out :=
       String.init len ~f:(fun _ ->
         Char.of_int_exn (Splittable_random.int rnd ~lo:0 ~hi:255))
-      :: !out;
-    ignore i
+      :: !out
   done;
   !out
 
