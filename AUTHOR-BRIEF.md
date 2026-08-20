@@ -132,10 +132,12 @@ now compiles under BER MetaOCaml 4.14.1 and passes branch-selection plus
 primitive and split/perturb smoke tests, and the combined dual test observes
 one callback per active generated Boolean. A serious upstream evaluation must
 still measure recording mode and complete staged generators with raw
-observations. The first 20-block integer-list timing does not establish the
-predeclared ±2% inactive equivalence claim: dual/direct was 0.9898 with a 90%
-interval of 0.9750–1.0022. The paired median was 0.9950, so replication is more
-appropriate than either an overhead or a negligible-cost claim.
+observations. The first 20-block integer-list timing did not establish the
+predeclared ±2% inactive equivalence claim. A further predeclared replication
+retained 192 observations across Boolean, Boolean-list, nested-list, and
+integer-list workloads. Boolean and integer-list familywise intervals fit the
+margin; the two other intervals did not, so the honest conclusion remains no
+blanket equivalence claim. Point estimates ranged from 0.9955 to 1.0114.
 
 The capability-by-capability mapping is in `PAPER-CAPABILITIES.md`; claim
 provenance is in `EVIDENCE.md`; the longer engineering roadmap is in

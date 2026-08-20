@@ -89,9 +89,12 @@ staged integer-list timing retained 20 randomised fresh-process blocks. Dual
 inactive / direct C was 0.9898 with a paired 90% interval of
 0.9750–1.0022, which crosses the predeclared margin and therefore does not
 establish equivalence. The active delegating-observer control was 1.0684
-relative to ordinary unobserved SR. Recording-mode, complete artifact
-throughput, broader workloads, and second-machine replication remain open; see
-`design/fail-faster-integration.md`.
+relative to ordinary unobserved SR. A further 24-block replication covered
+four staged shapes and retained 192 observations. Boolean and integer-list
+familywise intervals fit ±2%, while Boolean-list and nested-list intervals did
+not; point estimates ranged from 0.9955 to 1.0114. Recording mode, the complete
+artefact workloads, end-to-end throughput, and second-machine replication
+remain open; see `design/fail-faster-integration.md`.
 
 The predeclared production structural-list comparison supplies one current
 algorithmic-cost result: on three selected list properties it reduces paired

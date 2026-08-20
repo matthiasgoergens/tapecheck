@@ -3,7 +3,7 @@
 This manifest separates claims which a clone can reproduce directly from
 historical or companion-repository evidence. The companion repository is
 currently local and unpublished at sibling path `../tapecheck-evidence`, pinned
-here to commit `4f5073337dccfc40732add1d501c8d26454f179e`. Do not replace that
+here to commit `c7180809729f336cc1f69d53744b60d37f7928ee`. Do not replace that
 pin with a public link until the referenced commit has actually been
 published.
 
@@ -62,6 +62,7 @@ and verifies the byte-exact legacy-import manifest.
 | `experiments/fast-backend-dispatch/2026-08-20-5035e8d` | Two separately predeclared batches isolate dispatch around the same pointwise-equivalent C primitives | Per-draw ratios replicate at roughly 1.14, 1.22, and 1.61; not complete-generator overhead and not the artifact toolchain |
 | `experiments/fast-backend-selection/2026-08-20-299a7a7` | Two separately predeclared batches isolate one activity decision around complete direct/observed primitive loops | All three loops meet the ±2% equivalence criterion in both batches; this is the precursor boundary, not the later AllegrOCaml workload result |
 | `experiments/fail-faster-dual-performance/2026-08-20-69d843f` | Twenty randomised fresh-process blocks time actual dual-generated staged integer lists against direct C, plus an active delegating-observer control | Inactive ratio 0.9898, paired 90% interval 0.9750–1.0022: the ±2% equivalence criterion is not met; one host and one workload |
+| `experiments/fail-faster-dual-multi/2026-08-20-69d843f` | Twenty-four paired blocks across Boolean, Boolean-list, nested-list, and integer-list staged workloads | Boolean and integer-list familywise intervals fit ±2%; list and nested-list intervals do not, so blanket equivalence is not established; all 192 observations retained |
 | `experiments/computed-repair/legacy-2026-08` | Historical paired observations from the computed-repair investigation | Legacy import with incomplete environment provenance; not publication-grade |
 | `experiments/size-dependence/2026-08-20-1ebd6a7` | A focused reproducer for size-dependent replay behaviour | Exploratory only |
 | `experiments/shrinking-challenge/legacy-2026-08` | Five raw 1,000-seed outputs cited by historical design notes | Legacy import from an unversioned workspace; digests and modification times retained, incomplete environment provenance |

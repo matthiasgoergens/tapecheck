@@ -135,7 +135,12 @@ observer once per active Boolean value. On 20 fresh-process integer-list
 blocks, dual inactive / direct C was 0.9898 with a paired 90% interval of
 0.9750–1.0022; it therefore failed the predeclared ±2% equivalence criterion.
 The active delegating-observer control was about 1.0684 versus ordinary SR.
-The remaining work is broader workload and second-machine replication; see
+A separately predeclared 24-block replication covered Boolean, Boolean-list,
+nested-list, and integer-list workloads. Boolean and integer-list familywise
+intervals fit within ±2%; list and nested-list intervals did not, so blanket
+equivalence remains unproved despite point estimates between 0.9955 and
+1.0114. The remaining work is complete artefact workloads, active recording,
+end-to-end properties, and second-machine replication; see
 `design/fail-faster-integration.md`.
 
 ### 4. Narrow and stabilise the supported API

@@ -120,10 +120,14 @@ observed generated bodies and selects once per generated value; its selection
 and 100-seed Boolean smoke test passes under BER MetaOCaml 4.14.1. A real
 v0.16 seam backport also passes primitive and split/perturb smoke tests, and
 the dual test observes exactly one callback per active Boolean value. The
-first actual dual-generated integer-list timing has also run: dual inactive /
-direct C was 0.9898 with a paired 90% interval of 0.9750–1.0022. Because that
-crosses the predeclared ±2% margin, it does not establish equivalence. The
-source audit, patches, raw observations, and exact claim boundary are linked
+first actual dual-generated integer-list timing found a ratio of 0.9898 with a
+paired 90% interval of 0.9750–1.0022, which did not establish equivalence. A
+predeclared 24-block replication then covered scalar Boolean, Boolean-list,
+nested-list, and integer-list workloads. Boolean and integer-list familywise
+intervals fit within ±2%; list and nested-list uncertainty extended outside
+the margin, so the rule requiring every workload to pass still rejects blanket
+equivalence. All 192 observations and matching pairwise checksums are retained.
+The source audit, patches, raw observations, and exact claim boundary are linked
 from [EVIDENCE.md](EVIDENCE.md) and
 [design/fail-faster-integration.md](design/fail-faster-integration.md).
 

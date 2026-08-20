@@ -123,10 +123,27 @@ complete property-test throughput. Raw observations and the checked analysis
 are in the companion evidence under
 `experiments/fail-faster-dual-performance/2026-08-20-69d843f`.
 
+A separately predeclared replication broadened the inactive contrast to four
+workloads, with 24 paired fresh-process blocks each and familywise 97.5%
+bootstrap intervals:
+
+| Workload | Ratio | 90% interval | Familywise 97.5% interval |
+|---|---:|---:|---:|
+| Boolean | 1.0001 | 0.9899–1.0100 | 0.9859–1.0136 |
+| Boolean list | 1.0106 | 0.9928–1.0313 | 0.9877–1.0400 |
+| Nested Boolean list | 1.0114 | 0.9886–1.0285 | 0.9783–1.0318 |
+| Integer list | 0.9955 | 0.9877–1.0032 | 0.9850–1.0059 |
+
+The Boolean and integer-list screens fit inside ±2%; Boolean-list and nested
+list do not, so the predeclared rule requiring all four to pass rejects blanket
+equivalence. All 192 observations were retained, all 96 paired checksums
+matched, and there were no exclusions or reruns. The evidence is under
+`experiments/fail-faster-dual-multi/2026-08-20-69d843f`.
+
 ## What remains unproven
 
 The timings now cover the rejected per-draw design, a local whole-generator
-selection harness, and one actual dual-generated AllegrOCaml workload. The
+selection harness, and four actual dual-generated AllegrOCaml workloads. The
 dual source and real v0.16 seam build and pass isolated smoke tests under BER
 MetaOCaml 4.14.1. They have not been compiled in the artifact's 25 GB Docker
 environment, tested on its complete benchmark suite, or replicated on a second
@@ -137,7 +154,7 @@ A publication-grade adoption experiment should therefore:
 1. apply both checked patches to the frozen artifact and run its differential
    tests to extend pointwise equality beyond the isolated Boolean control;
 2. compare active recording and complete bug-finding throughput separately,
-   and replicate inactive generation across representative workloads;
+   and extend inactive generation to the artefact's complete workloads;
 3. retain the artifact commit, patch, toolchain, raw observations, affinity,
    load, and compiler configuration; and
 4. repeat important timing conclusions on a second machine before making an
@@ -147,7 +164,8 @@ Until that experiment exists, the defensible statement is: **Tapecheck can
 observe AllegrOCaml's pointwise-equivalent backend; measured per-draw OCaml
 dispatch is too expensive, while a one-time whole-generator activity decision
 meets the ±2% equivalence criterion in two local batches. The dual-generated
-implementation compiles and passes an isolated smoke test in the pinned BER
-toolchain; the real v0.16 seam also passes isolated behavioural controls, while
-the first staged inactive timing fails to establish the predeclared ±2%
-equivalence claim and end-to-end performance remains open.**
+implementation compiles and passes isolated controls in the pinned BER
+toolchain; the real v0.16 seam also passes primitive and split/perturb checks.
+A four-workload staged replication has small point estimates but fails its
+blanket ±2% equivalence rule on list-workload uncertainty; active recording,
+complete artefact throughput, and second-machine performance remain open.**
