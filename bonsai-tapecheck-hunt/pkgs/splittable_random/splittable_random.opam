@@ -8,6 +8,8 @@ replacement so all reverse dependencies rebuild against it."""
 maintainer: "Jane Street developers"
 authors: ["Jane Street Group, LLC"]
 license: "MIT"
+homepage: "https://github.com/matthiasgoergens/tapecheck"
+bug-reports: "https://github.com/matthiasgoergens/tapecheck/issues"
 build: [
   ["dune" "build" "-p" name "-j" jobs]
 ]

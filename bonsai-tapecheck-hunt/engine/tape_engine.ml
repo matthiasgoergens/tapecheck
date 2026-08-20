@@ -610,11 +610,54 @@ let no_stats () =
   ; warnings = []
   }
 
+type stats_snapshot =
+  { replays : int
+  ; tests : int
+  ; misaligns : int
+  ; cases_valid : int
+  ; cases_invalid : int
+  ; cases_failed : int
+  ; shrink_discards : int
+  ; events : (string * int) list
+  ; generate_time : float
+  ; run_time : float
+  ; shrink_time : float
+  ; warnings : string list
+  }
+
+let stats_snapshot (stats : stats) =
+  { replays = stats.replays
+  ; tests = stats.tests
+  ; misaligns = stats.misaligns
+  ; cases_valid = stats.cases_valid
+  ; cases_invalid = stats.cases_invalid
+  ; cases_failed = stats.cases_failed
+  ; shrink_discards = stats.shrink_discards
+  ; events =
+      Hashtbl.to_alist stats.events
+      |> List.sort ~compare:(fun (a, _) (b, _) -> String.compare a b)
+  ; generate_time = stats.generate_time
+  ; run_time = stats.run_time
+  ; shrink_time = stats.shrink_time
+  ; warnings = List.rev_map stats.warnings ~f:Tape_health.to_string
+  }
+
+module For_tape_test = struct
+  let record_valid_case (stats : stats) =
+    stats.cases_valid <- stats.cases_valid + 1
+
+  let record_invalid_case (stats : stats) =
+    stats.cases_invalid <- stats.cases_invalid + 1
+
+  let record_failed_case (stats : stats) =
+    stats.cases_failed <- stats.cases_failed + 1
+end
+
 (* Diagnostic only: attempts attributed to each shrink pass, plus how
    many proposals were exact repeats of one already tried. Reset at the
    start of every shrink. Used to find where tapecheck spends 641 calls
-   on a property Hypothesis finishes in 27 (see
-   ../tapecheck-hypothesis-baseline/README.md). *)
+   on a property Hypothesis finishes in 27 (see the pinned companion
+   Hypothesis baseline in EVIDENCE.md). *)
 let pass_names =
   [| "lower_and_delete"; "delete_spans"; "redistribute_pairs"
    ; "minimize_choices"; "pre-loop"; "sort_siblings"; "remove_discarded"
@@ -757,6 +800,11 @@ type 'a search =
            search would accept an improved score; multi-bug would accept
            a still-failing image carrying the same origin. *)
   }
+[@@warning "-69"]
+(* [s_pool] and [s_domains] are populated for the worker path and read
+   indirectly through closures. Once this private record was hidden by the
+   interface, warning 69 could no longer see those uses. Keep the exception
+   local to this implementation-only record. *)
 
 (* Consumed length of the SAME logical stream in a replayed image.
 
@@ -1789,8 +1837,8 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        Measured justification: on both list properties this pass scores
        ZERO successes while spending 612 and 427 attempts, 96% of the
        whole shrink. On bind it succeeds on its 3rd (j,k) visit, so a
-       20-failure cutoff never fires there. See
-       ../tapecheck-hypothesis-baseline/README.md.
+       20-failure cutoff never fires there. See the pinned companion
+       Hypothesis baseline in EVIDENCE.md.
 
        [live] is checked alongside budget_ok in this pass's loops.
        Truncation is recorded, because a pass cut short cannot support a
@@ -2452,8 +2500,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        and the poisoned-containers guard drops 21/48 to 17/48. Moved
        here it is 21/48, per-case identical to the pass being off.
 
-       Measured at n=1000 on same seeds before enabling (raw output in
-       ../tapecheck-notes/challenge-1000-duplate-20260814.txt against
+       Measured at n=1000 on same seeds before enabling (companion evidence
+       experiments/shrinking-challenge/legacy-2026-08/, comparing
+       challenge-1000-duplate-20260814.txt with
        challenge-1000-reorder-20260813.txt):
 
          difference_must_not_be_zero  98.0 -> 85.5 mean evaluations
@@ -3211,7 +3260,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
              demo/stats_overhead_bench.ml) while the health-check window
              is still open; once it has closed, nothing downstream reads
              gen_dt/run_dt for this case, so skip computing them. *)
-          let timed = not health.Tape_health.closed in
+          let timed = not (Tape_health.is_closed health) in
           let value, tested, out, gen_dt, run_dt =
             run_and_test_maybe_timed ~timed ~tape ~gen ~size
               ~seed:(seed + !case) ~test
@@ -3257,7 +3306,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                   (guarded here, not just inside
                   [maybe_check_large_base_example], so the argument
                   itself is never even computed on later cases). *)
-               if not health.Tape_health.checked_base_example then
+               if not (Tape_health.has_checked_base_example health) then
                  Tape_health.maybe_check_large_base_example health
                    ~suppress:suppress_health_check
                    ~choices:(natural_example_choices ~gen ~size out.Tape.image);
@@ -3328,7 +3377,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
                 repeats_before_giving_up);
            Stdlib.flush Stdlib.stderr
          | _ -> ());
-        stats.warnings <- health.Tape_health.fired;
+        stats.warnings <- Tape_health.fired health;
         ( (match !found with
            | Some _ as f -> f
            | None -> !first_correlated_failure)
@@ -3510,3 +3559,22 @@ let stats_to_string_hum (stats : stats) : string =
   add "  shrink calls: %d replays, %d tests, %d misaligned, %d discarded proposals\n"
     stats.replays stats.tests stats.misaligns stats.shrink_discards;
   Buffer.contents buf
+
+module For_explain = struct
+  let replay_fresh_seed = replay_fresh_seed
+  let seg_count = seg_count
+  let seg_get = seg_get
+  let seg_set = seg_set
+  let with_choice = with_choice
+  let run_and_test = run_and_test
+end
+
+module Diagnostics = struct
+  let reassemble_permutation = reassemble_permutation
+  let last_pass_costs = last_pass_costs
+  let last_duplicate_stats = last_duplicate_stats
+  let last_greedy_cost = last_greedy_cost
+  let last_length_repair = last_length_repair
+  let last_computed_repair = last_computed_repair
+  let last_shape = last_shape
+end

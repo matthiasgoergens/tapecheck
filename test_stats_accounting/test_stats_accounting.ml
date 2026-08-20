@@ -34,6 +34,8 @@ let check name ~engine ~actual =
   end
   else Stdio.printf "  ok   %-44s %d\n" name actual
 
+let snapshot = Tape_engine.stats_snapshot
+
 let gen = G.list (G.int_uniform_inclusive 0 1000)
 let prop l = List.sum (module Int) l ~f:Fn.id < 100
 
@@ -68,7 +70,7 @@ let () =
         true)
       ~seed:1 ~count:250 ~size:10 ~stats:st
   in
-  check "all passing: no shrink, so tests = 0" ~engine:st.Tape_engine.tests
+  check "all passing: no shrink, so tests = 0" ~engine:(snapshot st).tests
     ~actual:0;
   Stdio.printf "       (%d generation calls, correctly not counted)\n" !n;
 
@@ -85,7 +87,7 @@ let () =
      noticed the engine's shrink cost apparently dropping by 8. *)
   let determinism_replays = 8 in
   check "run: tests = total - generation - determinism"
-    ~engine:st.Tape_engine.tests
+    ~engine:(snapshot st).tests
     ~actual:(!n - gen_calls - determinism_replays);
   Stdio.printf
     "       (%d total: %d finding the failure, %d determinism replays, %d \
@@ -98,13 +100,13 @@ let () =
      "shrink 0.0000s". The run above shrank (its property is far from
      trivial at the shrink target), so its shrink time must be
      positive. *)
-  if Float.(st.Tape_engine.shrink_time > 0.) then
+  if Float.((snapshot st).shrink_time > 0.) then
     Stdio.printf "  ok   %-44s %.4fs\n" "failing run: shrink_time > 0"
-      st.Tape_engine.shrink_time
+      (snapshot st).shrink_time
   else begin
     Int.incr failures;
     Stdio.printf "  FAIL %-44s %.4fs (a shrink happened; 0 is the bug)\n"
-      "failing run: shrink_time > 0" st.Tape_engine.shrink_time
+      "failing run: shrink_time > 0" (snapshot st).shrink_time
   end;
 
   (* 3. resume: generation is one confirmation replay, then shrinking. *)
@@ -114,7 +116,7 @@ let () =
      let st2 = Tape_engine.no_stats () in
      let _ = Tape_engine.resume gen ~test:f2 image ~stats:st2 in
      check "resume: tests = total - 1 confirmation"
-       ~engine:st2.Tape_engine.tests ~actual:(!n2 - 1)
+       ~engine:(snapshot st2).tests ~actual:(!n2 - 1)
    | Tape_engine.Passed _ -> Stdio.printf "  (no failure to resume from)\n");
 
   (* 4. The determinism check makes 8 replays that are NOT shrink work,
@@ -128,7 +130,7 @@ let () =
        Tape_engine.check_generator_determinism ~gen ~size:10 ~test:f3 image
      in
      check "determinism check does not inflate tests"
-       ~engine:st3.Tape_engine.tests ~actual:0;
+       ~engine:(snapshot st3).tests ~actual:0;
      Stdio.printf "       (%d replays made, none counted as shrink work)\n" !n3
    | Tape_engine.Passed _ -> ());
 
@@ -205,9 +207,9 @@ let () =
   (* (a) All passing: every case is valid, and the two views agree. *)
   let cases, st = pooled_counts ~test:(fun _ -> true) () in
   check "pooled, all passing: valid = returned cases"
-    ~engine:st.Tape_engine.cases_valid ~actual:cases;
+    ~engine:(snapshot st).cases_valid ~actual:cases;
   check "pooled, all passing: none miscounted as invalid"
-    ~engine:st.Tape_engine.cases_invalid ~actual:0;
+    ~engine:(snapshot st).cases_invalid ~actual:0;
 
   (* (b) Half discarded via assume. Guards against a fix that simply
      counts everything as valid -- which (a) alone would accept. *)
@@ -218,8 +220,9 @@ let () =
         true)
       ()
   in
-  let valid_d = st_d.Tape_engine.cases_valid
-  and invalid_d = st_d.Tape_engine.cases_invalid in
+  let st_d = snapshot st_d in
+  let valid_d = st_d.cases_valid
+  and invalid_d = st_d.cases_invalid in
   if valid_d > 0 && invalid_d > 0 then
     Stdio.printf "  ok   %-44s %d valid, %d discarded\n"
       "pooled, with assume: both buckets move" valid_d invalid_d
@@ -235,7 +238,7 @@ let () =
      as "pooled is no worse than sequential". *)
   let cases1, st1 = pooled_counts ~domains:1 ~test:(fun _ -> true) () in
   check "control: domains:1 counts its cases too"
-    ~engine:st1.Tape_engine.cases_valid ~actual:cases1;
+    ~engine:(snapshot st1).cases_valid ~actual:cases1;
 
   (* Issue #1's last two paths: ?examples and ?regressions. Neither
      enters the engine's run loop, so before this a failure found by
@@ -250,7 +253,7 @@ let () =
   Stdio.printf "\n  issue #1: ?examples and ?regressions are counted too\n";
 
   (* All three examples pass. *)
-  let st_ok = Tape_engine.no_stats () in
+  let st_ok = Tape_test.Stats.create () in
   let (_ : (unit, int * Error.t) Result.t) =
     Tape_test.result
       ~f:(fun v -> if v > 1_000_000 then Or_error.error_string "big" else Ok ())
@@ -258,18 +261,19 @@ let () =
       ~config:{ Base_quickcheck.Test.default_config with test_count = 1 }
       (module Int_t)
   in
-  if st_ok.Tape_engine.cases_valid >= 3 then
+  let st_ok_snapshot = Tape_test.Stats.snapshot st_ok in
+  if st_ok_snapshot.cases_valid >= 3 then
     Stdio.printf "  ok   %-44s %d valid (>= the 3 examples)\n"
-      "examples: passing ones are counted" st_ok.Tape_engine.cases_valid
+      "examples: passing ones are counted" st_ok_snapshot.cases_valid
   else begin
     Int.incr failures;
     Stdio.printf "  FAIL %-44s %d valid, expected at least 3\n"
-      "examples: passing ones are counted" st_ok.Tape_engine.cases_valid
+      "examples: passing ones are counted" st_ok_snapshot.cases_valid
   end;
 
   (* One example fails. The summary must not say "0 failing" while the
      call returns Error -- that is the whole issue. *)
-  let st_bad = Tape_engine.no_stats () in
+  let st_bad = Tape_test.Stats.create () in
   let res =
     Tape_test.result
       ~f:(fun v -> if v = 7 then Or_error.error_string "boom" else Ok ())
@@ -280,17 +284,17 @@ let () =
   let returned_failure = Result.is_error res in
   let says_zero_failing =
     String.is_substring
-      (Tape_engine.stats_summary_line st_bad)
+      (Tape_test.Stats.summary_line st_bad)
       ~substring:"0 failing"
   in
   if returned_failure && not says_zero_failing then
     Stdio.printf "  ok   %-44s %s\n" "examples: a failing one is counted"
-      (Tape_engine.stats_summary_line st_bad)
+      (Tape_test.Stats.summary_line st_bad)
   else begin
     Int.incr failures;
     Stdio.printf "  FAIL %-44s returned_failure=%b, summary=%s\n"
       "examples: a failing one is counted" returned_failure
-      (Tape_engine.stats_summary_line st_bad)
+      (Tape_test.Stats.summary_line st_bad)
   end;
 
   (* Issue #6: pooled SHRINK evaluations must be counted too. The pooled
@@ -321,16 +325,16 @@ let () =
     let st, attempts = shrink_stats ~domains in
     check
       (Printf.sprintf "domains:%d: replays = attempts" domains)
-      ~engine:st.Tape_engine.replays ~actual:attempts;
-    if st.Tape_engine.tests > 0 then
+      ~engine:(snapshot st).replays ~actual:attempts;
+    if (snapshot st).tests > 0 then
       Stdio.printf "  ok   %-44s %d\n"
         (Printf.sprintf "domains:%d: tests behind the replays counted" domains)
-        st.Tape_engine.tests
+        (snapshot st).tests
     else begin
       Int.incr failures;
       Stdio.printf "  FAIL %-44s %d (replays ran tests; 0 is the bug)\n"
         (Printf.sprintf "domains:%d: tests behind the replays counted" domains)
-        st.Tape_engine.tests
+        (snapshot st).tests
     end
   in
   check_replays ~domains:4;

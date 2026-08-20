@@ -6,6 +6,14 @@ OCaml's [`base_quickcheck`](https://github.com/janestreet/base_quickcheck).
 None of the design is mine. What is mine is the port, and the
 measurements, including the ones that came out badly.
 
+> **Current-status note (2026-08-20).** This is a research narrative, not the
+> current outreach claim sheet. Several tables preserve historical revisions
+> and incompatible cross-language cost boundaries. The maintained status is in
+> [`PAPER-CAPABILITIES.md`](../PAPER-CAPABILITIES.md), with revision-pinned raw
+> evidence in [`EVIDENCE.md`](../EVIDENCE.md). In particular, do not read the
+> historical Python/OCaml microsecond comparison below as engine or adoption
+> performance parity.
+
 This post is about the measurements. The short version: against an
 independent benchmark suite, Hypothesis wins comfortably, three of our
 losses turn out to be one fixable defect in the host library rather than
@@ -28,12 +36,12 @@ design; the measurement is the port's.
 
 | The paper asks for | Hypothesis already has | Ported, and measured |
 |---|---|---|
-| Better reduction — counterexamples people can actually read | Internal reduction over the choice sequence | On six benchmarks the tape engine reaches the true minimum 100/100 and stock `base_quickcheck` 0/100 — but see the caveat below, because most of that gap is definitional |
-| Reduction that explains *which parts matter* | The `explain` phase, free-variation analysis | Ported. On the paper's own `(0, 0)` example it reports the first component load-bearing and the second free, in 5–12 replays |
+| Better reduction — counterexamples people can actually read | Internal reduction over the choice sequence | In the historical Wave 1 table, six selected rows reach the stated minimum 100/100 and stock `base_quickcheck` 0/100 — but see the caveat below, because most of that gap is definitional |
+| Reduction that explains *which parts matter* | The `explain` phase, free-variation analysis | A bounded input-side prototype reports the first component load-bearing and the second free on the paper's `(0, 0)` example; it does not attribute source lines or provide interactive control |
 | Generators that find the interesting inputs | Edge-case-biased generation | Ported. A divisibility property goes from a 0.013% hit rate to 5.0%; end-to-end, 2/100 found-and-minimised to 100/100 |
-| Visibility into what testing actually did | Statistics and health checks | All four Hypothesis health checks ported. They found two real bugs *in tapecheck* — `assume`'s exception being swallowed, and one check made unreachable by double-counting |
-| Tests that fit a developer's time budget | — | Engine overhead 8.9 µs per call against Hypothesis's 609 µs, though see the caveat below |
-| Steering the search toward hard-to-reach states | Targeted PBT (`target()`) | Ported from `optimiser.py` |
+| Visibility into what testing actually did | Statistics and health checks | Counts, events, timings, and four approximate health-check analogues are implemented. They found two real bugs *in tapecheck* — `assume`'s exception being swallowed, and one check made unreachable by double-counting |
+| Tests that fit a developer's time budget | — | Historical cross-language per-evaluation timings are retained for provenance but are not an adoption benchmark; current staged results are reported separately |
+| Steering the search toward hard-to-reach states | Targeted PBT (`target()`) | A lower-level single-objective hill-climbing prototype exists; it is not integrated with the normal runner or Hypothesis's labelled/multi-objective interface |
 
 The reduction row deserves its caveat immediately. On scalar properties
 the stock column is 0/100 at a cost of *zero test calls*, because
@@ -46,13 +54,13 @@ stock shrinker genuinely works are the list properties, where it still
 reaches 0/100 — and `self_len`, where it reaches **46/100 against the
 tape engine's 47/100**, which is a tie.
 
-The time-budget row deserves its caveat too, because the number flatters
-us and someone will otherwise do the arithmetic: a 69× overhead
-gap only matters if the property itself is nearly free. A property doing
-10 ms of real work sees 609 µs as 6%, not as a factor of 69. Where it
-does bite is cheap properties run many times — data-structure laws,
-round-trips, comparator invariants. And most of the gap is OCaml versus
-Python rather than engine design.
+The time-budget row deserves a stronger caveat: its old 8.9 µs OCaml versus
+609 µs Python figures combine language runtime, harness, generation, and
+property-call boundaries. They are not a controlled engine comparison and
+must not be turned into a speed ratio. The current staged-generator experiment
+instead uses paired fresh processes and still fails to establish its
+predeclared ±2% inactive-equivalence criterion; see
+[`EVIDENCE.md`](../EVIDENCE.md).
 
 That is the constructive half. The rest of this post is the other half:
 where the port loses, and to what.
@@ -136,7 +144,8 @@ improved substantially since (`reverse` went from mean 45.95 evaluations to
 
 Cells are `normalised / mean evaluations`, 1000 runs each. tapecheck
 column re-measured 2026-08-19 on master after the span passes landed
-(`../tapecheck-notes/challenge-1000-duplate-20260814.txt` and
+(companion evidence `experiments/shrinking-challenge/legacy-2026-08/`, files
+`challenge-1000-duplate-20260814.txt` and
 `challenge-1000-patched-20260819.txt`); see `CHALLENGE.md` for the
 patched arm and the four later-ported cases. bound5 reads 0/1000 here
 for the reason given below: `reorder_spans` normalises its answer set

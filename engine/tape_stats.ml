@@ -54,7 +54,7 @@ type verdict =
    two consecutive cases on the same domain never see each other's
    events even if the test function forgets to call [event] at all on
    the second one. *)
-type case = { mutable events : (string, int) Hashtbl.t }
+type case = { events : (string, int) Hashtbl.t }
 
 let empty_case () = { events = Hashtbl.create (module String) }
 

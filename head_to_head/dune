@@ -5,15 +5,14 @@
 ; installed in any shared opam switch (see the task's constraint on
 ; opam install against shared switches) -- only in a local switch
 ; created under this worktree (`opam switch create ./ 5.3.0`). The
-; `optional` field means dune silently skips building this executable
-; when those libraries aren't findable, so the rest of the workspace
-; (including under the shared 5.3.0/5.2.0+ox switches other agents use)
-; is completely unaffected either way.
+; This research-only target is opt-in because the shared switches do not
+; carry those libraries. Build it with [dune build --profile optional] in the
+; dedicated switch described above.
 (executable
  (name head_to_head)
  (optional)
  (enabled_if
-  (<> %{profile} oxcaml))
+  (= %{profile} optional))
  (libraries base stdio base_quickcheck splittable_random tape tape_engine
    stateful queue_fixture qcheck qcheck-core qcheck-stm.sequential)
  (preprocess

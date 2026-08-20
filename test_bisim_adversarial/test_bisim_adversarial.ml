@@ -182,10 +182,15 @@ let drive (type c) ~(gen : c list Base_quickcheck.Generator.t)
     ~f:(fun cmds -> ignore (test cmds : bool))
 
 let show ?expected_raising name stats =
-  let total = stats.Bisim.agree + stats.Bisim.agreed_by_raising + stats.Bisim.disagree in
+  let stats_snapshot = Bisim.snapshot stats in
+  let total =
+    stats_snapshot.agree + stats_snapshot.agreed_by_raising
+    + stats_snapshot.disagree
+  in
   Stdio.printf "%s: steps %d, agreed_by_raising %d (%.3f aggregate)\n" name total
-    stats.Bisim.agreed_by_raising
-    (Float.of_int stats.Bisim.agreed_by_raising /. Float.of_int (Int.max 1 total));
+    stats_snapshot.agreed_by_raising
+    (Float.of_int stats_snapshot.agreed_by_raising
+     /. Float.of_int (Int.max 1 total));
   let ws = Bisim.ops_agreeing_only_by_raising ?expected_raising stats in
   Stdio.printf "  flagged: %d %s\n" (List.length ws)
     (Sexp.to_string (List.sexp_of_t (fun w -> Sexp.Atom w.Bisim.op) ws))

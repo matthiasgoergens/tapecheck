@@ -1,0 +1,223 @@
+diff --git a/seam-smoke/dune b/seam-smoke/dune
+new file mode 100644
+index 0000000..99aff11
+--- /dev/null
++++ b/seam-smoke/dune
+@@ -0,0 +1,3 @@
++(test
++ (name seam_smoke)
++ (libraries base splittable_random))
+diff --git a/seam-smoke/seam_smoke.ml b/seam-smoke/seam_smoke.ml
+new file mode 100644
+index 0000000..854e151
+--- /dev/null
++++ b/seam-smoke/seam_smoke.ml
+@@ -0,0 +1,67 @@
++let () =
++  let bools = ref 0 in
++  let int64s = ref 0 in
++  let floats = ref 0 in
++  let unit_floats = ref 0 in
++  let hooks =
++    Splittable_random.Intercept.create
++      ~bool:(fun state ~default -> incr bools; default state)
++      ~int64:(fun state ~lo ~hi ~default ->
++        incr int64s;
++        default state ~lo ~hi)
++      ~float:(fun state ~lo ~hi ~default ->
++        incr floats;
++        default state ~lo ~hi)
++      ~unit_float:(fun state ~default -> incr unit_floats; default state)
++      ()
++  in
++  let state =
++    Splittable_random.with_intercept (Splittable_random.State.of_int 1) hooks
++  in
++  ignore (Splittable_random.bool state : bool);
++  ignore (Splittable_random.int64 state ~lo:0L ~hi:10L : int64);
++  ignore (Splittable_random.float state ~lo:0. ~hi:1. : float);
++  ignore (Splittable_random.unit_float state : float);
++  assert (!bools = 1);
++  assert (!int64s = 1);
++  assert (!floats = 1);
++  assert (!unit_floats = 1)
++
++let () =
++  let child_bools = ref 0 in
++  let child_hooks =
++    Splittable_random.Intercept.create
++      ~bool:(fun state ~default -> incr child_bools; default state)
++      ()
++  in
++  let parent_hooks =
++    Splittable_random.Intercept.create ~on_split:(fun () -> Some child_hooks) ()
++  in
++  let parent =
++    Splittable_random.with_intercept
++      (Splittable_random.State.of_int 2)
++      parent_hooks
++  in
++  let child = Splittable_random.State.split parent in
++  assert (Splittable_random.Intercept.is_active child);
++  ignore (Splittable_random.bool child : bool);
++  assert (!child_bools = 1);
++  let salt = ref None in
++  let perturb_bools = ref 0 in
++  let replacement =
++    Splittable_random.Intercept.create
++      ~bool:(fun state ~default -> incr perturb_bools; default state)
++      ()
++  in
++  let initial =
++    Splittable_random.Intercept.create
++      ~on_perturb:(fun value -> salt := Some value; Some replacement)
++      ()
++  in
++  let state =
++    Splittable_random.with_intercept (Splittable_random.State.of_int 3) initial
++  in
++  Splittable_random.State.perturb state 37;
++  assert (!salt = Some 37);
++  ignore (Splittable_random.bool state : bool);
++  assert (!perturb_bools = 1)
+diff --git a/src/splittable_random.ml b/src/splittable_random.ml
+index 5bfe656..5c14c68 100644
+--- a/src/splittable_random.ml
++++ b/src/splittable_random.ml
+@@ -34,0 +35,12 @@ module State = struct
++    ; mutable intercept : intercept option
++    }
++
++  and intercept =
++    { int64 :
++        t -> lo:int64 -> hi:int64 -> default:(t -> lo:int64 -> hi:int64 -> int64) -> int64
++    ; float :
++        t -> lo:float -> hi:float -> default:(t -> lo:float -> hi:float -> float) -> float
++    ; unit_float : t -> default:(t -> float) -> float
++    ; bool : t -> default:(t -> bool) -> bool
++    ; on_split : unit -> intercept option
++    ; on_perturb : int -> intercept option
+@@ -41,0 +54 @@ module State = struct
++    ; intercept = None
+@@ -44 +57 @@ module State = struct
+-  let copy { seed ; odd_gamma } = { seed ; odd_gamma }
++  let copy { seed ; odd_gamma ; intercept } = { seed ; odd_gamma ; intercept }
+@@ -90 +103 @@ module State = struct
+-    { seed; odd_gamma }
++    { seed; odd_gamma; intercept = None }
+@@ -100,0 +114,5 @@ module State = struct
++    let child_intercept =
++      match t.intercept with
++      | None -> None
++      | Some intercept -> intercept.on_split ()
++    in
+@@ -103 +121,3 @@ module State = struct
+-    of_seed_and_gamma ~seed ~gamma
++    let child = of_seed_and_gamma ~seed ~gamma in
++    child.intercept <- child_intercept;
++    child
+@@ -109,0 +130,6 @@ module State = struct
++    (match t.intercept with
++     | None -> ()
++     | Some intercept ->
++       (match intercept.on_perturb salt with
++        | None -> ()
++        | Some replacement -> t.intercept <- Some replacement));
+@@ -115 +141,6 @@ end
+-let bool state = is_odd (State.next_int64 state)
++let bool_default state = is_odd (State.next_int64 state)
++
++let bool state =
++  match state.State.intercept with
++  | None -> bool_default state
++  | Some intercept -> intercept.bool state ~default:bool_default
+@@ -153 +184 @@ let%test_unit "remainder_is_unbiased" =
+-let int64 =
++let int64_default =
+@@ -182,0 +214,5 @@ let int64 =
++let int64 state ~lo ~hi =
++  match state.State.intercept with
++  | None -> int64_default state ~lo ~hi
++  | Some intercept -> intercept.int64 state ~lo ~hi ~default:int64_default
++
+@@ -231 +267 @@ end
+-let unit_float state =
++let unit_float_default state =
+@@ -233,0 +270,5 @@ let unit_float state =
++let unit_float state =
++  match state.State.intercept with
++  | None -> unit_float_default state
++  | Some intercept -> intercept.unit_float state ~default:unit_float_default
++
+@@ -242 +283 @@ let unit_float state =
+-let float =
++let float_default =
+@@ -246 +287 @@ let float =
+-    then (lo +. (unit_float state *. range))
++    then (lo +. (unit_float_default state *. range))
+@@ -251 +292 @@ let float =
+-      if bool state
++      if bool_default state
+@@ -277,0 +319,5 @@ let float =
++let float state ~lo ~hi =
++  match state.State.intercept with
++  | None -> float_default state ~lo ~hi
++  | Some intercept -> intercept.float state ~lo ~hi ~default:float_default
++
+@@ -363,0 +410,22 @@ end
++
++module Intercept = struct
++  type t = State.intercept
++
++  let create
++    ?(int64 = fun state ~lo ~hi ~default -> default state ~lo ~hi)
++    ?(float = fun state ~lo ~hi ~default -> default state ~lo ~hi)
++    ?(unit_float = fun state ~default -> default state)
++    ?(bool = fun state ~default -> default state)
++    ?(on_split = fun () -> None)
++    ?(on_perturb = fun _ -> None)
++    ()
++    =
++    { State.int64 = int64; float; unit_float; bool; on_split; on_perturb }
++
++  let is_active state = Option.is_some state.State.intercept
++end
++
++let with_intercept state intercept =
++  let state = State.copy state in
++  state.State.intercept <- Some intercept;
++  state
+diff --git a/src/splittable_random.mli b/src/splittable_random.mli
+index 1f7d6ea..08cab2f 100644
+--- a/src/splittable_random.mli
++++ b/src/splittable_random.mli
+@@ -48,0 +49,29 @@ end
++module Intercept : sig
++  type t
++
++  val create
++    :  ?int64:
++         (State.t
++          -> lo:int64
++          -> hi:int64
++          -> default:(State.t -> lo:int64 -> hi:int64 -> int64)
++          -> int64)
++    -> ?float:
++         (State.t
++          -> lo:float
++          -> hi:float
++          -> default:(State.t -> lo:float -> hi:float -> float)
++          -> float)
++    -> ?unit_float:(State.t -> default:(State.t -> float) -> float)
++    -> ?bool:(State.t -> default:(State.t -> bool) -> bool)
++    -> ?on_split:(unit -> t option)
++    -> ?on_perturb:(int -> t option)
++    -> unit
++    -> t
++
++  val is_active : State.t -> bool
++end
++
++(** Return a snapshot copy of [state] whose draws consult [intercept]. *)
++val with_intercept : State.t -> Intercept.t -> State.t
++

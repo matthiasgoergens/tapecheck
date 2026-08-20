@@ -1,0 +1,181 @@
+diff --git a/staged-ocaml/dual-smoke/dual_smoke.ml b/staged-ocaml/dual-smoke/dual_smoke.ml
+new file mode 100644
+index 0000000..95be7ae
+--- /dev/null
++++ b/staged-ocaml/dual-smoke/dual_smoke.ml
+@@ -0,0 +1,50 @@
++open Fast_gen
++
++module Direct = Staged_generator.MakeStaged(C_sr_dropin_random)
++module Observed = Staged_generator.MakeStaged(Sr_random)
++
++let generate generator state =
++  Base_quickcheck.Generator.generate generator ~size:20 ~random:state
++
++let active_state seed =
++  Splittable_random.with_intercept
++    (Splittable_random.State.of_int seed)
++    (Splittable_random.Intercept.create ())
++
++let counting_active_state count seed =
++  let bool state ~default =
++    incr count;
++    default state
++  in
++  Splittable_random.with_intercept
++    (Splittable_random.State.of_int seed)
++    (Splittable_random.Intercept.create ~bool ())
++
++let fast_gen_cmi_path =
++  let build_root = Sys.executable_name |> Filename.dirname |> Filename.dirname in
++  Filename.concat build_root "lib/.fast_gen.objs/byte"
++
++let () =
++  let direct = Direct.return (Direct.C.lift 1) |> Direct.compile in
++  let observed = Observed.return (Observed.C.lift 2) |> Observed.compile in
++  let generator = Staged_generator.jit_dual ~direct ~observed () in
++  assert (generate generator (Splittable_random.State.of_int 1) = 1);
++  assert (generate generator (active_state 1) = 2)
++
++let () =
++  let direct = Direct.compile Direct.bool in
++  let observed = Observed.compile Observed.bool in
++  let generator =
++    Staged_generator.jit_dual
++      ~extra_cmi_paths:[fast_gen_cmi_path]
++      ~direct
++      ~observed
++      ()
++  in
++  let observed_draws = ref 0 in
++  for seed = 0 to 99 do
++    let direct = generate generator (Splittable_random.State.of_int seed) in
++    let observed = generate generator (counting_active_state observed_draws seed) in
++    assert (Bool.equal direct observed)
++  done;
++  assert (!observed_draws = 100)
+diff --git a/staged-ocaml/dual-smoke/dune b/staged-ocaml/dual-smoke/dune
+new file mode 100644
+index 0000000..8fb3299
+--- /dev/null
++++ b/staged-ocaml/dual-smoke/dune
+@@ -0,0 +1,3 @@
++(test
++ (name dual_smoke)
++ (libraries fast_gen base_quickcheck))
+diff --git a/staged-ocaml/lib/staged_generator.ml b/staged-ocaml/lib/staged_generator.ml
+index f831a12..67a7fba 100644
+--- a/staged-ocaml/lib/staged_generator.ml
++++ b/staged-ocaml/lib/staged_generator.ml
+@@ -8,0 +9,35 @@ let () = Runnative.add_search_path ((Util.run_ocamlfind_query "base") ^ " -O3 -w
++type 'a compiled = {
++  run : (size:int -> random:Splittable_random.State.t -> 'a) code;
++  dep_paths : string list;
++}
++
++let add_search_paths paths =
++  List.iter (fun path ->
++      if Hashtbl.mem search_paths path then ()
++      else
++        Hashtbl.add search_paths path ();
++        Runnative.add_search_path path
++    ) paths
++
++let to_bq_dual ~direct ~observed =
++  let direct_run = direct.run in
++  let observed_run = observed.run in
++  .<
++    let direct = .~direct_run in
++    let observed = .~observed_run in
++    Base_quickcheck.Generator.create (fun ~size ~random ->
++      if Splittable_random.Intercept.is_active random
++      then observed ~size ~random
++      else direct ~size ~random)
++  >.
++
++let print_dual ~direct ~observed =
++  Codelib.print_code Format.std_formatter (to_bq_dual ~direct ~observed)
++
++let jit_dual ?extra_cmi_paths ~direct ~observed () =
++  let extra_cmi_paths = List.flatten (Option.to_list extra_cmi_paths) in
++  add_search_paths extra_cmi_paths;
++  add_search_paths direct.dep_paths;
++  add_search_paths observed.dep_paths;
++  Runnative.run_native (Codelib.close_code (to_bq_dual ~direct ~observed))
++
+@@ -326,0 +362,12 @@ let int_uniform_inclusive ~(lo : int code) ~(hi : int code) : int code t = {
++  let compile sg =
++    {
++      run = .<
++        fun ~size ~random ->
++          let custom_random = .~(R.of_sr .<random>.) in
++          let v = .~(Codecps.code_generate (sg.rand_gen ~size_c:.<size>. ~random_c:.<custom_random>.)) in
++          .~(R.repopulate_sr .<custom_random>. .<random>.);
++          v
++      >.;
++      dep_paths = R.dep_paths;
++    }
++
+@@ -327,0 +375,2 @@ let int_uniform_inclusive ~(lo : int code) ~(hi : int code) : int code t = {
++    let compiled = compile sg in
++    let run = compiled.run in
+@@ -330,4 +379 @@ let int_uniform_inclusive ~(lo : int code) ~(hi : int code) : int code t = {
+-        let custom_random = .~(R.of_sr .<random>.) in
+-        let v = .~(Codecps.code_generate (sg.rand_gen ~size_c:.<size>. ~random_c:.<custom_random>.)) in
+-        .~(R.repopulate_sr .<custom_random>. .<random>.);
+-        v
++        .~run ~size ~random
+@@ -342,14 +388,2 @@ let int_uniform_inclusive ~(lo : int code) ~(hi : int code) : int code t = {
+-    List.iter (fun path ->
+-        if Hashtbl.mem search_paths path then ()
+-        else
+-          Hashtbl.add search_paths path ();
+-          Runnative.add_search_path path
+-      ) extra_cmi_paths;
+-    List.iter (fun path ->
+-        if Hashtbl.mem search_paths path then ()
+-        else
+-          Hashtbl.add search_paths path ();
+-          Runnative.add_search_path path
+-      ) R.dep_paths;
+-    (* List.iter Runnative.add_search_path extra_cmi_paths; *)
+-    (* List.iter Runnative.add_search_path R.dep_paths; *)
++    add_search_paths extra_cmi_paths;
++    add_search_paths R.dep_paths;
+@@ -385 +419 @@ let int_uniform_inclusive ~(lo : int code) ~(hi : int code) : int code t = {
+-end
+\ No newline at end of file
++end
+diff --git a/staged-ocaml/lib/staged_generator.mli b/staged-ocaml/lib/staged_generator.mli
+index 1b57f85..054ff40 100644
+--- a/staged-ocaml/lib/staged_generator.mli
++++ b/staged-ocaml/lib/staged_generator.mli
+@@ -1,0 +2,20 @@
++type 'a compiled
++
++(** Build a generator which selects between two complete generated functions
++    once per generated value. The direct and observed functions must implement
++    the same generator description with pointwise-equivalent randomness
++    backends. *)
++val to_bq_dual
++  :  direct:'a compiled
++  -> observed:'a compiled
++  -> 'a Base_quickcheck.Generator.t Codelib.code
++
++val print_dual : direct:'a compiled -> observed:'a compiled -> unit
++
++val jit_dual
++  :  ?extra_cmi_paths:string list
++  -> direct:'a compiled
++  -> observed:'a compiled
++  -> unit
++  -> 'a Base_quickcheck.Generator.t
++
+@@ -7,0 +28,5 @@ module MakeStaged(R : Random_intf.S) : sig
++    (** Generate a complete [size]/[random] function without wrapping it in a
++        Base_quickcheck generator. Compiled values from two functor
++        instantiations can be combined with [to_bq_dual] or [jit_dual]. *)
++    val compile : 'a c t -> 'a compiled
++
+@@ -18 +42,0 @@ end
+-

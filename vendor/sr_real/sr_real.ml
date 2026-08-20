@@ -181,11 +181,13 @@ let perturb t salt =
 
 let bool_default state = is_odd (next_int64 state)
 
-let bool state =
+let[@inline always] intercept_bool state ~default =
   match state.intercept with
-  | None -> bool_default state
-  | Some i -> i.bool state ~default:bool_default
+  | None -> default state
+  | Some i -> i.bool state ~default
 ;;
+
+let bool state = intercept_bool state ~default:bool_default
 
 (* We abuse terminology and refer to individual values as biased or unbiased.  More
    properly, what is unbiased is the sampler that results if we keep only these "unbiased"
@@ -227,10 +229,25 @@ let int64_default =
     else between state ~lo ~hi
 ;;
 
-let int64 state ~lo ~hi =
+let[@inline always] intercept_int64 state ~lo ~hi ~default =
   match state.intercept with
-  | None -> int64_default state ~lo ~hi
-  | Some i -> i.int64 state ~lo ~hi ~default:int64_default
+  | None -> default state ~lo ~hi
+  | Some i -> i.int64 state ~lo ~hi ~default
+;;
+
+let int64 state ~lo ~hi = intercept_int64 state ~lo ~hi ~default:int64_default
+
+let[@inline always] intercept_int state ~lo ~hi ~default =
+  match state.intercept with
+  | None -> default state ~lo ~hi
+  | Some i ->
+    let lo = Int64.of_int lo in
+    let hi = Int64.of_int hi in
+    i.int64 state ~lo ~hi
+      ~default:(fun state ~lo ~hi ->
+        Int64.of_int
+          (default state ~lo:(Int64.to_int_trunc lo) ~hi:(Int64.to_int_trunc hi)))
+    |> Int64.to_int_trunc
 ;;
 
 let int state ~lo ~hi =
@@ -269,11 +286,13 @@ let unit_float_from_int64 int64 = Int64.to_float (int64 lsr 11) *. double_ulp
 
 let unit_float_default state = unit_float_from_int64 (next_int64 state)
 
-let unit_float state =
+let[@inline always] intercept_unit_float state ~default =
   match state.intercept with
-  | None -> unit_float_default state
-  | Some i -> i.unit_float state ~default:unit_float_default
+  | None -> default state
+  | Some i -> i.unit_float state ~default
 ;;
+
+let unit_float state = intercept_unit_float state ~default:unit_float_default
 
 let bool_with_probability_default state ~probability =
   Float.(unit_float_default state < probability)
@@ -373,11 +392,13 @@ let float_default =
     finite_float state ~lo ~hi
 ;;
 
-let float state ~lo ~hi =
+let[@inline always] intercept_float state ~lo ~hi ~default =
   match state.intercept with
-  | None -> float_default state ~lo ~hi
-  | Some i -> i.float state ~lo ~hi ~default:float_default
+  | None -> default state ~lo ~hi
+  | Some i -> i.float state ~lo ~hi ~default
 ;;
+
+let float state ~lo ~hi = intercept_float state ~lo ~hi ~default:float_default
 
 
 module Log_uniform = struct
@@ -500,6 +521,57 @@ module Intercept = struct
     ; on_split : unit -> t option
     ; on_perturb : int -> t option
     }
+
+  let create
+    ?(int64 = fun state ~lo ~hi ~default -> default state ~lo ~hi)
+    ?(float = fun state ~lo ~hi ~default -> default state ~lo ~hi)
+    ?(unit_float = fun state ~default -> default state)
+    ?(bool = fun state ~default -> default state)
+    ?(bool_with_probability =
+      fun state ~probability ~forced:_ ~default -> default state ~probability)
+    ?(on_span_start =
+      fun _ ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ -> ())
+    ?(on_span_stop =
+      fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_
+        () -> ())
+    ?(on_split = fun () -> None)
+    ?(on_perturb = fun _ -> None)
+    ()
+    =
+    { int64
+    ; float
+    ; unit_float
+    ; bool
+    ; bool_with_probability
+    ; on_span_start
+    ; on_span_stop
+    ; on_split
+    ; on_perturb
+    }
+  ;;
+
+  let[@inline always] is_active state = Option.is_some state.intercept
+
+  (* Optimized or staged randomness backends can preserve interception while
+     supplying their own pointwise-equivalent primitive sampler.  The inactive
+     path is one hook-presence branch followed by [default]. *)
+  let[@inline always] run_bool state ~default = intercept_bool state ~default
+
+  let[@inline always] run_int state ~lo ~hi ~default =
+    intercept_int state ~lo ~hi ~default
+  ;;
+
+  let[@inline always] run_int64 state ~lo ~hi ~default =
+    intercept_int64 state ~lo ~hi ~default
+  ;;
+
+  let[@inline always] run_float state ~lo ~hi ~default =
+    intercept_float state ~lo ~hi ~default
+  ;;
+
+  let[@inline always] run_unit_float state ~default =
+    intercept_unit_float state ~default
+  ;;
 end
 
 let with_intercept t intercept = { t with intercept = Some intercept }

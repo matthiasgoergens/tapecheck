@@ -144,7 +144,7 @@ let check (e : expectation) (o : outcome) =
 (* --- the properties, with their measured baselines --------------------- *)
 
 let bug_ref =
-  "see ../tapecheck-hypothesis-baseline/README.md and BENCHMARKS.md"
+  "see EVIDENCE.md and the pinned companion Hypothesis baseline"
 
 let () =
   Stdio.printf "shrink quality and cost regression guard (%d seeds each)\n"

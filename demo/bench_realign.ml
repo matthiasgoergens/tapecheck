@@ -47,9 +47,10 @@ let run_policy (type a) ~name:_ ~gen ~test ~(size_of : a -> int)
       Int.incr found;
       if is_minimal m then Int.incr minimal;
       size_sum := !size_sum + size_of m;
-      replays := !replays + stats.Tape_engine.replays;
-      tests := !tests + stats.Tape_engine.tests;
-      misaligns := !misaligns + stats.Tape_engine.misaligns
+      let snapshot = Tape_engine.stats_snapshot stats in
+      replays := !replays + snapshot.replays;
+      tests := !tests + snapshot.tests;
+      misaligns := !misaligns + snapshot.misaligns
   done;
   { policy = policy_name
   ; found = !found

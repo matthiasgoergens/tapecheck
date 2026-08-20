@@ -79,24 +79,27 @@ Cells are `normalised / mean evaluations`, **1000 runs each**. 95%
 Wilson intervals are in the raw output; the ones that matter are quoted
 inline below.
 
-Both tapecheck columns re-measured 2026-08-08 at `3aa0a47`; raw output
-in `../tapecheck-notes/challenge-1000-20260808.txt` and
-`challenge-1000-patched-20260808.txt`.
+Both tapecheck columns re-measured 2026-08-08 at `3aa0a47`; raw outputs are
+preserved in companion evidence
+`experiments/shrinking-challenge/legacy-2026-08/challenge-1000-20260808.txt`
+and `challenge-1000-patched-20260808.txt`.
 
 **`difference_must_not_be_zero` re-measured 2026-08-14** at 98.0 to
 85.5 mean evaluations, when `minimize_duplicated_choices` was enabled
-by default (raw:
-`../tapecheck-notes/challenge-1000-duplate-20260814.txt`). That pass
+by default (companion evidence
+`experiments/shrinking-challenge/legacy-2026-08/challenge-1000-duplate-20260814.txt`). That pass
 lowers a whole group of equal-valued choices at once, which is exactly
 this challenge's shape; quality is unchanged at 1000/1000, and every
 other row moved by under 1% FROM THAT PASS, measured against the
-2026-08-13 reorder baseline in
-`../tapecheck-notes/challenge-1000-reorder-20260813.txt`. Read against
+2026-08-13 reorder baseline in companion evidence
+`experiments/shrinking-challenge/legacy-2026-08/challenge-1000-reorder-20260813.txt`.
+Read against
 the column previously printed here, bound5 also moved — 158/1000 to
 0/1000 exact and 276.8 to 285.0 — but that is `reorder_spans`, not this
 pass, and is explained below. The `+patch` column was
-re-measured on 2026-08-19 against the same master
-(`../tapecheck-notes/challenge-1000-patched-20260819.txt`) and moves
+re-measured on 2026-08-19 against the same master (companion evidence
+`experiments/shrinking-challenge/legacy-2026-08/challenge-1000-patched-20260819.txt`)
+and moves
 the same way, to 85.5. The pass must run after the deletion and lowering passes — placed before them it costs the
 poisoned-containers guard 21/48 to 17/48, measured, see
 `WAVE2-REORDER-AND-DUPLICATES.md`.

@@ -184,9 +184,9 @@ let fresh_random_alternative (c : Tape.choice) (rand : Splittable_random.t) :
 let positions_of (image : Tape.image) : (int * Tape.key * int * Tape.choice) list
   =
   List.concat_map
-    (List.range 0 (Tape_engine.seg_count image))
+    (List.range 0 (Tape_engine.For_explain.seg_count image))
     ~f:(fun seg ->
-      let arr = Tape_engine.seg_get image seg in
+      let arr = Tape_engine.For_explain.seg_get image seg in
       let key = if seg = 0 then Tape.root else fst image.streams.(seg - 1) in
       List.init (Array.length arr) ~f:(fun idx -> (seg, key, idx, arr.(idx))))
 
@@ -218,23 +218,24 @@ let positions_of (image : Tape.image) : (int * Tape.key * int * Tape.choice) lis
    example values to show a human. *)
 let trail_alternatives ~(trail : Tape.image list) (image : Tape.image) seg idx :
     Tape.choice list =
-  let seg_count_image = Tape_engine.seg_count image in
+  let seg_count_image = Tape_engine.For_explain.seg_count image in
   List.filter_map trail ~f:(fun cand ->
-    if Tape_engine.seg_count cand <> seg_count_image then None
+    if Tape_engine.For_explain.seg_count cand <> seg_count_image then None
     else begin
       let other_segments_match =
         List.for_all (List.range 0 seg_count_image) ~f:(fun s ->
           if s = seg then true
           else begin
-            let a = Tape_engine.seg_get image s
-            and b = Tape_engine.seg_get cand s in
+            let a = Tape_engine.For_explain.seg_get image s
+            and b = Tape_engine.For_explain.seg_get cand s in
             Array.length a = Array.length b
             && Array.for_alli a ~f:(fun i x -> Tape.Domain.equal x b.(i))
           end)
       in
       if not other_segments_match then None
       else begin
-        let a = Tape_engine.seg_get image seg and b = Tape_engine.seg_get cand seg in
+        let a = Tape_engine.For_explain.seg_get image seg
+        and b = Tape_engine.For_explain.seg_get cand seg in
         if Array.length a <> Array.length b then None
         else begin
           let same_except_idx =
@@ -259,15 +260,16 @@ let trail_alternatives ~(trail : Tape.image list) (image : Tape.image) seg idx :
 let try_candidate (type a) ~(gen : a Base_quickcheck.Generator.t) ~size
     ~(test : a -> bool) (image : Tape.image) seg idx candidate :
     [ `Untestable | `Passed | `Still_failing of a ] =
-  let arr = Tape_engine.seg_get image seg in
+  let arr = Tape_engine.For_explain.seg_get image seg in
   let proposal =
-    Tape_engine.seg_set image seg (Tape_engine.with_choice arr idx candidate)
+    Tape_engine.For_explain.seg_set image seg
+      (Tape_engine.For_explain.with_choice arr idx candidate)
   in
   let tape = Tape.create () in
   Tape.start_replay_image ~policy:Tape.Consume tape proposal;
   let value, tested, out =
-    Tape_engine.run_and_test ~tape ~gen ~size
-      ~seed:Tape_engine.replay_fresh_seed ~test
+    Tape_engine.For_explain.run_and_test ~tape ~gen ~size
+      ~seed:Tape_engine.For_explain.replay_fresh_seed ~test
   in
   match tested with
   | None -> `Untestable

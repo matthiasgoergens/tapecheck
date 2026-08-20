@@ -14,6 +14,20 @@ module G = Base_quickcheck.Generator
 
 let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
+(* The hexadecimal regression-file transport is deliberately not part of the
+   [Tape_test] API. These fixture helpers construct the documented wire format
+   without reaching into the runner's private implementation module. *)
+let hex_of_string s =
+  String.concat_map s ~f:(fun c -> Printf.sprintf "%02x" (Char.to_int c))
+
+let append_regression path ~image ~size ~comment =
+  Stdlib.Out_channel.with_open_gen
+    [ Open_append; Open_creat; Open_text ] 0o644 path
+    (fun oc ->
+      Stdlib.Printf.fprintf oc "%s @%d # %s\n"
+        (hex_of_string (Tape.serialize_image image))
+        size comment)
+
 (* Capture what [f] prints to stdout, for checking the actual wording
    of the truncation message [Tape_test.result] prints -- not just the
    structured [converged] field it is derived from. Written under the
@@ -168,7 +182,7 @@ let () =
     (* The SAME round trip through the hex encoding [Tape_test] actually
        prints and accepts (Regressions' format, and resume_result's
        ~tape argument), end to end via the real user-facing wrapper. *)
-    let hex = Tape_test.Regressions.hex_of_string serialized in
+    let hex = hex_of_string serialized in
     let module M = struct
       type t = int * int [@@deriving sexp_of]
 
@@ -279,7 +293,7 @@ let () =
   (match converged_run with
    | Tape_engine.Passed _ -> assert false
    | Tape_engine.Failed { image; _ } ->
-     Tape_test.Regressions.append regressions_path ~image ~size:10
+     append_regression regressions_path ~image ~size:10
        ~comment:"issue 11 reproducer";
      let printed_regression =
        capture_stdout (fun () ->

@@ -52,10 +52,11 @@ let () =
     with
     | Tape_engine.Failed _ -> false
     | Tape_engine.Passed { cases } ->
+      let snapshot = Tape_engine.stats_snapshot st in
       Stdio.printf
         "     (returned {cases = %d}; actually ran %d; stats say %d valid)\n"
-        cases !n st.Tape_engine.cases_valid;
-      cases = !n && cases = st.Tape_engine.cases_valid
+        cases !n snapshot.cases_valid;
+      cases = !n && cases = snapshot.cases_valid
   in
   Stdio.printf "  early stop reports cases RUN, not ~count: %b\n" honest;
   if not (stops_tiny && stops_small && runs_big && honest) then begin

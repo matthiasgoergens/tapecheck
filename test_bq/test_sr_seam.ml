@@ -11,33 +11,67 @@ exception Start_callback_failure
 exception Stop_callback_failure
 
 let () =
+  let expected = Sr_real.of_int 404 in
+  let delegating =
+    Sr_real.with_intercept (Sr_real.of_int 404) (Sr_real.Intercept.create ())
+  in
+  check "constructed delegating observer is active"
+    (Sr_real.Intercept.is_active delegating);
+  check "default bool observer delegates"
+    (Bool.equal (Sr_real.bool delegating) (Sr_real.bool expected));
+  check "default integer observer delegates"
+    (Int.equal
+       (Sr_real.int delegating ~lo:(-100) ~hi:1_000)
+       (Sr_real.int expected ~lo:(-100) ~hi:1_000));
+  check "default float observer delegates"
+    (Float.equal
+       (Sr_real.float delegating ~lo:(-1.) ~hi:2.)
+       (Sr_real.float expected ~lo:(-1.) ~hi:2.));
+  check "default weighted observer delegates"
+    (Bool.equal
+       (Sr_real.bool_with_probability delegating ~probability:0.37)
+       (Sr_real.bool_with_probability expected ~probability:0.37));
+  check "default split child is unobserved"
+    (not (Sr_real.Intercept.is_active (Sr_real.split delegating)));
+  Sr_real.perturb delegating 17;
+  check "default perturb callback retains the observer"
+    (Sr_real.Intercept.is_active delegating);
+
   let events = ref [] in
   let weighted_calls = ref [] in
-  let rec hooks : Sr_real.Intercept.t =
-    { int64 = (fun state ~lo ~hi ~default -> default state ~lo ~hi)
-    ; float = (fun state ~lo ~hi ~default -> default state ~lo ~hi)
-    ; unit_float = (fun state ~default -> default state)
-    ; bool = (fun state ~default -> default state)
-    ; bool_with_probability =
+  let default_span_start label ~deletable ~discardable:_ ~descendable
+    ~reorderable:_ =
+    events :=
+      (match label with
+       | Outer -> "start outer"
+       | Inner when descendable -> "start inner descendable"
+       | Inner when deletable -> "start inner deletable"
+       | Inner -> "start inner"
+       | _ -> "start unknown")
+      :: !events
+  in
+  let default_span_stop ~deletable:_ ~discardable:_ ~descendable:_
+    ~reorderable:_ ~discarded:_ () =
+    events := "stop" :: !events
+  in
+  let make_hooks ~on_span_start ~on_span_stop =
+    let rec loop () =
+      Sr_real.Intercept.create
+        ~bool_with_probability:
         (fun state ~probability ~forced ~default ->
           weighted_calls := (probability, forced) :: !weighted_calls;
           default state ~probability)
-    ; on_span_start =
-        (fun label ~deletable ~discardable:_ ~descendable ~reorderable:_ ->
-          events :=
-            (match label with
-             | Outer -> "start outer"
-             | Inner when descendable -> "start inner descendable"
-             | Inner when deletable -> "start inner deletable"
-             | Inner -> "start inner"
-             | _ -> "start unknown")
-            :: !events)
-    ; on_span_stop =
-        (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () ->
-          events := "stop" :: !events)
-    ; on_split = (fun () -> Some hooks)
-    ; on_perturb = (fun _ -> Some hooks)
-    }
+        ~on_span_start
+        ~on_span_stop
+        ~on_split:(fun () -> Some (loop ()))
+        ~on_perturb:(fun _ -> Some (loop ()))
+        ()
+    in
+    loop ()
+  in
+  let hooks =
+    make_hooks ~on_span_start:default_span_start
+      ~on_span_stop:default_span_stop
   in
   let bare = Sr_real.of_int 1 in
   let ran = ref false in
@@ -74,11 +108,11 @@ let () =
 
   let body_ran = ref false in
   let start_failure_hooks =
-    { hooks with
-      on_span_start =
+    make_hooks
+      ~on_span_start:
         (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ->
           raise Start_callback_failure)
-    }
+      ~on_span_stop:default_span_stop
   in
   let start_failure_state = Sr_real.with_intercept bare start_failure_hooks in
   check "start callback exception propagates"
@@ -90,11 +124,11 @@ let () =
      | Error _ | Ok _ -> false);
   check "start callback exception prevents the body" (not !body_ran);
   let stop_failure_hooks =
-    { hooks with
-      on_span_stop =
+    make_hooks
+      ~on_span_start:default_span_start
+      ~on_span_stop:
         (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () ->
           raise Stop_callback_failure)
-    }
   in
   let stop_failure_state = Sr_real.with_intercept bare stop_failure_hooks in
   check "stop callback exception propagates"

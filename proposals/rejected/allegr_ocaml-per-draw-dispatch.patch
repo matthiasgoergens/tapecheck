@@ -1,0 +1,87 @@
+diff --git a/staged-ocaml/lib/randomness/c_sr_dropin_random.ml b/staged-ocaml/lib/randomness/c_sr_dropin_random.ml
+index 34997a3..f2e5234 100644
+--- a/staged-ocaml/lib/randomness/c_sr_dropin_random.ml
++++ b/staged-ocaml/lib/randomness/c_sr_dropin_random.ml
+@@ -3,3 +3,13 @@ type t = Splittable_random.State.t
+-let int st ~lo ~hi = .< if Base.Int.compare .~lo .~ hi > 0 then failwith "Crossed bounds!" else C_sr_dropin_random_runtime.int_c_unchecked .~st .~lo .~hi >.
+-let int_unchecked st ~lo ~hi = .< C_sr_dropin_random_runtime.int_c_unchecked .~st .~lo .~hi >.
+-let bool st = .< C_sr_dropin_random_runtime.bool_c .~st >.
++let int st ~lo ~hi =
++  .<
++    if Base.Int.compare .~lo .~hi > 0
++    then failwith "Crossed bounds!"
++    else
++      Splittable_random.Intercept.run_int
++        .~st
++        ~lo:.~lo
++        ~hi:.~hi
++        ~default:(fun state ~lo ~hi ->
++          C_sr_dropin_random_runtime.int_c_unchecked state lo hi)
++  >.
++;;
+@@ -7,5 +17,10 @@ let bool st = .< C_sr_dropin_random_runtime.bool_c .~st >.
+-let float st ~(lo : float Codelib.code) ~hi = .<
+-  if Base.Float.compare .~lo .~ hi > 0 then failwith "Crossed bounds!" else
+-  if (not (Float.is_finite .~lo && Float.is_finite .~hi)) then failwith "Infite floats" else
+-  C_sr_dropin_random_runtime.float_c_unchecked .~st .~lo .~hi
+->.
++let int_unchecked st ~lo ~hi =
++  .<
++    Splittable_random.Intercept.run_int
++      .~st
++      ~lo:.~lo
++      ~hi:.~hi
++      ~default:(fun state ~lo ~hi ->
++        C_sr_dropin_random_runtime.int_c_unchecked state lo hi)
++  >.
++;;
+@@ -13,3 +28,34 @@ let float st ~(lo : float Codelib.code) ~hi = .<
+-let float_unchecked st ~(lo : float Codelib.code) ~hi = .<
+-  C_sr_dropin_random_runtime.float_c_unchecked .~st .~lo .~hi
+->.
++let bool st =
++  .<
++    Splittable_random.Intercept.run_bool
++      .~st
++      ~default:C_sr_dropin_random_runtime.bool_c
++  >.
++;;
++
++let float st ~(lo : float Codelib.code) ~hi =
++  .<
++    if Base.Float.compare .~lo .~hi > 0
++    then failwith "Crossed bounds!"
++    else if not (Float.is_finite .~lo && Float.is_finite .~hi)
++    then failwith "Infite floats"
++    else
++      Splittable_random.Intercept.run_float
++        .~st
++        ~lo:.~lo
++        ~hi:.~hi
++        ~default:(fun state ~lo ~hi ->
++          C_sr_dropin_random_runtime.float_c_unchecked state lo hi)
++  >.
++;;
++
++let float_unchecked st ~(lo : float Codelib.code) ~hi =
++  .<
++    Splittable_random.Intercept.run_float
++      .~st
++      ~lo:.~lo
++      ~hi:.~hi
++      ~default:(fun state ~lo ~hi ->
++        C_sr_dropin_random_runtime.float_c_unchecked state lo hi)
++  >.
++;;
+@@ -24 +70,10 @@ module Log_uniform = struct
+-  let int st ~lo ~hi = .< C_sr_dropin_random_runtime.int_c_log_uniform .~st .~lo .~hi >.
++  let int st ~lo ~hi =
++    .<
++      Splittable_random.Intercept.run_int
++        .~st
++        ~lo:.~lo
++        ~hi:.~hi
++        ~default:(fun state ~lo ~hi ->
++          C_sr_dropin_random_runtime.int_c_log_uniform state lo hi)
++    >.
++  ;;

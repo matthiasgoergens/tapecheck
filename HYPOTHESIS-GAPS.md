@@ -61,7 +61,8 @@ because two of them point at the same structural cause as §3:
 
 ## The tape does not determine the value: `~size` is ambient
 
-Measured 2026-08-20 (`../tapecheck-notes/size-dependence/`). The same
+Measured 2026-08-20 (companion evidence
+`experiments/size-dependence/2026-08-20-1ebd6a7`). The same
 recorded tape decodes to different OCaml values at different `~size`,
 including different LENGTHS:
 

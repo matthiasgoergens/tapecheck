@@ -27,17 +27,9 @@ let cpu_time () =
 ;;
 
 let attach ~production_callbacks random tape =
-  let hooks = Splittable_random.For_tape.hooks tape Tape.root in
   let hooks =
-    if production_callbacks
-    then hooks
-    else
-      { hooks with
-        on_span_start =
-          (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ -> ())
-      ; on_span_stop =
-          (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () -> ())
-      }
+    Splittable_random.For_tape.hooks
+      ~record_spans:production_callbacks tape Tape.root
   in
   Splittable_random.with_intercept random hooks
 ;;

@@ -1,0 +1,32 @@
+bench_domains
+  recommended_domain_count = 32
+  busy loop: 24630 iterations = 100.3 us per test body
+  20000 generate-phase cases per run, median of 5 runs
+
+NO-FAILURE (identical work at every setting)
+  domains      wall s    speedup vs 1
+  1              2.026     1.00x
+  2              1.054     1.92x
+  4              0.547     3.70x
+  8              0.319     6.35x
+  16             0.171    11.87x
+  32             0.112    18.02x
+
+RARE-FAILURE (attempt counts differ by design; see header)
+  domains      wall s    speedup vs 1   attempts
+  1              1.568     1.00x          17
+  2              0.825     1.90x          17
+  4              0.430     3.64x          17
+  8              0.251     6.26x          17
+  16             0.139    11.31x          17
+  32             0.093    16.84x          17
+
+SHRINK-HEAVY (fails at once; nearly all work is shrinking)
+  domains      wall s    speedup vs 1   attempts
+  1              0.085     1.00x          582
+  2              0.087     0.97x          662
+  4              0.089     0.94x          815
+  8              0.098     0.86x          1088
+  16             0.107     0.79x          1673
+  32             0.120     0.70x          1618
+

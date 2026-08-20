@@ -253,8 +253,9 @@ So there are two patches:
     `5.4.0-ox1` builds.)
 
   There is no configuration of the public OxCaml overlay that both
-  compiles master's source and can install its dependencies. Logs in
-  `../tapecheck-notes/ox-*.log`.
+  compiles master's source and can install its dependencies. Historical logs
+  are preserved in companion evidence
+  `experiments/oxcaml-packaging/legacy-2026-08/`.
 
   An early "the error set is unchanged before and after my change"
   reading was weak evidence and should not have been offered: dune was

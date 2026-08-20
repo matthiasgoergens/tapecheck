@@ -15,6 +15,16 @@ let tape_budget = 5000
 let size = 10
 let cases_per_trial = 200
 
+let observations =
+  match Array.to_list (Sys.get_argv ()) with
+  | [ _ ] -> false
+  | [ _; "--observations" ] -> true
+  | _ -> failwith "usage: shrink_table.exe [--observations]"
+
+let print_observation ~property ~seed ~arm ~found ~minimal ~calls ~result =
+  printf "%s\t%d\t%s\t%b\t%b\t%d\t%s\n" property seed arm found minimal calls
+    (String.escaped result)
+
 (* Greedy first-improvement loop over Shrinker candidates, the same
    strategy as Base_quickcheck.Test.run, bounded by a test-call
    budget. *)
@@ -93,10 +103,10 @@ let print_stats name stats =
     (if stats.found > 0 then stats.calls / stats.found else 0)
     (Option.value stats.worst ~default:"-")
 
-let row (type a) ~name ~(gen : a G.t) ~(shrinker : a S.t option)
+let row (type a) ~id ~name ~(gen : a G.t) ~(shrinker : a S.t option)
     ~(test : a -> bool) ~(is_minimal : a -> bool)
     ~(sexp_of : a -> Sexp.t) =
-  printf "%s -- %d seeds\n" name trials;
+  if not observations then printf "%s -- %d seeds\n" name trials;
   let stock = new_stats () and tape = new_stats () in
   for trial = 0 to trials - 1 do
     let seed = trial * 1_000_003 in
@@ -109,7 +119,13 @@ let row (type a) ~name ~(gen : a G.t) ~(shrinker : a S.t option)
       Tape_engine.run gen ~test ~seed ~count:cases_per_trial ~size
         ~budget:tape_budget
     with
-    | Tape_engine.Passed _ -> ()
+    | Tape_engine.Passed _ ->
+      if observations then begin
+        print_observation ~property:id ~seed ~arm:"stock" ~found:false
+          ~minimal:false ~calls:0 ~result:"-";
+        print_observation ~property:id ~seed ~arm:"tape" ~found:false
+          ~minimal:false ~calls:0 ~result:"-"
+      end
     | Tape_engine.Failed { minimal; attempts; original; _ } ->
       let stock_minimal, stock_calls =
         match shrinker with
@@ -119,42 +135,55 @@ let row (type a) ~name ~(gen : a G.t) ~(shrinker : a S.t option)
       note stock ~is_minimal:(is_minimal stock_minimal) ~calls:stock_calls
         ~shown:(Sexp.to_string (sexp_of stock_minimal));
       note tape ~is_minimal:(is_minimal minimal) ~calls:attempts
-        ~shown:(Sexp.to_string (sexp_of minimal))
+        ~shown:(Sexp.to_string (sexp_of minimal));
+      if observations then begin
+        print_observation ~property:id ~seed ~arm:"stock" ~found:true
+          ~minimal:(is_minimal stock_minimal) ~calls:stock_calls
+          ~result:(Sexp.to_string (sexp_of stock_minimal));
+        print_observation ~property:id ~seed ~arm:"tape" ~found:true
+          ~minimal:(is_minimal minimal) ~calls:attempts
+          ~result:(Sexp.to_string (sexp_of minimal))
+      end
   done;
-  print_stats "stock" stock;
-  print_stats "tape" tape;
-  printf "\n"
+  if not observations then begin
+    print_stats "stock" stock;
+    print_stats "tape" tape;
+    printf "\n"
+  end
 
 let () =
-  row ~name:"int uniform in [0, 1_000_000], fail iff v >= 123_457"
+  if observations then
+    printf "property\tseed\tarm\tfound\tfully_minimal\tshrink_calls\tresult\n";
+  row ~id:"integer_threshold"
+    ~name:"int uniform in [0, 1_000_000], fail iff v >= 123_457"
     ~gen:(G.int_uniform_inclusive 0 1_000_000)
     ~shrinker:(Some S.int)
     ~test:(fun v -> v < 123_457)
     ~is_minimal:(fun v -> v = 123_457)
     ~sexp_of:[%sexp_of: int];
 
-  row ~name:"pair in [0,1000]^2, fail iff a + b >= 100"
+  row ~id:"pair_sum" ~name:"pair in [0,1000]^2, fail iff a + b >= 100"
     ~gen:(G.both (G.int_uniform_inclusive 0 1000) (G.int_uniform_inclusive 0 1000))
     ~shrinker:(Some [%quickcheck.shrinker: int * int])
     ~test:(fun (a, b) -> a + b < 100)
     ~is_minimal:(fun (a, b) -> a = 0 && b = 100)
     ~sexp_of:[%sexp_of: int * int];
 
-  row ~name:"int list, fail iff length >= 3"
+  row ~id:"list_length" ~name:"int list, fail iff length >= 3"
     ~gen:(G.list (G.int_uniform_inclusive 0 100))
     ~shrinker:(Some (S.list S.int))
     ~test:(fun l -> List.length l < 3)
     ~is_minimal:(fun l -> List.equal Int.equal l [ 0; 0; 0 ])
     ~sexp_of:[%sexp_of: int list];
 
-  row ~name:"int list, fail iff sum >= 100"
+  row ~id:"list_sum" ~name:"int list, fail iff sum >= 100"
     ~gen:(G.list (G.int_uniform_inclusive 0 1000))
     ~shrinker:(Some (S.list S.int))
     ~test:(fun l -> List.sum (module Int) l ~f:Fn.id < 100)
     ~is_minimal:(fun l -> List.equal Int.equal l [ 100 ])
     ~sexp_of:[%sexp_of: int list];
 
-  row ~name:"filtered even ints, fail iff v >= 100"
+  row ~id:"filtered_even" ~name:"filtered even ints, fail iff v >= 100"
     ~gen:(G.filter (G.int_uniform_inclusive 0 100_000) ~f:(fun v -> v % 2 = 0))
     ~shrinker:(Some S.int)
     ~test:(fun v -> v < 100)
@@ -172,7 +201,8 @@ let () =
      which for 20-bit values is ~2*20*5 + 2 = 202. It is the only
      shrink-COST test in their quality suite, and cost is precisely what
      tapecheck's own suite was missing. *)
-  row ~name:"zig-zag: fails iff |m - n| = 1   [hypothesis asserts a cost bound]"
+  row ~id:"zig_zag"
+    ~name:"zig-zag: fails iff |m - n| = 1   [hypothesis asserts a cost bound]"
     ~gen:
       (G.both (G.int_uniform_inclusive 0 300)
          (G.int_uniform_inclusive 0 300))
@@ -181,14 +211,15 @@ let () =
     ~is_minimal:(fun (m, n) -> (m = 0 && n = 1) || (m = 1 && n = 0))
     ~sexp_of:[%sexp_of: int * int];
 
-  (* Long-range dependency, from harder_benchmarks.py in
-     ../tapecheck-hypothesis-baseline. Deleting an element breaks
+  (* Long-range dependency, from harder_benchmarks.py in the companion
+     evidence archive pinned by EVIDENCE.md. Deleting an element breaks
      [hd l = length l], and lowering [hd l] breaks it too, so only a
      SIMULTANEOUS lower-and-delete makes progress -- precisely what
      lower_and_delete exists for and what Hypothesis has no single pass
      for. Measured Hypothesis: found 89/100, fully minimal 53/100, worst
      [8;0;0;0;0;0;0;0] against a true minimum of [1]. *)
-  row ~name:"self_len: fails iff l <> [] && hd l = length l   [hypothesis: 53/100]"
+  row ~id:"self_length"
+    ~name:"self_len: fails iff l <> [] && hd l = length l   [hypothesis: 53/100]"
     ~gen:(G.list (G.int_uniform_inclusive 0 50))
     ~shrinker:(Some (S.list S.int))
     ~test:(fun l ->
@@ -196,7 +227,8 @@ let () =
     ~is_minimal:(fun l -> List.equal Int.equal l [ 1 ])
     ~sexp_of:[%sexp_of: int list];
 
-  row ~name:"bind: len in [1,64], list_with_length, fail iff sum >= 100 (no stock shrinker derivable)"
+  row ~id:"length_prefixed_bind"
+    ~name:"bind: len in [1,64], list_with_length, fail iff sum >= 100 (no stock shrinker derivable)"
     ~gen:
       (let open G.Let_syntax in
        let%bind len = G.int_uniform_inclusive 1 64 in

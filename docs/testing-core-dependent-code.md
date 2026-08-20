@@ -71,12 +71,37 @@ v0.17.0, the ppx stack) is compiled from source against the pins. Note the
 v0.17 Jane Street stack builds fine on stock OCaml 5.3 — the `effect`-keyword
 problem (janestreet/bonsai#47) does not affect it.
 
+### Fresh verification, 2026-08-20
+
+The recipe was repeated from an empty switch named
+`tapecheck-hunt-20260820-15324a9`, without modifying the earlier
+`tapecheck-hunt` switch. Both replacement packages were pinned to this
+checkout, then `core` and `core_kernel` were installed. The explicit
+`core_kernel` install is required because the copied Bonsai libraries depend on
+the separate `core_kernel.nonempty_list` library.
+
+After adding the explicit core interfaces, the following commands rebuilt the
+consumer and force-ran seven passing properties plus one deliberately failing
+positive control successfully:
+
+```sh
+opam exec --switch=tapecheck-hunt-20260820-15324a9 -- \
+  dune build --root .
+opam exec --switch=tapecheck-hunt-20260820-15324a9 -- \
+  dune runtest --root . --force
+```
+
+This is a consumer verification, not a claim that the root `tape` package is
+installable. The switch contains deliberate opam-level replacements for
+`splittable_random` and `base_quickcheck`, and its reverse dependencies were
+rebuilt against them.
+
 ## Evidence
 
 The explicit `--root .` is essential: without it, dune discovers the parent
 tapecheck workspace, where this nested project is marked `data_only`, and a
 nominally successful test command runs no consumer tests. `--force` makes the
-seven actions execute again rather than replaying dune's cache.
+three test executables run again rather than replaying dune's cache.
 
 The real nested `dune runtest --root . --force` prints one tape-engine summary
 line per property run:
@@ -85,17 +110,30 @@ line per property run:
 tapecheck: 10000 cases (10000 valid, 0 discarded, 0 failing)
 ```
 
-7 property runs (3 for `balance_list_tree`, 4 for `trampoline`), all green.
+Seven property runs (3 for `balance_list_tree`, 4 for `trampoline`) are green.
+The eighth property is a positive control over an atomic integer shrinker: it
+must discover `value >= 123457` and report exactly `123457`. The executable
+handles that expected failure and prints:
+
+```
+consumer positive control: found and shrank exactly to 123457
+```
+
+This distinguishes “the replacement libraries link and passing tests run”
+from “the installed tape engine actually intercepts choices and shrinks a
+failure to its boundary”.
 
 ## Why this matters for tapecheck itself
 
 `tape.opam` currently says "NOT YET INSTALLABLE AS AN OPAM PACKAGE" because the
 libraries have no `public_name`, blocked on
 [janestreet/splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)
-(the intercept-seam PR). The `pkgs/` packaging here is a proof of concept for
+(the intercept-seam discussion). The submitted v1 diff does not propagate
+observers into split children and therefore cannot replace the current seam
+unchanged. The `pkgs/` packaging here is a proof of concept for
 what the installable shape could look like: the shim *is* the
 `splittable_random` package (with `Tape` as an extra module), so downstream
-opam builds get tape recording for free once the seam lands upstream. Current
+opam builds get tape recording once an adequate seam lands upstream. Current
 integration shape and remaining questions:
 
 - `pkgs/` is a generated snapshot of the canonical `engine/`, `tape/`, and

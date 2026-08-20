@@ -1,6 +1,6 @@
 (executables
- (names shrink_table bench_realign explain_demo explain_bench stats_demo
-   stats_overhead_bench)
+ (names shrink_table structural_table bench_realign explain_demo explain_bench
+   stats_demo stats_overhead_bench)
  (enabled_if
   (<> %{profile} oxcaml))
  (libraries base stdio base_quickcheck splittable_random tape tape_engine)

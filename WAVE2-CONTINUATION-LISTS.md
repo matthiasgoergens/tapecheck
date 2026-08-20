@@ -193,9 +193,9 @@ end-to-end test also verifies that
 `Intercept.t` is itself an unpublished experimental seam: the v1 proposal in
 `splittable_random` PR #2 has not merged or shipped.  Wave 2 therefore treats
 the additional weighted-Boolean and span callbacks as a replacement proposal,
-not as a compatibility promise between two prototypes.  Before any upstream
-release, either freeze the accepted record shape or hide construction behind
-an API that can grow optional capabilities without breaking implementors.
+not as a compatibility promise between two prototypes.  The local type is now
+abstract and `Intercept.create` supplies delegating defaults for optional
+callbacks, so later capabilities need not extend a record built by clients.
 
 Finally, the benchmark's tight interval depends on CPU affinity.  Without
 affinity, processor-frequency transitions made the result unresolved.  The

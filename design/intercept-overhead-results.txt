@@ -1,6 +1,15 @@
 Intercept seam overhead when unused (intercept = None)
 =======================================================
 
+HISTORICAL RESULT — SUPERSEDED FOR CURRENT CLAIMS
+
+This 2026-08-13 min-of-five run is retained as provenance, not as adequate
+evidence of negligible overhead. The predeclared current harness and analysis
+are in bench_intercept/DESIGN.md. Two fresh 12-process batches, including every
+raw observation, are pinned through EVIDENCE.md. Their Boolean and
+bounded-integer conclusions do not replicate across batches, so the current
+claim is that neither equivalence nor a stable overhead has been established.
+
 Question (raised by ceastlund on janestreet/splittable_random#2):
 does the seam cost anything for users who never install hooks?
 
@@ -25,9 +34,11 @@ Results (ns per draw):
   int 0..1000     15.77        15.65     -0.13  ( -0.8%)
   float 0..1      11.34        11.39     +0.06  ( +0.5%)
 
-Reading: all deltas are within run-to-run noise; the int case comes
-out nominally faster WITH the seam, which is the usual signature of
-measuring below the noise floor.
+Historical reading at the time: all deltas appeared small. The design had no
+predeclared equivalence margin or interval capable of supporting “within
+noise”, used the minimum of five repetitions, and treated repeated timings
+from one process as if they established the effect. Do not use it for a
+current performance claim.
 
 Why it stays free:
 - The check is one load of an immutable field plus a compare against

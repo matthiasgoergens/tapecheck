@@ -150,8 +150,8 @@ columns. Any guard improvement is kill-tested both directions per
 
 Measured 2026-08-13 at n=1000, same seeds as the stock column
 (`challenge-1000-20260808.txt`). Only `bound5` carries reorderable
-spans so far; raw output in
-`tapecheck-notes/challenge-1000-reorder-20260813.txt`.
+spans so far; raw output in companion evidence
+`experiments/shrinking-challenge/legacy-2026-08/challenge-1000-reorder-20260813.txt`.
 
 | | stock | +reorder spans |
 |---|---|---|
@@ -202,9 +202,9 @@ passes resolves it:
 
 ## What the pass earns in its late slot
 
-Same-seed challenge columns at n=1000 (raw:
-`tapecheck-notes/challenge-1000-duplate-20260814.txt` against the
-pass-off column `challenge-1000-reorder-20260813.txt`):
+Same-seed challenge columns at n=1000 (companion evidence
+`experiments/shrinking-challenge/legacy-2026-08/challenge-1000-duplate-20260814.txt`
+against the pass-off file `challenge-1000-reorder-20260813.txt`):
 
 | challenge | pass off | pass on, late |
 |---|---:|---:|

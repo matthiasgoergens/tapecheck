@@ -1,5 +1,11 @@
 # Code review findings (2026-07-12, 8 finders + 4 verifier batches)
 
+Status: Historical review snapshot, not the current issue list. Several items
+below were subsequently fixed, deliberately superseded, or documented as
+compatibility boundaries. Use `ROADMAP.md`, `PAPER-CAPABILITIES.md`, and the
+current regression suite for present status; this file remains as provenance
+for the original review.
+
 Top 10 in the report to Matthias. Confirmed-but-cut (fix queue):
 - sizes silently truncated vs upstream's raise; shrink_count semantics
   repurposed as total tape budget (tape_test.ml).

@@ -13,7 +13,7 @@
  (modules bench_intercept)
  (enabled_if
   (<> %{profile} oxcaml))
- (libraries base stdio sr_real sr_nohook)
+ (libraries base stdio unix mtime.clock.os sr_real sr_nohook)
  (ocamlopt_flags
   (:standard -O3))
  (preprocess

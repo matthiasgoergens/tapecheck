@@ -1,0 +1,14 @@
+(executable
+ (name bench_fast_select)
+ (modules bench_fast_select fast_backend)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio unix mtime.clock.os sr_real)
+ (foreign_stubs
+  (language c)
+  (names fast_backend_stubs)
+  (flags -O3))
+ (ocamlopt_flags
+  (:standard -O3))
+ (preprocess
+  (pps ppx_sexp_message)))

@@ -1,0 +1,15 @@
+; Isolates inactive backend dispatch around the same artifact-style C sampler.
+(executable
+ (name bench_fast_dispatch)
+ (modules bench_fast_dispatch fast_backend)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio unix mtime.clock.os sr_real)
+ (foreign_stubs
+  (language c)
+  (names fast_backend_stubs)
+  (flags -O3))
+ (ocamlopt_flags
+  (:standard -O3))
+ (preprocess
+  (pps ppx_sexp_message)))

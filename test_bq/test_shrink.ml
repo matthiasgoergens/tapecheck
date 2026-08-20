@@ -173,7 +173,7 @@ let () =
     check "span deletion removes an irrelevant leading element"
       (List.equal Int.equal minimal [ 100 ]));
   let delete_span_attempts =
-    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+    List.Assoc.find_exn (Tape_engine.Diagnostics.last_pass_costs ()) ~equal:String.equal
       "delete_spans"
   in
   check "span deletion pass was exercised" (delete_span_attempts > 0);
@@ -195,7 +195,7 @@ let () =
      check "observational child span does not block parent deletion"
        (List.equal Int.equal minimal [ 100 ]));
   let observed_delete_span_attempts =
-    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+    List.Assoc.find_exn (Tape_engine.Diagnostics.last_pass_costs ()) ~equal:String.equal
       "delete_spans"
   in
   check "observed parent span deletion pass was exercised"
@@ -223,7 +223,7 @@ let () =
      check "span deletion edits a keyed stream"
        (List.equal Int.equal minimal [ 100 ]));
   let keyed_delete_span_attempts =
-    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+    List.Assoc.find_exn (Tape_engine.Diagnostics.last_pass_costs ()) ~equal:String.equal
       "delete_spans"
   in
   check "keyed span deletion pass was exercised" (keyed_delete_span_attempts > 0);
@@ -257,7 +257,7 @@ let () =
      check "discarded attempt choices are absent from the minimal tape"
        (Array.length image.Tape.main <= 2));
   let remove_discarded_attempts =
-    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+    List.Assoc.find_exn (Tape_engine.Diagnostics.last_pass_costs ()) ~equal:String.equal
       "remove_discarded"
   in
   check "remove_discarded pass was exercised" (remove_discarded_attempts > 0);
@@ -272,7 +272,7 @@ let () =
      check "pooled remove_discarded removes the dead region"
        (Array.length image.Tape.main <= 2));
   let pooled_remove_discarded_attempts =
-    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+    List.Assoc.find_exn (Tape_engine.Diagnostics.last_pass_costs ()) ~equal:String.equal
       "remove_discarded"
   in
   check "pooled run exercises remove_discarded"
@@ -287,7 +287,7 @@ let () =
      check "pooled shrinking preserves deletable span metadata"
        (List.equal Int.equal minimal [ 100 ]));
   let pooled_delete_span_attempts =
-    List.Assoc.find_exn (Tape_engine.last_pass_costs ()) ~equal:String.equal
+    List.Assoc.find_exn (Tape_engine.Diagnostics.last_pass_costs ()) ~equal:String.equal
       "delete_spans"
   in
   check "pooled run exercises span deletion" (pooled_delete_span_attempts > 0);

@@ -2,8 +2,8 @@
 
 Measured problem: `filtered even ints` costs 95 attempts in
 `minimize_choices` against 37 for the same generator shape unfiltered,
-and 27 for Hypothesis end to end. See
-`../tapecheck-hypothesis-baseline/README.md`.
+and 27 for Hypothesis end to end. See the pinned companion archive
+`experiments/hypothesis-baseline/2026-08-13-1acc7b1/` in `EVIDENCE.md`.
 
 Hypothesis's fix is `remove_discarded` (shrinker.py:1085): delete every
 span marked discarded, all at once. Spans get marked by `.filter()`

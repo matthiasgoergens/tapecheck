@@ -13,3 +13,10 @@
    splittable_random tape_engine trampoline)
  (preprocess
   (pps base_quickcheck.ppx_quickcheck ppx_sexp_conv ppx_compare ppx_let)))
+
+(test
+ (name hunt_positive_control)
+ (modules hunt_positive_control)
+ (libraries core unix base_quickcheck splittable_random tape_engine)
+ (preprocess
+  (pps ppx_sexp_conv)))

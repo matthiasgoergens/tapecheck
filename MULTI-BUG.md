@@ -1,8 +1,16 @@
 # Multiple failures in one run
 
+> **Status — historical design note, updated 2026-08-20.** Tapecheck no
+> longer always stops at the first failure: `Tape_engine.run_multi` and its
+> tests in `test_multibug/` and `test_multibug_fn/` have landed. The ordinary
+> `run` entry point still reports one failure. The analysis below is retained
+> because it explains the origin-preserving design and the capability gap
+> that existed when the note was written.
+
 Matthias remembered Hypothesis finding several distinct bugs, and their
 root causes, in a single run. It does, and it is a bigger feature than
-it first sounds. tapecheck stops at the first failure.
+it first sounds. At the time this note was written, tapecheck stopped at
+the first failure.
 
 ## How Hypothesis does it
 
@@ -48,7 +56,7 @@ There is a setting for the old behaviour: `report_multiple_bugs=False`
 shrinks the current minimum and explicitly *allows* slips to any smaller
 bug.
 
-## Why tapecheck cannot do this today
+## Why the original `run` interface could not do this
 
 `test : 'a -> bool`. A bool has no identity, so there is nothing to key
 on: two different bugs are indistinguishable from one bug found twice.
@@ -58,7 +66,7 @@ This is the same shape of problem as span tracking (`SPANS-THE-ROOT-CAUSE.md`)
 unlike spans it is *not* forced by the PRNG-level design. It is just a
 narrow signature.
 
-## What a port would need
+## What the port needed
 
 1. **A failure identity.** Either take `test : 'a -> (unit, exn) Result.t`,
    or catch exceptions and derive an origin from the exception plus the
@@ -111,13 +119,13 @@ still interesting?") or duplicates the loop. Sharing is obviously right
 but is exactly the refactor that gets dearer the longer it waits, since
 every pass currently closes over a single `best`.
 
-## Cost, and why this is written down rather than done
+## Original cost assessment
 
-This is not a pass or a knob; it changes the engine's central loop from
+This was not a pass or a knob; it changed the engine's central loop from
 "one best image" to "a map of best images", and it changes the public
 `test` signature. That is a bigger change than anything else currently
-queued, and it wants doing deliberately rather than at the end of a long
-session.
+queued at the time, and it needed doing deliberately rather than at the end
+of a long session.
 
 Worth noting the ordering argument, though: it composes badly with later
 work if deferred. Every pass currently closes over a single `best`, so

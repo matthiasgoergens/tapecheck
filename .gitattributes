@@ -1,1 +1,2 @@
 vendor/patches/*.patch -whitespace
+**/results/*.txt -whitespace

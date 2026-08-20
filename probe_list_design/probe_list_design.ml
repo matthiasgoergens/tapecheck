@@ -280,6 +280,101 @@ let list_continuation_spans elt_gen =
     in
     loop 0 [])
 
+(* The missing cell in the two-axis experiment: keep continuation decisions
+   adjacent to their guarded elements, but restore a running size budget.
+   Each continued element first pays Base's one-unit structural charge and
+   then receives a log-uniform share of what remains.  Exhausting the budget
+   forces the next continuation to stop, so the sum of element sizes and
+   structural charges cannot exceed the ambient [size]. *)
+let list_continuation_spans_budgeted elt_gen =
+  G.create (fun ~size ~random ->
+    let lo = 0 in
+    let hi = bounded_max_length ~size ~min_length:lo ~requested:Int.max_value in
+    let count = hi - lo + 1 in
+    let weights =
+      Array.init count ~f:(fun i ->
+        1. /. Float.of_int (bit_bucket_size ~lo ~hi (lo + i)))
+    in
+    let tails = Array.create ~len:count 0. in
+    for i = count - 1 downto 0 do
+      tails.(i) <- weights.(i) +. if i + 1 < count then tails.(i + 1) else 0.
+    done;
+    let rec loop length budget acc =
+      let must_stop = length = hi || budget = 0 in
+      let p_continue =
+        if must_stop then 0. else 1. -. (weights.(length) /. tails.(length))
+      in
+      let forced = if must_stop then Some false else None in
+      match
+        Splittable_random.with_span ~deletable:true random
+          Continuation_element ~f:(fun () ->
+          if
+            Splittable_random.bool_with_probability random
+              ~probability:p_continue ?forced
+          then begin
+            let budget = budget - 1 in
+            let element_size =
+              if budget = 0
+              then 0
+              else Splittable_random.Log_uniform.int random ~lo:0 ~hi:budget
+            in
+            let value = G.generate elt_gen ~size:element_size ~random in
+            Some (value, budget - element_size)
+          end
+          else None)
+      with
+      | None -> List.rev acc
+      | Some (value, budget) -> loop (length + 1) budget (value :: acc)
+    in
+    loop 0 size [])
+
+(* Keep structural continuation independent of the running budget, and spend
+   that budget only on element payload sizes.  This preserves the continuation
+   length law even after an early element consumes all remaining payload
+   budget.  The resulting contract deliberately counts list nodes separately:
+   both length and aggregate element size are bounded by [size], rather than
+   their sum being bounded by [size]. *)
+let list_continuation_spans_payload_budgeted elt_gen =
+  G.create (fun ~size ~random ->
+    let lo = 0 in
+    let hi = bounded_max_length ~size ~min_length:lo ~requested:Int.max_value in
+    let count = hi - lo + 1 in
+    let weights =
+      Array.init count ~f:(fun i ->
+        1. /. Float.of_int (bit_bucket_size ~lo ~hi (lo + i)))
+    in
+    let tails = Array.create ~len:count 0. in
+    for i = count - 1 downto 0 do
+      tails.(i) <- weights.(i) +. if i + 1 < count then tails.(i + 1) else 0.
+    done;
+    let rec loop length budget acc =
+      let at_maximum = length = hi in
+      let p_continue =
+        if at_maximum then 0. else 1. -. (weights.(length) /. tails.(length))
+      in
+      let forced = if at_maximum then Some false else None in
+      match
+        Splittable_random.with_span ~deletable:true random
+          Continuation_element ~f:(fun () ->
+          if
+            Splittable_random.bool_with_probability random
+              ~probability:p_continue ?forced
+          then begin
+            let element_size =
+              if budget = 0
+              then 0
+              else Splittable_random.Log_uniform.int random ~lo:0 ~hi:budget
+            in
+            let value = G.generate elt_gen ~size:element_size ~random in
+            Some (value, budget - element_size)
+          end
+          else None)
+      with
+      | None -> List.rev acc
+      | Some (value, budget) -> loop (length + 1) budget (value :: acc)
+    in
+    loop 0 size [])
+
 let count_choices image =
   Array.length image.Tape.main
   + Array.fold image.Tape.streams ~init:0 ~f:(fun n (_, xs) -> n + Array.length xs)
@@ -476,7 +571,7 @@ let tree_quality ~name ~gen ~threshold =
       choices := !choices + count_choices image;
       discarded_attempts :=
         !discarded_attempts
-        + List.Assoc.find_exn (Tape_engine.last_pass_costs ())
+        + List.Assoc.find_exn (Tape_engine.Diagnostics.last_pass_costs ())
             ~equal:String.equal "remove_discarded";
       worst := Int.max !worst nodes;
       if nodes = threshold then Int.incr exact
@@ -507,6 +602,10 @@ let () =
   let running elt = list_running elt in
   let continuation elt = list_continuation elt in
   let continuation_spans elt = list_continuation_spans elt in
+  let continuation_spans_budgeted elt = list_continuation_spans_budgeted elt in
+  let continuation_spans_payload_budgeted elt =
+    list_continuation_spans_payload_budgeted elt
+  in
 
   Stdio.printf "RAW LENGTH DISTRIBUTION (size 10, 20k samples)\n";
   let raw_stock = raw_distribution ~name:"stock" ~gen:(stock int100) ~size:10 ~samples:20_000 in
@@ -516,6 +615,14 @@ let () =
   ignore
     (raw_distribution ~name:"continuation+span"
        ~gen:(continuation_spans int100) ~size:10 ~samples:20_000
+     : int array);
+  ignore
+    (raw_distribution ~name:"cont+span+bud"
+       ~gen:(continuation_spans_budgeted int100) ~size:10 ~samples:20_000
+     : int array);
+  ignore
+    (raw_distribution ~name:"span+payload-bud"
+       ~gen:(continuation_spans_payload_budgeted int100) ~size:10 ~samples:20_000
      : int array);
   Stdio.printf
     "  stock vs continuation two-sample chi-square %.2f (%d bins)\n"
@@ -531,6 +638,14 @@ let () =
   ignore
     (distribution ~name:"continuation+span"
        ~gen:(continuation_spans int100) ~size:10 ~samples:20_000
+     : int array);
+  ignore
+    (distribution ~name:"cont+span+bud"
+       ~gen:(continuation_spans_budgeted int100) ~size:10 ~samples:20_000
+     : int array);
+  ignore
+    (distribution ~name:"span+payload-bud"
+       ~gen:(continuation_spans_payload_budgeted int100) ~size:10 ~samples:20_000
      : int array);
   Stdio.printf
     "  stock vs continuation two-sample chi-square %.2f (%d bins)\n"
@@ -566,7 +681,12 @@ let () =
     quality ~name:"length-int" ~gen:(running elt) ~test ~is_minimal:minimal ~show;
     quality ~name:"continuation" ~gen:(continuation elt) ~test ~is_minimal:minimal ~show;
     quality ~name:"continuation+span" ~gen:(continuation_spans elt) ~test
-      ~is_minimal:minimal ~show
+      ~is_minimal:minimal ~show;
+    quality ~name:"cont+span+bud" ~gen:(continuation_spans_budgeted elt) ~test
+      ~is_minimal:minimal ~show;
+    quality ~name:"span+payload-bud"
+      ~gen:(continuation_spans_payload_budgeted elt) ~test ~is_minimal:minimal
+      ~show
   in
   run_case
     "length >= 3 (minimum [0;0;0])"
@@ -600,6 +720,15 @@ let () =
   tree_quality ~name:"stock tree" ~gen:(tree stock) ~threshold:20;
   let capped_tree = leaf_capped_tree continuation_spans ~max_leaves:100 in
   tree_quality ~name:"cont+span capped" ~gen:capped_tree ~threshold:20;
+  let budgeted_capped_tree =
+    leaf_capped_tree continuation_spans_budgeted ~max_leaves:100
+  in
+  tree_quality ~name:"span+bud capped" ~gen:budgeted_capped_tree ~threshold:20;
+  let payload_budgeted_capped_tree =
+    leaf_capped_tree continuation_spans_payload_budgeted ~max_leaves:100
+  in
+  tree_quality ~name:"payload-bud cap" ~gen:payload_budgeted_capped_tree
+    ~threshold:20;
 
   Stdio.printf "\nGENERATION TAILS\n";
   generation_tail ~name:"stock strings" ~gen:(stock G.string) ~size:50 ~samples:10_000
@@ -610,6 +739,11 @@ let () =
     ~measure:(List.sum (module Int) ~f:String.length);
   generation_tail ~name:"cont+span str" ~gen:(continuation_spans G.string) ~size:50
     ~samples:10_000 ~measure:(List.sum (module Int) ~f:String.length);
+  generation_tail ~name:"span+bud str" ~gen:(continuation_spans_budgeted G.string)
+    ~size:50 ~samples:10_000 ~measure:(List.sum (module Int) ~f:String.length);
+  generation_tail ~name:"payload-bud str"
+    ~gen:(continuation_spans_payload_budgeted G.string) ~size:50 ~samples:10_000
+    ~measure:(List.sum (module Int) ~f:String.length);
   generation_tail ~name:"stock tree" ~gen:(tree stock) ~size:50 ~samples:10_000
     ~measure:tree_nodes;
   generation_tail ~name:"running tree" ~gen:(tree running) ~size:50 ~samples:10_000
@@ -627,6 +761,28 @@ let () =
     leaf_cap_stats.draws
     leaf_cap_stats.max_retries
     leaf_cap_stats.max_leaves_used;
+  reset_leaf_cap_stats ();
+  generation_tail ~name:"span+bud capped" ~gen:budgeted_capped_tree ~size:50
+    ~samples:10_000 ~measure:tree_nodes;
+  generation_tail ~name:"  budgeted leaves" ~gen:budgeted_capped_tree ~size:50
+    ~samples:10_000 ~measure:tree_leaves;
+  Stdio.printf
+    "  budgeted retries %d over %d successful draws, max %d; max leaves charged %d\n"
+    leaf_cap_stats.retries
+    leaf_cap_stats.draws
+    leaf_cap_stats.max_retries
+    leaf_cap_stats.max_leaves_used;
+  reset_leaf_cap_stats ();
+  generation_tail ~name:"payload-bud cap" ~gen:payload_budgeted_capped_tree
+    ~size:50 ~samples:10_000 ~measure:tree_nodes;
+  generation_tail ~name:"  payload leaves" ~gen:payload_budgeted_capped_tree
+    ~size:50 ~samples:10_000 ~measure:tree_leaves;
+  Stdio.printf
+    "  payload retries  %d over %d successful draws, max %d; max leaves charged %d\n"
+    leaf_cap_stats.retries
+    leaf_cap_stats.draws
+    leaf_cap_stats.max_retries
+    leaf_cap_stats.max_leaves_used;
   Stdio.printf "\nTAPED RECURSIVE COSTS\n";
   taped_generation_tail ~name:"stock tree" ~gen:(tree stock) ~size:50 ~samples:1_000
     ~measure:tree_nodes;
@@ -635,6 +791,22 @@ let () =
     ~measure:tree_nodes;
   Stdio.printf
     "  taped cap retries %d over %d successful draws, max %d\n"
+    leaf_cap_stats.retries
+    leaf_cap_stats.draws
+    leaf_cap_stats.max_retries;
+  reset_leaf_cap_stats ();
+  taped_generation_tail ~name:"span+bud capped" ~gen:budgeted_capped_tree ~size:50
+    ~samples:1_000 ~measure:tree_nodes;
+  Stdio.printf
+    "  taped bud retries %d over %d successful draws, max %d\n"
+    leaf_cap_stats.retries
+    leaf_cap_stats.draws
+    leaf_cap_stats.max_retries;
+  reset_leaf_cap_stats ();
+  taped_generation_tail ~name:"payload-bud cap" ~gen:payload_budgeted_capped_tree
+    ~size:50 ~samples:1_000 ~measure:tree_nodes;
+  Stdio.printf
+    "  taped payload retries %d over %d successful draws, max %d\n"
     leaf_cap_stats.retries
     leaf_cap_stats.draws
     leaf_cap_stats.max_retries

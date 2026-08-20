@@ -1,6 +1,6 @@
 (* Where do tapecheck's 641 shrink calls go on "int list, length >= 3",
    when Hypothesis finishes the same property in 27?
-   See ../tapecheck-hypothesis-baseline/README.md for the comparison. *)
+   See the pinned companion Hypothesis baseline in EVIDENCE.md. *)
 
 open Base
 module G = Base_quickcheck.Generator
@@ -27,13 +27,13 @@ let row ~name ~gen ~test =
     | Tape_engine.Failed { converged; _ } ->
       Int.incr runs;
       if not converged then Int.incr nonconv;
-      List.iter (Tape_engine.last_pass_costs ()) ~f:(fun (p, c) ->
+      List.iter (Tape_engine.Diagnostics.last_pass_costs ()) ~f:(fun (p, c) ->
         Hashtbl.update totals p ~f:(function None -> c | Some x -> x + c));
-      let d, dd = Tape_engine.last_duplicate_stats () in
+      let d, dd = Tape_engine.Diagnostics.last_duplicate_stats () in
       dups := !dups + d;
       distinct := !distinct + dd;
-      greedy := !greedy + Tape_engine.last_greedy_cost ();
-      let a, b, c, d, e, f = Tape_engine.last_shape () in
+      greedy := !greedy + Tape_engine.Diagnostics.last_greedy_cost ();
+      let a, b, c, d, e, f = Tape_engine.Diagnostics.last_shape () in
       sw := !sw + a;
       ic := !ic + b;
       fc := !fc + c;

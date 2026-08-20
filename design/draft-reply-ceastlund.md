@@ -3,6 +3,12 @@
 Status: POSTED 2026-07-16 as
 https://github.com/janestreet/splittable_random/pull/2#issuecomment-4989794609
 
+Historical warning, 2026-08-20: the performance conclusion in this posted
+reply is withdrawn. Controlled replacement batches do not establish unused
+equivalence. The factual correction drafted for approval is
+`proposals/COMMENT-splittable_random-2.md`; current analysis is in
+`design/upstream-pr-splittable-random.md`.
+
 ---
 
 Thanks for taking a look. These are fair concerns, so let me answer with some data and context.

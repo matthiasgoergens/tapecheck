@@ -109,11 +109,16 @@ let () =
          ~gen:(B_broken.gen_cmds ~max_steps:40 ())
          ~sexp_of_cmd:Broken_spec.sexp_of_cmd)
   in
-  let total = stats.agree + stats.agreed_by_raising + stats.disagree in
+  let stats_snapshot = Bisim.snapshot stats in
+  let total =
+    stats_snapshot.agree + stats_snapshot.agreed_by_raising
+    + stats_snapshot.disagree
+  in
   Stdio.printf "steps: %d  agree: %d  agreed_by_raising: %d  disagree: %d\n"
-    total stats.agree stats.agreed_by_raising stats.disagree;
+    total stats_snapshot.agree stats_snapshot.agreed_by_raising
+    stats_snapshot.disagree;
   Stdio.printf "aggregate mutual-raise ratio: %.3f\n"
-    (Float.of_int stats.agreed_by_raising /. Float.of_int total);
+    (Float.of_int stats_snapshot.agreed_by_raising /. Float.of_int total);
   Stdio.printf "AGGREGATE check (threshold 0.5): %b   <-- stays SILENT\n"
     (Bisim.most_steps_agreed_only_by_raising stats);
   let warnings = Bisim.ops_agreeing_only_by_raising stats in
@@ -134,9 +139,14 @@ let () =
          ~gen:(B_healthy.gen_cmds ~max_steps:40 ())
          ~sexp_of_cmd:Healthy_spec.sexp_of_cmd)
   in
-  let total_h = stats_h.agree + stats_h.agreed_by_raising + stats_h.disagree in
+  let stats_h_snapshot = Bisim.snapshot stats_h in
+  let total_h =
+    stats_h_snapshot.agree + stats_h_snapshot.agreed_by_raising
+    + stats_h_snapshot.disagree
+  in
   Stdio.printf "steps: %d  agree: %d  agreed_by_raising: %d  disagree: %d\n"
-    total_h stats_h.agree stats_h.agreed_by_raising stats_h.disagree;
+    total_h stats_h_snapshot.agree stats_h_snapshot.agreed_by_raising
+    stats_h_snapshot.disagree;
   Stdio.printf "operations flagged: %d\n"
     (List.length (Bisim.ops_agreeing_only_by_raising stats_h));
   Stdio.printf "reports emitted: %d\n" (List.length !captured_h);

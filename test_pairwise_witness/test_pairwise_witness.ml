@@ -120,4 +120,7 @@ let () =
     Stdio.printf "\ntest_pairwise_witness: %d FAILED\n" !failures;
     Stdlib.exit 1
   end
-  else Stdio.printf "\ntest_pairwise_witness: no certificates found\n"
+  else
+    Stdio.printf
+      "\ntest_pairwise_witness: all assertions passed (%d certificates)\n"
+      !certificates

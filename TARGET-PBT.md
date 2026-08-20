@@ -1,7 +1,14 @@
 # `target()`: what to port, from reading `optimiser.py`
 
-Queued in `outreach/ro-roadmap.md` as RO4/RO7 and never started. Read
-rather than guessed, because the useful parts are not in the idea.
+> **Status — historical design note, updated 2026-08-20.** This was written
+> before implementation. `Tape_engine.run_target` and its focused tests in
+> `test_target/` have since landed. The analysis below is retained as the
+> design rationale; future-tense implementation notes describe the state at
+> the time of writing, not a current capability gap.
+
+This work was originally queued in `outreach/ro-roadmap.md` as RO4/RO7. The
+implementation was read from Hypothesis rather than guessed, because the
+useful parts are not in the headline idea.
 
 Their own framing, worth keeping for the email — it is unusually modest:
 
@@ -76,16 +83,15 @@ val run_target :
 `run` is untouched, nothing existing pays for a feature it does not use,
 and the two coexist.
 
-## Why it is written up rather than built
+## Why it was initially written up rather than built
 
-The hill-climb loop itself is perhaps sixty lines, but it cannot reuse
-the shrinker's machinery directly: `attempt`, `with_choice` and the
-replay helpers are all local to `shrink`, closed over its `best`,
-`budget_ok` and stats. A target optimiser needs the same primitives with
-a different acceptance rule, so the honest first step is hoisting those
-into something both can use — which is the same refactor
-`MULTI-BUG.md` needs, for the same reason.
+The hill-climb loop itself was perhaps sixty lines, but it could not reuse
+the shrinker's machinery directly: `attempt`, `with_choice` and the replay
+helpers were all local to `shrink`, closed over its `best`, `budget_ok` and
+stats. A target optimiser needed the same primitives with a different
+acceptance rule, so the honest first step was hoisting those into something
+both could use — the same refactor `MULTI-BUG.md` needed, for the same reason.
 
-That makes an ordering argument: **hoist the replay/attempt primitives
-once**, then multi-bug reporting and `target()` are both straightforward
-on top. Doing either first without the hoist means doing it twice.
+That made an ordering argument: **hoist the replay/attempt primitives once**,
+then multi-bug reporting and `target()` are both straightforward on top.
+The implementation followed that order.

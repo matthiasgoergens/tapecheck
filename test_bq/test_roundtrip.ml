@@ -67,6 +67,86 @@ let () =
   let out3 = Tape.finish tape in
   check "untaped states record nothing" (Array.length out3.Tape.choices = 0);
 
+  (* Staged and foreign randomness backends may compute the same primitive
+     draw without entering the ordinary [Splittable_random.int]/[bool]/[float]
+     functions.  [Intercept.run_*] is their entry point: the hook-free path
+     delegates directly, while an attached tape still records and replays the
+     bounded draw.  This is the integration shape needed by AllegrOCaml's
+     pointwise-equivalent C randomness backend. *)
+  let backend_calls = ref 0 in
+  let backend_int _ ~lo ~hi:_ =
+    Int.incr backend_calls;
+    lo
+  in
+  let plain_backend_state = Splittable_random.of_int 314 in
+  check "plain backend state reports inactive interception"
+    (not (Splittable_random.Intercept.is_active plain_backend_state));
+  let plain_backend_value =
+    Splittable_random.Intercept.run_int
+      plain_backend_state
+      ~lo:17
+      ~hi:29
+      ~default:backend_int
+  in
+  check "hook-free backend dispatch returns its default value"
+    (plain_backend_value = 17);
+  check "hook-free backend dispatch calls its default exactly once"
+    (!backend_calls = 1);
+
+  Tape.start_recording tape;
+  let backend_state =
+    Splittable_random.For_tape.attach (Splittable_random.of_int 2718) tape
+  in
+  check "attached backend state reports active interception"
+    (Splittable_random.Intercept.is_active backend_state);
+  let recorded_backend_bool =
+    Splittable_random.Intercept.run_bool backend_state
+      ~default:(fun _ -> false)
+  in
+  let recorded_backend_int =
+    Splittable_random.Intercept.run_int backend_state ~lo:17 ~hi:29
+      ~default:backend_int
+  in
+  let recorded_backend_float =
+    Splittable_random.Intercept.run_float backend_state ~lo:0.25 ~hi:0.75
+      ~default:(fun _ ~lo ~hi:_ -> lo)
+  in
+  let backend_recording = Tape.finish tape in
+  check "backend dispatch records all three primitive choices"
+    (Array.length backend_recording.Tape.choices = 3);
+
+  Tape.start_replay tape backend_recording.Tape.choices;
+  let replay_backend_state =
+    Splittable_random.For_tape.attach (Splittable_random.of_int 1618) tape
+  in
+  let replay_default_calls = ref 0 in
+  let unused default =
+    Int.incr replay_default_calls;
+    default
+  in
+  let replayed_backend_bool =
+    Splittable_random.Intercept.run_bool replay_backend_state
+      ~default:(fun _ -> unused true)
+  in
+  let replayed_backend_int =
+    Splittable_random.Intercept.run_int replay_backend_state ~lo:17 ~hi:29
+      ~default:(fun _ ~lo:_ ~hi:_ -> unused 29)
+  in
+  let replayed_backend_float =
+    Splittable_random.Intercept.run_float replay_backend_state ~lo:0.25 ~hi:0.75
+      ~default:(fun _ ~lo:_ ~hi:_ -> unused 0.75)
+  in
+  let replayed_backend = Tape.finish tape in
+  check "backend replay ignores a different primitive implementation"
+    (Bool.equal recorded_backend_bool replayed_backend_bool
+     && Int.equal recorded_backend_int replayed_backend_int
+     && Float.equal recorded_backend_float replayed_backend_float);
+  check "backend replay did not call primitive defaults" (!replay_default_calls = 0);
+  check "backend replay re-records the same choices"
+    (Tape.equal_choices
+       backend_recording.Tape.choices
+       replayed_backend.Tape.choices);
+
   (* Weighted structural decisions retain their sampling law outside the tape,
      but are represented by a first-class Bool choice when attached.  Forced
      probabilities consume no randomness but remain forced tape nodes, matching
@@ -129,32 +209,29 @@ let () =
   let depth = ref 0 in
   let max_depth = ref 0 in
   let span_events = ref [] in
-  let rec span_hooks : Splittable_random.Intercept.t =
-    { int64 =
+  let rec make_span_hooks () : Splittable_random.Intercept.t =
+    Splittable_random.Intercept.create
+      ~int64:
         (fun state ~lo ~hi ~default ->
           span_events := "draw" :: !span_events;
           default state ~lo ~hi)
-    ; float = (fun state ~lo ~hi ~default -> default state ~lo ~hi)
-    ; unit_float = (fun state ~default -> default state)
-    ; bool = (fun state ~default -> default state)
-    ; bool_with_probability =
-        (fun state ~probability ~forced:_ ~default -> default state ~probability)
-    ; on_span_start =
+      ~on_span_start:
         (fun _ ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ->
           span_events := "start" :: !span_events;
           Int.incr starts;
           Int.incr depth;
           max_depth := Int.max !max_depth !depth)
-    ; on_span_stop =
+      ~on_span_stop:
         (fun ~deletable:_ ~discardable:_ ~descendable:_ ~reorderable:_ ~discarded:_ () ->
           span_events := "stop" :: !span_events;
           check "list span stop has a matching start" (!depth > 0);
           Int.decr depth;
           Int.incr stops)
-    ; on_split = (fun () -> Some span_hooks)
-    ; on_perturb = (fun _ -> Some span_hooks)
-    }
+      ~on_split:(fun () -> Some (make_span_hooks ()))
+      ~on_perturb:(fun _ -> Some (make_span_hooks ()))
+      ()
   in
+  let span_hooks = make_span_hooks () in
   let span_random =
     Splittable_random.with_intercept (Splittable_random.of_int 91) span_hooks
   in

@@ -55,12 +55,12 @@ let () =
   let fresh ~test () =
     let st = stats () in
     let r = Tape_engine.run gen ~test ~seed:12345 ~count:200 ~size:10 ~stats:st in
-    (r, st.Tape_engine.tests)
+    (r, (Tape_engine.stats_snapshot st).tests)
   in
   let resume_from ~test img =
     let st = stats () in
     let r = Tape_engine.resume gen ~test img ~stats:st in
-    (r, st.Tape_engine.tests)
+    (r, (Tape_engine.stats_snapshot st).tests)
   in
 
   (* Run 1: no stored tape, full search. *)
@@ -258,10 +258,10 @@ let () =
   in
   (match hr1 with
    | Tape_engine.Failed { image; _ } ->
-     let c1 = st1.Tape_engine.tests in
+     let c1 = (Tape_engine.stats_snapshot st1).tests in
      let st2 = stats () in
      let _ = Tape_engine.resume hard_gen ~test:hard_test image ~stats:st2 in
-     let c2 = st2.Tape_engine.tests in
+     let c2 = (Tape_engine.stats_snapshot st2).tests in
      Stdio.printf "  cold search: %4d test calls\n" c1;
      Stdio.printf "  replay:      %4d test calls  (%.1fx fewer)\n" c2
        (Float.of_int c1 /. Float.of_int (Int.max 1 c2));

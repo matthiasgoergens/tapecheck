@@ -46,7 +46,7 @@ let () =
     | Tape_engine.Passed _ -> ()
     | Tape_engine.Failed { image; _ } ->
       Int.incr n;
-      let costs = Tape_engine.last_pass_costs () in
+      let costs = Tape_engine.Diagnostics.last_pass_costs () in
       let c =
         List.find_map costs ~f:(fun (name, c) ->
           if String.equal name "sort_siblings" then Some c else None)

@@ -105,6 +105,18 @@ type stats =
 let create_stats () =
   { agree = 0; agreed_by_raising = 0; disagree = 0; per_op = [] }
 
+type stats_snapshot =
+  { agree : int
+  ; agreed_by_raising : int
+  ; disagree : int
+  }
+
+let snapshot (stats : stats) =
+  { agree = stats.agree
+  ; agreed_by_raising = stats.agreed_by_raising
+  ; disagree = stats.disagree
+  }
+
 (* Constructor name of a command, used as the per-operation key.
    [sexp_of_cmd] is already in [Spec], so this costs the caller
    nothing. A nullary constructor sexps to an Atom, everything else to

@@ -1,5 +1,5 @@
---- vendor/base_quickcheck/generator.ml	2026-08-01 11:30:43.462783304 +0800
-+++ /home/matthias/prog/tapecheck-notes/generator-PATCHED.ml	2026-08-01 11:30:43.460783290 +0800
+--- a/vendor/base_quickcheck/generator.ml
++++ b/vendor/base_quickcheck/generator.ml
 @@ -365,17 +365,59 @@
      create (fun ~size:_ ~random -> Integer.uniform random ~lo ~hi)
    ;;

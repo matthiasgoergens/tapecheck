@@ -24,3 +24,10 @@ command above.
 attempt spans and the `remove_discarded` shrink pass. It reports the choices
 consumed by abandoned leaf-cap attempts and the updated recursive shrink
 quality, documented in `../../WAVE2-DISCARDED-REGIONS.md`.
+
+`2026-08-20-interleaved-budget.{md,txt}` measures the previously missing
+continuation-span/running-budget cell. `2026-08-20-payload-budget.{md,txt}`
+then tests a separately predeclared relaxed contract which budgets element
+payload but not list nodes. Both are retained negative results; the latter
+restores length reachability and avoids retries, but fails its size and shrink
+cost screens. Reproduce either with the command above at its pinned revision.

@@ -71,7 +71,8 @@ and cost a second look.
 
 ## Verification at `4b9a619`
 
-Reproducers are in `~/prog/tapecheck-notes/issue-1/` (`repro.ml`,
+Reproducers are preserved in companion evidence
+`experiments/stats-accounting-issue-1/legacy-2026-08/` (`repro.ml`,
 `repro_paths.ml`, `dune`); drop them in as `repro_stats/` and
 `dune exec repro_stats/repro_paths.exe`. Run against current `master`, with the
 property failing on UNEQUAL draws so the mutation is ruled out:

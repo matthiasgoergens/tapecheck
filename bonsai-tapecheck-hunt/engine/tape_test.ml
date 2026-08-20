@@ -52,6 +52,32 @@ type report_level =
   | `Full
   ]
 
+module Stats = struct
+  type t = Tape_engine.stats
+
+  type snapshot = Tape_engine.stats_snapshot =
+    { replays : int
+    ; tests : int
+    ; misaligns : int
+    ; cases_valid : int
+    ; cases_invalid : int
+    ; cases_failed : int
+    ; shrink_discards : int
+    ; events : (string * int) list
+    ; generate_time : float
+    ; run_time : float
+    ; shrink_time : float
+    ; warnings : string list
+    }
+
+  let create = Tape_engine.no_stats
+
+  let snapshot = Tape_engine.stats_snapshot
+
+  let summary_line = Tape_engine.stats_summary_line
+  let to_string_hum = Tape_engine.stats_to_string_hum
+end
+
 let seed_int (seed : Config.Seed.t) =
   match seed with
   | Deterministic s -> Hashtbl.hash s
@@ -357,9 +383,8 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
      [Invalid_example] counts as a discard, matching what the engine
      does with an [assume] that rejects a generated case. *)
   let count_verdict : (unit, e) Result.t -> unit = function
-    | Ok () -> stats.Tape_engine.cases_valid <- stats.Tape_engine.cases_valid + 1
-    | Error _ ->
-      stats.Tape_engine.cases_failed <- stats.Tape_engine.cases_failed + 1
+    | Ok () -> Tape_engine.For_tape_test.record_valid_case stats
+    | Error _ -> Tape_engine.For_tape_test.record_failed_case stats
   in
   (* Persisted failures replay first: they are the cheapest and the
      most likely to fail again. *)
@@ -427,8 +452,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
         count_verdict err;
         Some (Error (v, e))
       | exception Tape_stats.Invalid_example ->
-        stats.Tape_engine.cases_invalid
-        <- stats.Tape_engine.cases_invalid + 1;
+        Tape_engine.For_tape_test.record_invalid_case stats;
         None)
   in
   match example_failure with
@@ -497,7 +521,15 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
                ~explain_budget ~max_shrinks ~max_shrink_seconds
                ~size:replay_size engine_failure
            with
-           | Error _ as e -> failure := Some e
+           | Error _ as e ->
+             failure := Some e;
+             (* [resume] is allowed a fresh (and possibly larger) budget, so
+                it can improve a truncated database entry. Persist the image
+                it actually reached; otherwise every later invocation starts
+                from the old entry and repeats the same shrink work. This
+                mirrors the fresh-generation path below. *)
+             Tape_db.save d ~key:k ~size:replay_size
+               engine_failure.Tape_engine.image
            | Ok () -> ()))));
     while Option.is_none !failure && !case < Array.length sizes do
       (match
@@ -537,7 +569,7 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
 
 (* [Or_error.try_with]/[try_with_join] catch EVERY exception, including
    [Tape_stats.Invalid_example] -- but that one must propagate all the
-   way down into [Tape_engine.run_and_test]'s own handler, or
+   way down into [Tape_engine.For_explain.run_and_test]'s own handler, or
    [Tape_test.assume] would silently stop working the moment a property
    is run through [run]/[run_exn] rather than [result] (whose ~f is the
    caller's own, never pre-wrapped). These behave exactly like their
@@ -547,13 +579,19 @@ let try_with_join_preserving_assume f =
   match f () with
   | result -> result
   | exception Tape_stats.Invalid_example -> raise Tape_stats.Invalid_example
-  | exception exn -> Or_error.of_exn exn
+  | exception exn ->
+    Or_error.of_exn exn
+      ?backtrace:
+        (if Backtrace.Exn.am_recording () then Some `Get else None)
 
 let try_with_preserving_assume f =
   match f () with
   | result -> Ok result
   | exception Tape_stats.Invalid_example -> raise Tape_stats.Invalid_example
-  | exception exn -> Or_error.of_exn exn
+  | exception exn ->
+    Or_error.of_exn exn
+      ?backtrace:
+        (if Backtrace.Exn.am_recording () then Some `Get else None)
 
 let run (type a) ~(f : a -> unit Or_error.t) ?config ?examples ?regressions
     ?realign ?explain ?explain_budget ?max_shrinks ?max_shrink_seconds ?report ?suppress_health_check ?db ?db_key ?stats

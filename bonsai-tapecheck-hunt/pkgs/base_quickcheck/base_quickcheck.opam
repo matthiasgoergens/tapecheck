@@ -9,6 +9,8 @@ v0.17). Built against the pinned splittable_random tape shim."""
 maintainer: "Jane Street developers"
 authors: ["Jane Street Group, LLC"]
 license: "MIT"
+homepage: "https://github.com/matthiasgoergens/tapecheck"
+bug-reports: "https://github.com/matthiasgoergens/tapecheck/issues"
 build: [
   ["dune" "build" "-p" name "-j" jobs]
 ]

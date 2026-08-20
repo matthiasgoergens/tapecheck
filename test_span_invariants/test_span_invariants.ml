@@ -151,7 +151,7 @@ let () =
       Int.incr cases;
       (* Identity order must give the identity mapping. *)
       (match
-         Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+         Tape_engine.Diagnostics.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
            ~children ~order:[ 0; 1 ]
        with
        | None -> Int.incr id_bad
@@ -160,7 +160,7 @@ let () =
       (* Swapped order: a bijection, identity outside the children, and
          each child's content carried as a contiguous block. *)
       (match
-         Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+         Tape_engine.Diagnostics.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
            ~children ~order:[ 1; 0 ]
        with
        | None -> Int.incr bij_bad
@@ -181,19 +181,19 @@ let () =
            if m.(q + d) <> (2 * q) + d then Int.incr block_bad
          done);
       (match
-         Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+         Tape_engine.Diagnostics.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
            ~children:[ (q, 3 * q); (2 * q, 3 * q) ] ~order:[ 0; 1 ]
        with
        | None -> ()
        | Some _ -> Int.incr precond_bad);
       (match
-         Tape_engine.reassemble_permutation ~n ~parent_start:0
+         Tape_engine.Diagnostics.reassemble_permutation ~n ~parent_start:0
            ~parent_stop:(n + 5) ~children ~order:[ 0; 1 ]
        with
        | None -> ()
        | Some _ -> Int.incr precond_bad);
       match
-        Tape_engine.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
+        Tape_engine.Diagnostics.reassemble_permutation ~n ~parent_start:0 ~parent_stop:n
           ~children ~order:[ 0; 0 ]
       with
       | None -> ()

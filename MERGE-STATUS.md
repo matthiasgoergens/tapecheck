@@ -1,5 +1,11 @@
 # Integration status
 
+> **Status — historical snapshot.** This file records the integration state
+> on 2026-08-13 and is not an authoritative description of current `master`.
+> In particular, branch names, open pull requests, and commit tips below are
+> preserved as handoff evidence. Wave 1's final pre-Wave-2 checkpoint is
+> `695082c`; consult the current README and Git history for the live state.
+
 Updated 2026-08-13. Earlier update 2026-08-10 after Wave 1 was merged into
 local `master`.
 

@@ -27,6 +27,7 @@ let () =
   (match Tape_engine.run gen ~test:(fun _ -> true) ~count:50 ~stats with
   | Tape_engine.Passed { cases = 50 } -> ()
   | _ -> failwith "expected a clean pass over 50 cases");
+  let stats = Tape_engine.stats_snapshot stats in
   check "no assume: 0 discarded" (stats.cases_invalid = 0);
   check "no assume: 50 valid" (stats.cases_valid = 50);
 
@@ -43,6 +44,7 @@ let () =
    with
   | Tape_engine.Passed { cases = 80 } -> ()
   | _ -> failwith "expected a clean pass (never valid, never failing)");
+  let stats2 = Tape_engine.stats_snapshot stats2 in
   check "assume false: 80 discarded" (stats2.cases_invalid = 80);
   check "assume false: 0 valid" (stats2.cases_valid = 0);
 
@@ -60,13 +62,18 @@ let () =
    with
   | Tape_engine.Passed { cases } -> check "events: full count reached" (cases = n)
   | Tape_engine.Failed _ -> failwith "unexpected failure");
+  let stats3 = Tape_engine.stats_snapshot stats3 in
   check "events: 'always' seen once per case"
-    (Hashtbl.find_exn stats3.events "always" = n);
+    (List.Assoc.find_exn stats3.events "always" ~equal:String.equal = n);
   let even_n =
-    Option.value (Hashtbl.find stats3.events "parity: even") ~default:0
+    Option.value
+      (List.Assoc.find stats3.events "parity: even" ~equal:String.equal)
+      ~default:0
   in
   let odd_n =
-    Option.value (Hashtbl.find stats3.events "parity: odd") ~default:0
+    Option.value
+      (List.Assoc.find stats3.events "parity: odd" ~equal:String.equal)
+      ~default:0
   in
   check "events: parity tags partition the cases" (even_n + odd_n = n);
 
@@ -84,7 +91,7 @@ let () =
   | Error _ -> ()
   | Ok _ -> failwith "expected filter_too_much to raise");
   check "filter_too_much: recorded as fired"
-    (List.mem health4.Tape_health.fired Tape_health.Filter_too_much
+    (List.mem (Tape_health.fired health4) Tape_health.Filter_too_much
        ~equal:Tape_health.equal);
 
   (* --- health check: filter_too_much suppressed stays quiet, but the
@@ -105,8 +112,9 @@ let () =
   | Ok _ -> failwith "expected a clean pass"
   | Error _ -> failwith "suppressed health check must not raise");
   check "filter_too_much suppressed: still recorded as fired"
-    (List.mem health5.Tape_health.fired Tape_health.Filter_too_much
+    (List.mem (Tape_health.fired health5) Tape_health.Filter_too_much
        ~equal:Tape_health.equal);
+  let stats5 = Tape_engine.stats_snapshot stats5 in
   check "filter_too_much suppressed: discard count still accurate"
     (stats5.cases_invalid = 200);
 
@@ -121,7 +129,8 @@ let () =
   | Ok (Tape_engine.Passed _) -> ()
   | _ -> failwith "expected a clean, unremarkable pass");
   check "well-behaved: no health checks fired"
-    (List.is_empty health6.Tape_health.fired);
+    (List.is_empty (Tape_health.fired health6));
+  let stats6 = Tape_engine.stats_snapshot stats6 in
   check "well-behaved: no discards" (stats6.cases_invalid = 0);
 
   (* --- health check: data_too_large fires on routinely large cases --- *)
@@ -142,7 +151,7 @@ let () =
   | Error _ -> ()
   | Ok _ -> failwith "expected data_too_large to raise");
   check "data_too_large: recorded as fired"
-    (List.mem health7.Tape_health.fired Tape_health.Data_too_large
+    (List.mem (Tape_health.fired health7) Tape_health.Data_too_large
        ~equal:Tape_health.equal);
 
   (* --- health check: large_base_example fires when the smallest
@@ -159,7 +168,7 @@ let () =
   | Error _ -> ()
   | Ok _ -> failwith "expected large_base_example to raise");
   check "large_base_example: recorded as fired"
-    (List.mem health8.Tape_health.fired Tape_health.Large_base_example
+    (List.mem (Tape_health.fired health8) Tape_health.Large_base_example
        ~equal:Tape_health.equal);
 
   (* --- health check: large_base_example quiet on an ordinary small
@@ -173,7 +182,7 @@ let () =
   | Error _ -> failwith "small generator must not trip large_base_example");
   check "small generator: large_base_example did not fire"
     (not
-       (List.mem health9.Tape_health.fired Tape_health.Large_base_example
+       (List.mem (Tape_health.fired health9) Tape_health.Large_base_example
           ~equal:Tape_health.equal));
 
   (* --- health check: too_slow fires when GENERATION (not the test
@@ -187,6 +196,7 @@ let () =
   | Error _ -> ()
   | Ok _ -> failwith "expected too_slow to raise");
   check "too_slow: recorded as fired"
-    (List.mem health10.Tape_health.fired Tape_health.Too_slow ~equal:Tape_health.equal);
+    (List.mem (Tape_health.fired health10) Tape_health.Too_slow
+       ~equal:Tape_health.equal);
 
   Stdlib.print_endline "test_stats: all passed"

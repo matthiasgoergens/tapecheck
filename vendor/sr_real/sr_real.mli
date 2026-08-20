@@ -66,61 +66,97 @@ val split : t -> t
     randomly generated functions become observable and shrinkable; see
     design/stream-keyed-tapes.md.
 
-    This is an experimental, unreleased seam.  Its record shape may change
-    while Tapecheck is prototyping the structural information that an
-    upstream API would need.  Once published, adding required record fields
-    would break clients that construct interceptors, so the accepted API must
-    either freeze this shape or provide an abstraction that can evolve. *)
+    This is an experimental, unreleased seam. [Intercept.t] is abstract and
+    [create] supplies delegating defaults, so later optional capabilities can
+    be added without exposing or extending a record constructed by clients. *)
 module Intercept : sig
   type state := t
 
-  type t =
-    { int64 :
-        state
-        -> lo:int64
-        -> hi:int64
-        -> default:(state -> lo:int64 -> hi:int64 -> int64)
-        -> int64
-    ; float :
-        state
-        -> lo:float
-        -> hi:float
-        -> default:(state -> lo:float -> hi:float -> float)
-        -> float
-    ; unit_float : state -> default:(state -> float) -> float
-    ; bool : state -> default:(state -> bool) -> bool
-    ; bool_with_probability :
-        state
-        -> probability:float
-        -> forced:bool option
-        -> default:(state -> probability:float -> bool)
-        -> bool
-        (** Intercepts weighted choices, including forced choices.  Probability
-            controls sampling; [forced] constrains replay without advancing the
-            underlying random state. *)
-    ; on_span_start :
-        span_label
-        -> deletable:bool
-        -> discardable:bool
-        -> descendable:bool
-        -> reorderable:bool
-        -> unit
-    ; on_span_stop :
-        deletable:bool
-        -> discardable:bool
-        -> descendable:bool
-        -> reorderable:bool
-        -> discarded:bool
-        -> unit
-        -> unit
-      (** Span callbacks must not raise.  They are notifications rather than
-          recovery boundaries; an exception from a callback is propagated and
-          may prevent the body from running.  If both the body and stop
-          callback raise, [Exn.Finally] preserves both exceptions.
-          [discarded] is true exactly when [with_span]'s body raised. *)
-    ; on_split : unit -> t option
-    ; on_perturb : int -> t option
-    }
+  type t
+
+  (** [create ()] constructs a delegating observer: every primitive calls its
+      supplied [default], structural callbacks do nothing, split children are
+      unobserved, and perturbation keeps the current observer. Override only
+      the capabilities an engine implements. Keeping [t] abstract and the
+      callbacks optional lets this experimental seam grow without breaking
+      every observer construction. *)
+  val create
+    :  ?int64:
+         (state
+          -> lo:int64
+          -> hi:int64
+          -> default:(state -> lo:int64 -> hi:int64 -> int64)
+          -> int64)
+    -> ?float:
+         (state
+          -> lo:float
+          -> hi:float
+          -> default:(state -> lo:float -> hi:float -> float)
+          -> float)
+    -> ?unit_float:(state -> default:(state -> float) -> float)
+    -> ?bool:(state -> default:(state -> bool) -> bool)
+    -> ?bool_with_probability:
+         (state
+          -> probability:float
+          -> forced:bool option
+          -> default:(state -> probability:float -> bool)
+          -> bool)
+    -> ?on_span_start:
+         (span_label
+          -> deletable:bool
+          -> discardable:bool
+          -> descendable:bool
+          -> reorderable:bool
+          -> unit)
+    -> ?on_span_stop:
+         (deletable:bool
+          -> discardable:bool
+          -> descendable:bool
+          -> reorderable:bool
+          -> discarded:bool
+          -> unit
+          -> unit)
+    -> ?on_split:(unit -> t option)
+    -> ?on_perturb:(int -> t option)
+    -> unit
+    -> t
+
+  (** [is_active state] supports a whole-computation fast/observed split.
+      Performance-sensitive generated code should test this once and retain a
+      direct primitive path when false, rather than paying [run_*] dispatch on
+      every draw. *)
+  val is_active : state -> bool
+
+  (** Backend-facing dispatch for pointwise-equivalent optimized samplers.
+      With no interceptor these functions perform one hook-presence branch and
+      call [default]. With hooks attached, the bounded draw is observed exactly
+      like the corresponding top-level sampler. This lets staged or foreign
+      randomness implementations keep their fast inactive path without
+      silently bypassing a property-testing engine. *)
+  val run_bool : state -> default:(state -> bool) -> bool
+
+  val run_int
+    :  state
+    -> lo:int
+    -> hi:int
+    -> default:(state -> lo:int -> hi:int -> int)
+    -> int
+
+  val run_int64
+    :  state
+    -> lo:int64
+    -> hi:int64
+    -> default:(state -> lo:int64 -> hi:int64 -> int64)
+    -> int64
+
+  val run_float
+    :  state
+    -> lo:float
+    -> hi:float
+    -> default:(state -> lo:float -> hi:float -> float)
+    -> float
+
+  val run_unit_float : state -> default:(state -> float) -> float
 end
 
 (** [with_intercept t hooks] returns a snapshot copy of [t] whose draws

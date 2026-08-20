@@ -137,25 +137,32 @@ intended semantics.)
 
 ## Seam revision required upstream
 
-Two changes to the `Intercept` record (the vendored copy can prototype
+Two changes to the interceptor contract (the vendored copy can prototype
 both without upstream):
 
 1. `on_split : unit -> t option` in place of `unit -> unit`: the
    parent's hook returns the intercept to install on the child state,
    or `None` for the old hook-free child. `split` becomes:
    attach the returned hooks to the freshly built child.
-2. `on_perturb : int -> unit` in place of `unit -> unit`: the hook
-   needs the salt to extend the stream key. (In the old shim the salt was dropped,
-   and the marker only serves main-stream alignment.)
+2. `on_perturb : int -> t option` in place of `unit -> unit`: the hook
+   needs the salt to extend the stream key and returns replacement hooks for
+   the perturbed state. (In the old shim the salt was dropped, and the marker
+   only serves main-stream alignment.)
 
-Both are backward-compatible for engines that want the old behaviour
-(`on_split = fun () -> None`, ignore the salt). Zero cost when
+The old behaviour remains expressible (`on_split = fun () -> None`, ignore the
+salt), though changing a public record signature would not itself be source
+compatible. The new abstract constructor avoids that problem. Zero cost when
 `intercept = None` is unchanged: the branches are in `split`/`perturb`,
 which are not hot paths.
 
-Timing: hold this until ceastlund engages on the base PR
-(janestreet/splittable_random#2). If the seam lands, propose this as a
-follow-up revision; folding it in now would grow the PR under review.
+Status update, 2026-08-20: the keyed contract has landed and is tested in the
+vendored product, while the public PR still carries the older hook-free-child
+contract. `Intercept.t` is now abstract locally and constructed with optional
+callbacks, so this extension no longer exposes a growing client-built record.
+Current upstream sequencing and the draft factual correction are in
+`design/upstream-pr-splittable-random.md` and
+`proposals/COMMENT-splittable_random-2.md`. Do not silently fold the complete
+Wave 2 record into that PR.
 
 ## Prototype plan (tapecheck, vendored, no upstream dependency)
 

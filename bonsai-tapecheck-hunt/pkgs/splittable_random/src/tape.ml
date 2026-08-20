@@ -646,8 +646,6 @@ let record_marker_in t k =
     ignore (pop t s ~matches:(function Marker -> true | _ -> false));
     record_in s Marker
 
-let record_marker t = record_marker_in t root
-
 (* A split on [stream]: record an alignment marker there and allocate
    the child stream's key by per-parent ordinal. Deterministic across
    record and replay because splits happen at generator-driven points. *)

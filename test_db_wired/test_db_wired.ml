@@ -15,6 +15,15 @@ module Int_t = struct
   type nonrec t = t [@@deriving quickcheck, sexp_of]
 end
 
+module Threshold_t = struct
+  type t = int [@@deriving sexp_of]
+
+  let quickcheck_generator =
+    Base_quickcheck.Generator.int_uniform_inclusive 0 1_000_000
+
+  let quickcheck_shrinker = Base_quickcheck.Shrinker.int
+end
+
 (* A private directory under the CURRENT directory, which dune gives
    each test to itself, rather than a predictable path in /tmp.
 
@@ -71,4 +80,46 @@ let () =
     Stdio.printf "  FAIL: ?db was accepted but nothing was written\n";
     Stdlib.exit 1
   end;
-  Stdio.printf "  ok\n"
+  Stdio.printf "  ok\n";
+
+  (* A database entry is not necessarily converged: it may have been written
+     by a run with a small budget. A later [Tape_test] invocation resumes with
+     its current budget and must replace the entry with the better image it
+     reaches, rather than paying for the same progress on every invocation. *)
+  let threshold = 123_457 in
+  let truncated_key = "truncated_property" in
+  let truncated =
+    Tape_engine.run Threshold_t.quickcheck_generator
+      ~test:(fun v -> v < threshold) ~seed:4242 ~count:200 ~size:10 ~budget:0
+  in
+  let truncated_image =
+    match truncated with
+    | Tape_engine.Passed _ -> failwith "expected the budget-0 fixture to fail"
+    | Tape_engine.Failed { image; converged; minimal; _ } ->
+      if converged || minimal = threshold
+      then failwith "budget-0 fixture was unexpectedly already minimal";
+      image
+  in
+  Tape_db.save db ~key:truncated_key ~size:10 truncated_image;
+  let resumed =
+    Tape_test.result ~db ~db_key:truncated_key ~max_shrinks:2000
+      ~report:`Silent
+      ~f:(fun v -> if v < threshold then Ok () else Error "too big")
+      (module Threshold_t)
+  in
+  let rewritten_image, rewritten_size =
+    Option.value_exn (Tape_db.load_sized db ~key:truncated_key)
+  in
+  let rewritten_value, () =
+    Tape_engine.replay_image_and_apply Threshold_t.quickcheck_generator
+      ~size:10 rewritten_image ~f:(fun _ -> ())
+  in
+  let resumed_and_rewritten =
+    Result.is_error resumed
+    && rewritten_value = threshold
+    && Option.equal Int.equal rewritten_size (Some 10)
+    && Tape.compare_image rewritten_image truncated_image < 0
+  in
+  Stdio.printf "  resumed improvement written back:     %b\n"
+    resumed_and_rewritten;
+  if not resumed_and_rewritten then Stdlib.exit 1

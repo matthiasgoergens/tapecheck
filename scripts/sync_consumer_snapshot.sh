@@ -75,7 +75,7 @@ check_named_inventory () {
 
 check_dir_inventory engine bonsai-tapecheck-hunt/engine
 check_named_inventory bonsai-tapecheck-hunt/pkgs/splittable_random/src \
-  tape.ml splittable_random.ml sr_real.ml sr_real.mli
+  tape.ml tape.mli splittable_random.ml sr_real.ml sr_real.mli
 check_dir_inventory vendor/base_quickcheck bonsai-tapecheck-hunt/pkgs/base_quickcheck/src
 check_dir_inventory vendor/ppx_quickcheck \
   bonsai-tapecheck-hunt/pkgs/base_quickcheck/ppx_quickcheck
@@ -90,6 +90,7 @@ fi
 
 sync_dir engine bonsai-tapecheck-hunt/engine
 sync_file tape/tape.ml bonsai-tapecheck-hunt/pkgs/splittable_random/src/tape.ml
+sync_file tape/tape.mli bonsai-tapecheck-hunt/pkgs/splittable_random/src/tape.mli
 sync_file vendor/splittable_random/splittable_random.ml \
   bonsai-tapecheck-hunt/pkgs/splittable_random/src/splittable_random.ml
 sync_file vendor/sr_real/sr_real.ml \

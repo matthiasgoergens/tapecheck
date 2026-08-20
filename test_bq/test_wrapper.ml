@@ -17,6 +17,9 @@ end
 
 let check name cond = if not cond then failwith ("FAILED: " ^ name)
 
+let failure_with_distinctive_backtrace () =
+  failwith "distinctive backtrace failure"
+
 let () =
   (* [with_sample] and [with_sample_exn] complete the callable, source-level
      surface. They deliberately retain Base's stock sampler rather than
@@ -110,6 +113,32 @@ let () =
   | Error e ->
     let s = Sexp.to_string (Error.sexp_of_t e) in
     check "run reports the minimal input" (String.is_substring s ~substring:"(0 100)"));
+
+  (* Base_quickcheck.Test.run records the original exception backtrace whenever
+     runtime backtrace recording is enabled.  The assume-aware compatibility
+     wrapper must retain that diagnostic information too. *)
+  Backtrace.Exn.with_recording true ~f:(fun () ->
+    match
+      Tape_test.run
+        ~f:(fun () -> failure_with_distinctive_backtrace ())
+        ~config:
+          { Tape_test.default_config with
+            seed = Deterministic "backtrace"
+          ; test_count = 1
+          ; sizes = Sequence.singleton 0
+          }
+        (module struct
+          type t = unit [@@deriving sexp_of]
+
+          let quickcheck_generator = Base_quickcheck.Generator.return ()
+          let quickcheck_shrinker = Base_quickcheck.Shrinker.atomic
+        end)
+    with
+    | Ok () -> failwith "expected a failure with a backtrace"
+    | Error error ->
+      let rendered = Error.to_string_hum error in
+      check "run preserves the property exception backtrace"
+        (String.is_substring rendered ~substring:"Raised at"));
 
   (* A passing property passes. *)
   (match

@@ -152,6 +152,10 @@ let create () =
   ; fired = []
   }
 
+let is_closed state = state.closed
+let has_checked_base_example state = state.checked_base_example
+let fired state = state.fired
+
 let already_fired state check = List.mem state.fired check ~equal
 
 let message_for check ~state =
