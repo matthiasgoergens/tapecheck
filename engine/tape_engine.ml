@@ -1208,7 +1208,17 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                |> List.filter ~f:(fun sp ->
                  sp.Tape.reorderable
                  && not sp.Tape.discarded
-                 && sp.Tape.depth = parent.Tape.depth + 1
+                 (* Recorded parentage, not inferred. This used to be
+                    [depth = parent.depth + 1] plus containment, which
+                    silently skipped a retained child whose retained
+                    parent sat two levels up because an unretained span
+                    lay between them. The tape now resolves each span to
+                    its nearest retained ancestor, so this asks the
+                    question Hypothesis's shrinker asks: give me this
+                    span's children. *)
+                 && (match sp.Tape.parent with
+                     | Some pid -> pid = parent.Tape.id
+                     | None -> false)
                  && Tape.compare_key sp.Tape.stream parent.Tape.stream = 0
                  && sp.Tape.start >= parent.Tape.start
                  && sp.Tape.stop <= parent.Tape.stop

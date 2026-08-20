@@ -114,12 +114,26 @@ type span = {
   discarded : bool;
   descendable : bool;
   reorderable : bool;
+  id : int;
+  parent : int option;
+      (* Id of the nearest RETAINED enclosing span, resolved in [finish].
+         Hypothesis materialises the span tree and its shrinker asks a
+         span for [span.children] directly (shrinker.py's reorder_spans);
+         this is the same fact recorded rather than inferred. It replaces
+         reconstructing parentage from [depth] plus interval containment,
+         which leaked: [depth] counted spans that were later filtered out,
+         so a retained child of a retained parent could sit two levels
+         down and be silently skipped. *)
   depth : int;
+      (* Depth in the RETAINED tree, i.e. the length of the [parent]
+         chain. Derived, so it now agrees with [parent] by construction. *)
   start : int;
   stop : int;
 }
 
 type open_span = {
+  open_id : int;
+  open_parent : int option;
   open_stream : key;
   open_label : int;
   open_deletable : bool;
@@ -141,6 +155,13 @@ type t = {
   splits : (key, int) Hashtbl.t;
   mutable open_spans : open_span list;
   mutable spans_rev : span list;
+  mutable next_span_id : int;
+  mutable closed_parents : (int * int option) list;
+      (* (id, enclosing id) for EVERY closed span, retained or not. An
+         unretained span is dropped from [spans_rev] at close, but its
+         link is needed later to resolve a retained span's nearest
+         retained ancestor -- a parent's retention is only decided when
+         the parent itself closes, which is after its children. *)
 }
 
 let create () =
@@ -153,6 +174,8 @@ let create () =
     splits = Hashtbl.create 8;
     open_spans = [];
     spans_rev = [];
+    next_span_id = 0;
+    closed_parents = [];
   }
 
 let reset t =
@@ -161,7 +184,9 @@ let reset t =
   t.overrun <- false;
   t.misaligned <- false;
   t.open_spans <- [];
-  t.spans_rev <- []
+  t.spans_rev <- [];
+  t.next_span_id <- 0;
+  t.closed_parents <- []
 
 let get_stream t k =
   match Hashtbl.find_opt t.streams k with
@@ -175,6 +200,8 @@ let start_recording t =
   reset t;
   t.mode <- Recording;
   ignore (get_stream t root : stream)
+
+module IntSet = Set.Make (Int)
 
 let start_replay_image ?(policy = Consume) t (img : image) =
   reset t;
@@ -221,8 +248,49 @@ let finish t =
   let misaligned = t.misaligned in
   if not (List.is_empty t.open_spans) then
     invalid_arg "Tape.finish: unclosed structural span";
+  (* Resolve each retained span to its nearest RETAINED ancestor, then
+     derive depth from that chain. Hypothesis keeps the span tree
+     explicitly (its shrinker reads [span.children]); this reconstructs
+     the same tree once per image instead of leaving every consumer to
+     infer parentage from intervals. *)
+  let retained_ids =
+    List.fold_left (fun acc (sp : span) -> IntSet.add sp.id acc) IntSet.empty
+      t.spans_rev
+  in
+  let parent_of = Hashtbl.create 16 in
+  List.iter (fun (id, p) -> Hashtbl.replace parent_of id p) t.closed_parents;
+  let rec nearest_retained = function
+    | None -> None
+    | Some pid ->
+      if IntSet.mem pid retained_ids then Some pid
+      else
+        nearest_retained
+          (match Hashtbl.find_opt parent_of pid with
+           | Some p -> p
+           | None -> None)
+  in
+  let resolved =
+    List.map
+      (fun (sp : span) -> { sp with parent = nearest_retained sp.parent })
+      t.spans_rev
+  in
+  let parent_lookup = Hashtbl.create 16 in
+  List.iter (fun (sp : span) -> Hashtbl.replace parent_lookup sp.id sp.parent)
+    resolved;
+  let rec depth_of id fuel =
+    if fuel <= 0 then 0
+    else
+      match Hashtbl.find_opt parent_lookup id with
+      | Some (Some p) -> 1 + depth_of p (fuel - 1)
+      | Some None | None -> 0
+  in
+  let n_spans = List.length resolved in
+  let resolved =
+    List.map (fun (sp : span) -> { sp with depth = depth_of sp.id n_spans })
+      resolved
+  in
   let spans =
-    List.rev t.spans_rev
+    List.rev resolved
     |> List.sort (fun a b ->
       let c = compare_key a.stream b.stream in
       if c <> 0 then c
@@ -265,8 +333,15 @@ let on_span_start t ~stream ~label ~deletable ~discardable ~descendable
   | Off -> ()
   | Recording | Replaying ->
     let s = get_stream t stream in
+    let id = t.next_span_id in
+    t.next_span_id <- id + 1;
+    let enclosing =
+      match t.open_spans with [] -> None | p :: _ -> Some p.open_id
+    in
     t.open_spans <-
-      { open_stream = stream
+      { open_id = id
+      ; open_parent = enclosing
+      ; open_stream = stream
       ; open_label = label
       ; open_deletable = deletable
       ; open_discardable = discardable
@@ -284,8 +359,9 @@ let on_span_stop t ~stream ~deletable ~discardable ~descendable ~reorderable
   | Off -> ()
   | Recording | Replaying ->
     (match t.open_spans with
-     | { open_stream; open_label; open_deletable; open_discardable
-       ; open_descendable; open_reorderable; open_start } :: rest
+     | { open_id; open_parent; open_stream; open_label; open_deletable
+       ; open_discardable; open_descendable; open_reorderable; open_start }
+       :: rest
        when compare_key open_stream stream = 0
             && Bool.equal open_deletable deletable
             && Bool.equal open_discardable discardable
@@ -293,6 +369,10 @@ let on_span_stop t ~stream ~deletable ~discardable ~descendable ~reorderable
             && Bool.equal open_reorderable reorderable ->
        let s = get_stream t stream in
        t.open_spans <- rest;
+       (* Recorded whether or not the span survives the retention test
+          below: an unretained span still sits between a retained parent
+          and a retained child, and [finish] has to see through it. *)
+       t.closed_parents <- (open_id, open_parent) :: t.closed_parents;
        let retained_deletable = open_deletable && not discarded in
        let retained_descendable = open_descendable && not discarded in
        let retained_reorderable = open_reorderable && not discarded in
@@ -308,7 +388,9 @@ let on_span_stop t ~stream ~deletable ~discardable ~descendable ~reorderable
            ; discarded = open_discardable && discarded
            ; descendable = retained_descendable
            ; reorderable = retained_reorderable
-           ; depth = List.length rest
+           ; id = open_id
+           ; parent = open_parent (* resolved to nearest RETAINED in [finish] *)
+           ; depth = 0 (* derived in [finish] *)
            ; start = open_start
            ; stop = s.wpos
            }
