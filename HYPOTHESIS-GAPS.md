@@ -59,6 +59,50 @@ because two of them point at the same structural cause as §3:
 | `reorder_spans` | implemented for explicitly reorderable same-label sibling spans; the span-free `sort_siblings` approximation remains hard-disabled |
 | string/unicode character passes | absent, and unrepresentable (§3) |
 
+## The tape does not determine the value: `~size` is ambient
+
+Measured 2026-08-20 (`../tapecheck-notes/size-dependence/`). The same
+recorded tape decodes to different OCaml values at different `~size`,
+including different LENGTHS:
+
+| recorded at size 14 | decoded at 4 | decoded at 30 |
+|---|---|---|
+| `[49;15;76;62]` | `[0;2;3;1]` | `[12;25;50;97]` (overrun) |
+| `[1;73;0;47;27;13]` | `[1;1;1;0]` | `[49;73;12;25;50;97]` (overrun) |
+
+The element generator's bounds are fixed at `0..100`, so this is not
+clamping. `size` changes the sequence of QUESTIONS the generator asks --
+how many size draws, with what bounds -- while the tape supplies only
+positional answers. A different question sequence over the same answers
+yields a different value, and at a larger size the generator asks more
+questions than the tape can answer, so the replay overruns and
+fresh-samples the remainder.
+
+So `tape -> value` is a function of `(tape, size)`, not of the tape. That
+is inherent to recording at the PRNG layer: **the tape stores answers,
+not questions.** Hypothesis's buffer has the same character but does
+determine its value, because Hypothesis has no ambient size -- the
+question sequence depends only on the strategy and on prior answers.
+
+What follows, and what already accounts for it:
+
+- A tape is not a portable artefact on its own. The failure database
+  persists `"<size>\n<image>"` and says why (`engine/tape_db.ml:135-142`:
+  it once replayed everything at `sizes.(0)`), and the regression file
+  format does the same (`engine/tape_test.ml:87`). Both were fixed after
+  being bitten.
+- `Tape.image` itself carries no size, so an ad-hoc caller can still
+  mismatch. That silently emptied two of three subjects while
+  `test_pairwise_witness` was being written.
+- Shrinking is size-relative: a minimal tape is minimal AT A SIZE. Since
+  `Tape_test` sweeps sizes, "the minimal example" is per-size.
+
+The structural fix is the same one PR #29 keeps running into: draw the
+structure rather than deriving it from an ambient number, which is what
+`list_structural`'s continuation booleans do. Then `size` influences only
+which tapes get GENERATED -- the distribution -- and decoding, shrinking
+and replay become size-free.
+
 `sort_siblings` is the interesting one and it is not simply missing.
 `engine/tape_engine.ml` sets `sort_siblings_enabled = false`, with a
 recorded reason, re-measured at n=1000 on 2026-08-09 rather than merely
