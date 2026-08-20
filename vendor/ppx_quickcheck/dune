@@ -1,5 +1,6 @@
 (library
  (name ppx_quickcheck)
+ (public_name base_quickcheck.ppx_quickcheck)
  (kind ppx_deriver)
  (enabled_if
   (<> %{profile} oxcaml))

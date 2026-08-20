@@ -1,5 +1,6 @@
 (library
  (name ppx_quickcheck_expander)
+ (public_name base_quickcheck.ppx_quickcheck.expander)
  (enabled_if
   (<> %{profile} oxcaml))
  (libraries base ppxlib ppxlib_jane compiler-libs.common)

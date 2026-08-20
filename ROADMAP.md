@@ -15,13 +15,14 @@ Tapecheck has two distinct stages:
    structural spans, reorderable siblings, discarded attempts, and explicit
    recursive leaf budgets.
 
-The product is currently a source workspace, not a normal opam package. A
-package-shaped consumer under `bonsai-tapecheck-hunt/` demonstrates the
-required pinned replacement packages and tests real `core`-dependent code.
-Publishing Tapecheck as an ordinary package should wait until the interception
-seam can be supplied by upstream `splittable_random`; adding `public_name`
-alone would create a misleading package with conflicting or missing
-dependencies.
+The product now has a checked three-pin opam preview. It installs replacement
+`splittable_random` and `base_quickcheck` packages followed by `tapecheck`, then
+builds an external PPX-using consumer against installed artefacts only. A
+larger package-shaped consumer under `bonsai-tapecheck-hunt/` separately tests
+real `core`-dependent code. A normal single-package release should still wait
+until the interception seam can be supplied by upstream
+`splittable_random`; the replacement pins are an evaluation route, not the
+desired permanent dependency story.
 
 ## Before outreach
 

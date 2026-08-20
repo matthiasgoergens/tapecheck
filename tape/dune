@@ -1,2 +1,3 @@
 (library
- (name tape))
+ (name tape)
+ (public_name splittable_random.tape_core))

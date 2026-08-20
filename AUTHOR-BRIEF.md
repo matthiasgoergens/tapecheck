@@ -13,8 +13,10 @@ implements the textual core of RO6—visible valid/discarded/failing counts,
 events, timings, shrink work, and health checks—and useful but incomplete RO4
 features such as edge-biased draws and opt-in structural generators.
 
-This is a source workspace, not yet an independently installable opam package.
-Its purpose is to make the required upstream seams concrete and measured.
+This is installable as a checked three-pin opam preview: matching replacement
+pins for `splittable_random` and `base_quickcheck`, followed by `tapecheck`.
+The clean end state remains an ordinary `tapecheck` package after the small
+random-observer seam is upstream.
 
 ## Two separable upstream stages
 
@@ -31,9 +33,12 @@ The final Wave 1 checkpoint is `695082c`. A package-shaped consumer rebuilds
 seven existing Core-dependent properties, and proves interception with an
 atomic positive control which must shrink exactly to `123457`.
 
-The adoption blocker is packaging, not a missing engine: until the recording
-seam exists upstream, an ordinary opam package would conflict with or omit the
-patched Jane Street dependency stack.
+The remaining packaging blocker is the clean single-package route, not a
+missing engine or an untested installer. `scripts/test_opam_install.sh`
+installs the three preview pins in a disposable switch and builds an external
+consumer which uses the installed Base Quickcheck PPX and Tapecheck engine.
+Until the recording seam exists upstream, that explicit replacement stack is
+necessary.
 
 ### Wave 2: generator cooperation
 

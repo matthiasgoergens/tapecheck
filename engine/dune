@@ -1,5 +1,6 @@
 (library
  (name tape_engine)
+ (public_name tapecheck)
  (wrapped false)
  (libraries base unix base_quickcheck splittable_random tape)
  (preprocess

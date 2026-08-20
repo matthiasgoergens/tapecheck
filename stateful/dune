@@ -1,5 +1,6 @@
 (library
  (name stateful)
+ (public_name tapecheck.stateful)
  (wrapped false)
  (enabled_if
   (<> %{profile} oxcaml))

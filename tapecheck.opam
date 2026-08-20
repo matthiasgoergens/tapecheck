@@ -1,0 +1,28 @@
+opam-version: "2.0"
+version: "0.1.0~dev"
+synopsis: "Choice-tape shrinking for Base_quickcheck"
+description: """
+Tapecheck records the typed, bounded choices made by Base_quickcheck
+generators and shrinks that recording by replaying the original generator.
+This preview package is installed alongside the matching Tapecheck replacement
+pins for splittable_random and base_quickcheck from the same source tree.
+"""
+maintainer: "Matthias Goergens <matthias.goergens@gmail.com>"
+authors: ["Matthias Goergens"]
+license: "MIT"
+homepage: "https://github.com/matthiasgoergens/tapecheck"
+bug-reports: "https://github.com/matthiasgoergens/tapecheck/issues"
+dev-repo: "git+https://github.com/matthiasgoergens/tapecheck.git"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml"             {>= "5.3.0"}
+  "dune"              {>= "3.11"}
+  "base"              {>= "v0.17" & < "v0.18~"}
+  "base_quickcheck"   {= "v0.17.1+tapecheck"}
+  "splittable_random" {= "v0.17.0+tapecheck"}
+  "ppx_let"           {>= "v0.17" & < "v0.18~"}
+  "ppx_sexp_conv"     {>= "v0.17" & < "v0.18~"}
+  "ppx_sexp_message"  {>= "v0.17" & < "v0.18~"}
+]

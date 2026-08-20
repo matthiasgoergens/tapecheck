@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (libraries base base_quickcheck tapecheck)
+ (preprocess
+  (pps base_quickcheck.ppx_quickcheck)))

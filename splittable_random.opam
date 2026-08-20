@@ -1,0 +1,24 @@
+opam-version: "2.0"
+version: "v0.17.0+tapecheck"
+synopsis: "Splittable_random with an optional choice observer"
+description: """
+Tapecheck's source-compatible replacement for splittable_random v0.17.0.
+It adds a no-op-by-default observer seam and the choice-tape representation
+needed by Tapecheck. This preview exists to test integration before the seam
+is accepted upstream.
+"""
+maintainer: "Matthias Goergens <matthias.goergens@gmail.com>"
+authors: ["Jane Street Group, LLC" "Matthias Goergens"]
+license: "MIT"
+homepage: "https://github.com/matthiasgoergens/tapecheck"
+bug-reports: "https://github.com/matthiasgoergens/tapecheck/issues"
+dev-repo: "git+https://github.com/matthiasgoergens/tapecheck.git"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml"            {>= "5.3.0"}
+  "dune"             {>= "3.11"}
+  "base"             {>= "v0.17" & < "v0.18~"}
+  "ppx_sexp_message" {>= "v0.17" & < "v0.18~"}
+]

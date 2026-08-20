@@ -5,4 +5,5 @@
 ; base_quickcheck compile against us.
 (library
  (name splittable_random)
+ (public_name splittable_random)
  (libraries base tape sr_real))

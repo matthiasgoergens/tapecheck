@@ -5,6 +5,7 @@
 ; test/bench blocks stripped (their APIs drifted in v0.18 previews).
 (library
  (name sr_real)
+ (public_name splittable_random.sr_real)
  (libraries base)
  (preprocess
   (pps ppx_sexp_message)))

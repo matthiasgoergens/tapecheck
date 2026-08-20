@@ -6,11 +6,15 @@
 ; building it from here would clash with vendor/'s library names. It must
 ; be data_only, not just excluded from (dirs): its nested dune-project
 ; would otherwise still pull it into this build as a second project.
-(data_only_dirs bonsai-tapecheck-hunt outreach)
+(data_only_dirs bonsai-tapecheck-hunt install-smoke outreach)
 
 ; outreach is retained research material with independent toolchains (for
 ; example, tracing-poc requires bisect_ppx). It is data from the product
 ; build's point of view; reproduce an experiment from its own project root.
+
+; install-smoke is a separate consumer project. Its purpose is to compile
+; only against packages installed in a disposable opam switch, not against
+; libraries visible in this source workspace.
 
 ; The consumer is intentionally a copied, package-shaped workspace. A green
 ; run there is evidence about this tree only while those source copies match.

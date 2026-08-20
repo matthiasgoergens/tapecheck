@@ -125,23 +125,26 @@ failure to its boundary”.
 
 ## Why this matters for tapecheck itself
 
-`tape.opam` currently says "NOT YET INSTALLABLE AS AN OPAM PACKAGE" because the
-libraries have no `public_name`, blocked on
+The root workspace now exposes a checked three-pin preview: replacement
+`splittable_random` and `base_quickcheck` packages plus `tapecheck`. Run
+`scripts/test_opam_install.sh` against a disposable OCaml 5.3 switch for the
+small installed-package control. A normal single-package release remains
+blocked on
 [janestreet/splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)
 (the intercept-seam discussion). The submitted v1 diff does not propagate
 observers into split children and therefore cannot replace the current seam
-unchanged. The `pkgs/` packaging here is a proof of concept for
-what the installable shape could look like: the shim *is* the
+unchanged. The `pkgs/` packaging here is the larger Core rebuild: the shim *is* the
 `splittable_random` package (with `Tape` as an extra module), so downstream
-opam builds get tape recording once an adequate seam lands upstream. Current
-integration shape and remaining questions:
+opam builds get tape recording today under an explicit replacement pin.
+Current integration shape and remaining questions:
 
 - `pkgs/` is a generated snapshot of the canonical `engine/`, `tape/`, and
   `vendor/` sources. Refresh it with
   `scripts/sync_consumer_snapshot.sh --update`; the root `runtest` alias and CI
   compare every copied `.ml`/`.mli`, including the ppx sources.
-- The engine (`Tape_test` and friends) still needs its own public names and an
-  opam package; here it is just copied into the consumer workspace.
+- The copied engine remains deliberate: this workspace predates the root
+  package and proves source parity against the exact stack used to rebuild
+  `core`, while `install-smoke/` proves the installed-library boundary.
 - Version alignment: the shims are v0.17-based while the Jane Street bleeding
   repo is on v0.18 previews. Porting the seam to v0.18
   (janestreet/splittable_random master) is a separate, small job — the seam

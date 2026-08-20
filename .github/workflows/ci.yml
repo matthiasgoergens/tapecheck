@@ -49,10 +49,9 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
           dune-cache: true
 
-      # tape.opam is a dependency manifest, not an installable package:
-      # the libraries have no public_name because the vendored
-      # splittable_random fork is private (see the opam file). So the
-      # deps-only install is the only part of it CI relies on.
+      # Install development and test dependencies for all three local
+      # packages. The workspace build resolves their libraries directly;
+      # the separate package-install job tests installed artefacts.
       - run: opam install . --deps-only --with-test
 
       - run: opam exec -- dune build
@@ -75,6 +74,28 @@ jobs:
       # drift here is a real signal rather than something CI absorbs
       # into a checkout it then throws away.
       - run: ./scripts/check_api_surface.sh
+
+  package-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"
+          dune-cache: true
+
+      # Pin all three packages before asking the solver to install Tapecheck.
+      # This is the supported preview path until the observer seam is in the
+      # upstream splittable_random package.
+      - run: opam pin add --kind=path splittable_random . --no-action --yes
+      - run: opam pin add --kind=path base_quickcheck . --no-action --yes
+      - run: opam pin add --kind=path tapecheck . --no-action --yes
+      - run: opam install tapecheck --yes
+
+      # This nested project sees only installed packages. It also exercises
+      # the installed ppx_quickcheck rather than merely linking Tape_engine.
+      - run: opam exec -- dune exec --root . ./main.exe
+        working-directory: install-smoke
 
   # Shrink quality is deterministic given the seeds, so a drift in the
   # numbers is a real signal rather than flakiness. Run the guard on its

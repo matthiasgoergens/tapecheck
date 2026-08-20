@@ -38,6 +38,14 @@ The latter prevents a link-only success from being mistaken for working tape
 interception. See `docs/testing-core-dependent-code.md` for the fresh-switch
 recipe and expected output.
 
+A smaller installation control now exercises the user-facing boundary. In a
+disposable OCaml 5.3 switch, `scripts/test_opam_install.sh SWITCH` installs the
+three local preview pins and builds `install-smoke/` as a separate Dune
+project. That consumer compiles an unchanged `[@@deriving quickcheck]` type
+through the installed PPX and requires installed `Tape_engine` to shrink an
+integer exactly to `50`. The three pins are still a migration mechanism; they
+do not remove the reason to upstream the observer seam.
+
 ## Shrink-quality and performance claim boundary
 
 Tapecheck has strong selected results, not blanket Hypothesis parity. The
@@ -109,9 +117,10 @@ than proof that Tapecheck is generally better than Hypothesis.
 3. **RO4:** edge-case-biased draws and opt-in structural generators show how
    the same choice representation can improve discovery and shrinking, while
    the unresolved default-list contract is stated explicitly.
-4. **Integration:** this is not only a toy engine; a fresh package-shaped
-   consumer rebuilds Jane Street's `core` stack against the seam and proves an
-   exact shrink with an atomic value shrinker.
+4. **Integration:** this is not only a toy engine; a checked three-pin install
+   builds an external PPX-using consumer, while a larger package-shaped
+   consumer rebuilds Jane Street's `core` stack and proves an exact shrink
+   with an atomic value shrinker.
 
 Do not lead with “all of Hypothesis has been ported”, performance superiority,
 automatic differential testing, complete state-machine parity, or the RO7 UI.

@@ -352,28 +352,46 @@ minimisation counts above still reproduce with
 `dune exec bench_edgecase/edgecase_bench.exe`; use the predeclared experiments
 linked from EVIDENCE.md for performance conclusions.
 
-## Building
+## Building and installing the preview
 
-This proof-of-concept is currently consumed as a source workspace, not as an
-installable opam package. The patched `splittable_random` must sit underneath a
-recompiled `base_quickcheck`; upstream
+Tapecheck is installable today as an explicit three-pin preview. The patched
+`splittable_random` must sit underneath a recompiled `base_quickcheck`, so the
+preview deliberately supplies replacement packages for both dependencies as
+well as the `tapecheck` package. This is not yet the desired single-package
+installation; upstream
 [splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)
-is the open discussion about removing that constraint. Its submitted v1 seam
+is the open discussion about removing the replacement pins. Its submitted v1 seam
 is not sufficient for the current engine: split children remain hook-free,
 while generated-function replay requires keyed observer propagation. A
 corrected v2 direction is documented in
 [design/upstream-pr-splittable-random.md](design/upstream-pr-splittable-random.md).
-`tape.opam` is therefore a dependency manifest for contributors, and
-`opam install . --deps-only` is intentional.
 
+To exercise the exact installation path in a disposable OCaml 5.3 switch:
+
+```sh
+opam switch create tapecheck-preview 5.3.0
+./scripts/test_opam_install.sh tapecheck-preview
 ```
+
+The script installs the local `splittable_random`, `base_quickcheck`, and
+`tapecheck` pins in dependency order, then builds an external consumer. The
+consumer compiles an ordinary `[@@deriving quickcheck]` generator through the
+installed PPX and checks that installed `Tape_engine` shrinks to the exact
+boundary `50`. The script modifies the named switch, which is why the recipe
+uses a disposable one.
+
+For development in the source workspace, install the dependencies of all
+three local packages and run the full suite:
+
+```sh
 opam switch create 5.3.0
 opam install . --deps-only --with-test
 dune runtest --force
 ```
 
-(No opam install of splittable_random or base_quickcheck is needed or
-used: the workspace's vendored copies shadow them; see Vendoring.)
+The workspace build continues to use its vendored copies directly; see
+Vendoring. The three-pin preview is an adoption and packaging check, not a
+claim that users should replace Jane Street packages permanently.
 
 Building and testing need the 5.3.0 switch created above: on a switch
 missing `stdio`/`ppx_sexp_conv` and the other ppx deps, most test
@@ -464,8 +482,9 @@ copy dune/opam packaging templates. CI runs both check-only paths.
 
 Early but real: the engine, the call-site-compatible wrapper, persistence, and
 the parallel pool all work and are tested; the shrink-quality table above is a
-preserved historical Wave 1 result. The repository is not yet an installable
-opam package, and compatibility does not mean identical
+preserved historical Wave 1 result. A checked three-pin opam preview is
+installable, but the clean single-package release still depends on the
+upstream observer seam. Compatibility does not mean identical
 `Base_quickcheck.Test` semantics; see Usage and Building above. The current
 [roadmap](ROADMAP.md) and findings in `design/` distinguish publication work
 from the known shrink-quality frontier. The goal is upstreaming (see above); if
