@@ -1186,7 +1186,19 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
            |> List.filter ~f:(fun sp ->
              sp.Tape.reorderable
              && not sp.Tape.discarded
-             && Tape.compare_key sp.Tape.stream Tape.root = 0)
+             && Tape.compare_key sp.Tape.stream Tape.root = 0
+             (* Bounds-check the PARENT too, not just the children below.
+                The parent's interval is used directly in [Array.sub]
+                when the proposal is reassembled, and an out-of-range
+                one would raise [Invalid_argument] OUTSIDE [attempt],
+                aborting the whole shrink rather than failing one
+                proposal. Spans and [best] are kept in step by
+                [search_attempt], so this should be unreachable; it is
+                here because the asymmetry with the child guard is
+                exactly the kind that stops being unreachable later. *)
+             && sp.Tape.start >= 0
+             && sp.Tape.stop >= sp.Tape.start
+             && sp.Tape.stop <= Array.length main)
            |> List.sort ~compare:(fun a b -> compare a.Tape.depth b.Tape.depth)
          in
          List.iter parents ~f:(fun parent ->

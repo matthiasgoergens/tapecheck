@@ -126,17 +126,23 @@ improved substantially since (`reverse` went from mean 45.95 evaluations to
 |---|---|---|
 | reverse | **1000/1000**, 17.7 | 0/1000, 293.8 |
 | distinct | **1000/1000**, 49.1 | 0/1000, 436.7 |
-| large_union_list | **1000/1000**, 211.3 | 0/1000, 1338.8 |
+| large_union_list | **1000/1000**, 211.3 | 0/1000, 1344.8 |
 | calculator | **1000/1000**, 103.3 | 16/1000, 912.0 |
-| bound5 | **1000/1000**, 154.8 | 158/1000, 276.8 |
+| bound5 | **1000/1000**, 154.8 | 0/1000, 285.0 |
 | lengthlist | **1000/1000**, 87.9 | **1000/1000**, 82.8 |
 | difference (= 0) | 1000/1000, 40.5 | 1000/1000, 85.5 |
 | difference (small) | 1000/1000, 721.6 | 1000/1000, **97.5** |
 | difference (= 1) | 1000/1000, 885.2 | 1000/1000, **98.6** |
 
 Cells are `normalised / mean evaluations`, 1000 runs each. tapecheck
-column re-measured 2026-08-08 at `3aa0a47`; see `CHALLENGE.md` for the
-patched arm and the four later-ported cases.
+column re-measured 2026-08-19 on master after the span passes landed
+(`../tapecheck-notes/challenge-1000-duplate-20260814.txt` and
+`challenge-1000-patched-20260819.txt`); see `CHALLENGE.md` for the
+patched arm and the four later-ported cases. bound5 reads 0/1000 here
+for the reason given below: `reorder_spans` normalises its answer set
+onto a single arrangement that is not the challenge's chosen
+permutation, which is a sort-key result and not a reduction
+regression.
 
 Hypothesis normalises all nine at 1000/1000. tapecheck reaches full
 normalisation on four — the difference family, and lengthlist, which

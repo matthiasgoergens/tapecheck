@@ -89,7 +89,12 @@ by default (raw:
 `../tapecheck-notes/challenge-1000-duplate-20260814.txt`). That pass
 lowers a whole group of equal-valued choices at once, which is exactly
 this challenge's shape; quality is unchanged at 1000/1000, and every
-other row in this table moved by under 1%. The `+patch` column was
+other row moved by under 1% FROM THAT PASS, measured against the
+2026-08-13 reorder baseline in
+`../tapecheck-notes/challenge-1000-reorder-20260813.txt`. Read against
+the column previously printed here, bound5 also moved — 158/1000 to
+0/1000 exact and 276.8 to 285.0 — but that is `reorder_spans`, not this
+pass, and is explained below. The `+patch` column was
 re-measured on 2026-08-19 against the same master
 (`../tapecheck-notes/challenge-1000-patched-20260819.txt`) and moves
 the same way, to 85.5. The pass must run after the deletion and lowering passes — placed before them it costs the
@@ -115,7 +120,8 @@ remainder of the suite rather than a separate category:
 | binheap | 93/1000, 1175.4 | 93/1000, 1175.4 |
 
 `<= optimal size` is worth reading alongside `exact` for these: bound5
-reaches 999/1000 at-or-below optimal size while scoring 0 exact,
+reaches 999/1000 at-or-below optimal size (1000/1000 in the `+patch`
+arm) while scoring 0 exact in both,
 because the challenge scores one exact permutation of five symmetric
 slots. Same for binheap, 299/1000 at-or-below against 93 exact.
 
@@ -123,7 +129,8 @@ slots. Same for binheap, 299/1000 at-or-below against 93 exact.
 landed, and that is not a regression in reduction.** Before the pass,
 the answer set was 22 distinct arrangements of which 158/1000 happened
 to be the challenge's permutation; the pass canonicalises them to 2,
-with 999/1000 on a single arrangement — `([], [], [], [-32768], [-1])`
+with 999/1000 on a single arrangement (the `+patch` arm reaches 1
+distinct answer) — `([], [], [], [-32768], [-1])`
 rather than the expected `([], [], [], [-1], [-32768])`. Normalisation
 is what the suite asks for and the pass delivers it; it settles on the
 wrong representative because shortlex ranks the two-entry `-32768`
