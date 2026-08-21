@@ -4,8 +4,8 @@ This manifest separates claims which a clone can reproduce directly from
 historical or companion-repository evidence. The public companion repository
 is pinned to an immutable commit.
 
-Evidence pin: `c7180809729f336cc1f69d53744b60d37f7928ee`.
-The [public commit](https://github.com/matthiasgoergens/tapecheck-evidence/commit/c7180809729f336cc1f69d53744b60d37f7928ee)
+Evidence pin: `ade578a729359dfcc954320089a5cde7207e62a8`.
+The [public commit](https://github.com/matthiasgoergens/tapecheck-evidence/commit/ade578a729359dfcc954320089a5cde7207e62a8)
 contains the experiment paths used below.
 
 ## Product-repository evidence
@@ -58,6 +58,8 @@ and verifies the byte-exact legacy-import manifest.
 | `experiments/headline-shrink-table/CURRENT-COMPARISON.md` | Generated eight-property public quality and algorithmic-cost matrix | Selected subjects, with incompatible cost boundaries displayed rather than normalised away |
 | `experiments/hypothesis-baseline/2026-08-13-1acc7b1` | Exact tracked-file archive of the pinned Hypothesis 6.164.0 harness and raw outputs | Cross-language evaluation counts are not controlled timings |
 | `experiments/intercept-overhead/2026-08-20-d436c9a` | Two separately predeclared 12-process batches replace the historical min-of-five unused-seam timing | Results vary by batch: only the faster float direction confirms; neither equivalence nor a stable overhead is established |
+| `experiments/intercept-overhead/2026-08-21-f4c7634-bound` | Forty paired same-body measurements isolate the production inactive check and retain hardware counters plus an active-observer positive control | Negative result: the float familywise upper bound is 1.0951, exposing an avoidable wrapper/default-call boundary |
+| `experiments/intercept-overhead/2026-08-21-b454796-optimised` | Separately predeclared 60-pair confirmation after the inactive public path enters the local default body directly | All three 5% upper-bound screens pass; point estimates are 0.9930, 1.0063, and 1.0190, with familywise upper bounds at most 1.0255 |
 | `experiments/fail-faster-integration/2026-08-20-225a142` | Pins the public artifact and AllegrOCaml sources, verifies the audited files byte-for-byte, and checks the rejected per-draw C-backend patch | Source/API evidence for the first design; no complete-generator performance claim |
 | `experiments/fail-faster-dual/2026-08-20-69d843f` | Preserves the dual-generated AllegrOCaml patch, real v0.16 observer backport, exact commands, and BER MetaOCaml smoke-test result | Primitive and split/perturb controls, both selection branches, 100 paired Boolean seeds, and active callbacks pass; no performance workload ran |
 | `experiments/fast-backend-dispatch/2026-08-20-5035e8d` | Two separately predeclared batches isolate dispatch around the same pointwise-equivalent C primitives | Per-draw ratios replicate at roughly 1.14, 1.22, and 1.61; not complete-generator overhead and not the artifact toolchain |
@@ -75,9 +77,9 @@ and verifies the byte-exact legacy-import manifest.
 - General quality or performance parity with Hypothesis is not established;
   the generated matrix supports only its selected subjects and stated cost
   boundaries.
-- The current unused-seam microbenchmark is machine-local and unstable across
-  its two fresh batches. It rejects a blanket equivalence claim rather than
-  establishing performance parity or superiority.
+- The optimised unused-seam result is a single-host, OCaml 5.3.0 primitive-loop
+  bound. It supports less than 5% inactive overhead for the three measured hot
+  loops, not zero cost, cross-machine equivalence, or end-to-end throughput.
 - The open `splittable_random` PR still contains an obsolete unused-cost claim
   and a v1 split contract; the unposted correction is retained under
   `proposals/COMMENT-splittable_random-2.md`.

@@ -29,8 +29,10 @@ desired permanent dependency story.
 ### 0. Correct the public upstream record
 
 `janestreet/splittable_random#2` remains open, but its description and an early
-comment cite the withdrawn minimum-of-five benchmark as evidence of no
-measurable unused cost. The submitted v1 diff also leaves split children
+comment cite the old minimum-of-five benchmark. A same-body study exposed an
+avoidable inactive-path wrapper; after its removal, a separately predeclared
+60-pair confirmation bounded the three measured primitive-loop costs below 5%
+on one host. The submitted v1 diff also leaves split children
 hook-free, whereas current generated-function support requires keyed observer
 propagation. `design/upstream-pr-splittable-random.md` audits the exact gap and
 `proposals/COMMENT-splittable_random-2.md` contains a factual draft correction.
@@ -39,7 +41,7 @@ thread while knowingly leaving the stronger stale claims unexplained.
 
 ### 1. Keep the published evidence reproducible
 
-A [public companion evidence repository](https://github.com/matthiasgoergens/tapecheck-evidence/commit/c7180809729f336cc1f69d53744b60d37f7928ee)
+A [public companion evidence repository](https://github.com/matthiasgoergens/tapecheck-evidence/commit/ade578a729359dfcc954320089a5cde7207e62a8)
 preserves the first experiment batches, the pinned Hypothesis baseline, a
 current Wave 2 shrink-table checkpoint, and negative results. `EVIDENCE.md`
 pins its immutable commit and maps product claims to their artefacts. When
@@ -112,11 +114,11 @@ For a Jane Street adoption decision, add a separate performance experiment
 against the staged and fast-randomness stack described in
 [*Fail Faster*](https://arxiv.org/abs/2503.19797). It should compare the unused
 seam, recording mode, and staged generators while preserving generator
-semantics pointwise. The current unused-seam experiment replaces the
-historical min-of-five timing with two separately predeclared fresh-process
-batches. Their Boolean and bounded-integer conclusions change between batches,
-so they establish neither equivalence nor a stable overhead and cannot stand
-in for that adoption experiment. A source audit of the now-public artifact
+semantics pointwise. The current unused-seam evidence replaces the historical
+min-of-five timing with a same-body upper-bound study and a separately
+predeclared confirmation after optimising the inactive path. All three
+primitive-loop familywise upper bounds are below 2.6%, passing the predeclared
+5% rule on one host. A source audit of the now-public artifact
 found that its ordinary staged backend already reaches the seam, while its C
 drop-in backend bypasses ordinary sampling calls. Backend-facing `run_*`
 dispatch and behavioural controls provide the required active wiring, but two

@@ -110,9 +110,19 @@ and `ROADMAP.md`, not the essay alone, for current product status.
 ### Fast-randomness integration
 
 The published *Fail Faster* artifact makes generator throughput an adoption
-constraint rather than an afterthought. Its ordinary staged randomness backend
-already enters Tapecheck's `splittable_random` seam, but its fastest C drop-in
-backend bypasses ordinary OCaml sampling calls.
+constraint rather than an afterthought. Tapecheck itself does not require C.
+The artifact's AllegrOCaml implementation offers an optional C implementation
+of the Splittable-random algorithm for faster generation: its ordinary staged
+backend enters Tapecheck's `splittable_random` seam, while that optional path
+bypasses ordinary OCaml sampling calls.
+
+The ordinary inactive seam has its own direct measurement. A same-body study
+first exposed and motivated removal of an avoidable wrapper. In a separately
+predeclared 60-pair confirmation after that optimisation, Boolean,
+bounded-integer, and float primitive-loop point estimates were 0.9930, 1.0063,
+and 1.0190, with familywise-95% upper bounds no higher than 1.0255. This passes
+the predeclared 5% rule on one host and OCaml 5.3.0; it is not a zero-cost or
+end-to-end throughput claim.
 
 Tapecheck now exposes an active backend path (`Intercept.run_*`) and a one-time
 activity test (`Intercept.is_active`). Controlled measurements reject calling

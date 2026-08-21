@@ -122,13 +122,14 @@ now-tested generated-function path. A corrective status comment is drafted in
    supported by the retained quality, distribution, and cost evidence.
 
 The newer [*Fail Faster*](https://arxiv.org/abs/2503.19797) results make
-generator throughput a first-class adoption constraint. Two separately
-predeclared unused-seam batches are retained in the companion evidence, but
-their Boolean and bounded-integer conclusions do not replicate across batches.
-That instability rules out a negligible-overhead claim from this one-host
-microbenchmark. The published AllegrOCaml source also exposed a concrete
-integration issue: its C drop-in backend bypasses ordinary
-`Splittable_random` calls. Tapecheck now provides backend-facing `run_*`
+generator throughput a first-class adoption constraint. A same-body
+unused-seam study exposed an avoidable inactive-path wrapper. After removing
+it, a separately predeclared 60-pair confirmation bounded the inactive cost
+below 5% for Boolean, bounded-integer, and float primitive loops on this host;
+point estimates ranged from -0.7% to +1.9%. The published AllegrOCaml source
+also exposed a separate integration issue: its optional C implementation of
+the Splittable-random algorithm bypasses ordinary `Splittable_random` calls.
+Tapecheck itself does not require C. Tapecheck now provides backend-facing `run_*`
 dispatch with record/replay controls. Two fresh-process batches show that
 calling it on every fast primitive is materially too expensive, so that first
 checked AllegrOCaml patch is retained as a rejected design. The seam now also

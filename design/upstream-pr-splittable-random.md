@@ -24,11 +24,14 @@ the current product uses.
 ## Corrections to the public claim boundary
 
 The PR description and the 2026-07-16 comment cite an alternating
-minimum-of-five microbenchmark as evidence of no measurable unused cost. That
-design was later withdrawn. Two separately predeclared, randomised,
-fresh-process batches do not reproduce one stable Boolean or bounded-integer
-conclusion. The honest result is unresolved unused-seam cost on one host, not
-equivalence and not a measured regression of a specific size.
+minimum-of-five microbenchmark as evidence of no measurable unused cost. A
+stronger same-body study found a real cost and exposed an avoidable wrapper on
+the inactive path. After removing that wrapper, a separately predeclared
+60-pair confirmation bounded the inactive cost below 5% for Boolean,
+bounded-integer, and float primitive loops on one host and OCaml 5.3.0. Point
+estimates were -0.7%, +0.6%, and +1.9%; the largest familywise-95% upper bound
+was 2.6%. The honest claim is this measured single-host bound, not zero cost or
+general end-to-end equivalence.
 
 The description also says the seam covers every existing generator. The draw
 hooks observe flat generators, but the submitted split contract is insufficient
@@ -61,10 +64,11 @@ decision, not a prerequisite for reviewing flat choice recording.
 
 ## Performance result from the *Fail Faster* boundary
 
-The public AllegrOCaml artifact has an ordinary staged backend which calls
-`Splittable_random`, and a faster C drop-in backend which mutates the same state
-while bypassing those functions. Local pointwise controls confirm both backends
-produce the same primitive sequence.
+The public AllegrOCaml artifact—not Tapecheck itself—has an ordinary staged
+backend which calls `Splittable_random`, and an optional faster C drop-in
+implementation of the same random algorithm. The C path mutates the same state
+while bypassing the OCaml functions where Tapecheck observes draws. Local
+pointwise controls confirm both backends produce the same primitive sequence.
 
 Calling OCaml `run_*` dispatch around every C primitive is rejected: in two
 predeclared batches, direct-dispatch ratios remained roughly 1.14 for Boolean,
