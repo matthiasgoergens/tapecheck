@@ -18,3 +18,14 @@
   (:standard -O3))
  (preprocess
   (pps ppx_sexp_message)))
+
+(executable
+ (name bench_intercept_arm)
+ (modules bench_intercept_arm)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio unix mtime.clock.os sr_real sr_nohook)
+ (ocamlopt_flags
+  (:standard -O3))
+ (preprocess
+  (pps ppx_sexp_message)))

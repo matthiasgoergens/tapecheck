@@ -243,3 +243,12 @@ module Log_uniform : sig
   val int64 : t -> lo:int64 -> hi:int64 -> int64
   val nativeint : t -> lo:nativeint -> hi:nativeint -> nativeint
 end
+
+(** Benchmark-only access to the production primitive bodies before the
+    inactive observer check.  This module exists only in the vendored
+    [sr_real] comparison library, not in Tapecheck's installed API. *)
+module For_benchmark : sig
+  val bool_direct : t -> bool
+  val int_direct : t -> lo:int -> hi:int -> int
+  val float_direct : t -> lo:float -> hi:float -> float
+end

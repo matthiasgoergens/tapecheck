@@ -576,6 +576,17 @@ end
 
 let with_intercept t intercept = { t with intercept = Some intercept }
 
+module For_benchmark = struct
+  let bool_direct = bool_default
+
+  let int_direct state ~lo ~hi =
+    Int64.to_int_trunc
+      (int64_default state ~lo:(Int64.of_int lo) ~hi:(Int64.of_int hi))
+  ;;
+
+  let float_direct = float_default
+end
+
 
 
 
