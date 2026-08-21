@@ -37,15 +37,14 @@ propagation. `design/upstream-pr-splittable-random.md` audits the exact gap and
 Obtain Matthias's approval before posting it; do not point paper authors at the
 thread while knowingly leaving the stronger stale claims unexplained.
 
-### 1. Publish reproducible evidence
+### 1. Keep the published evidence reproducible
 
-A companion evidence repository has been started locally and now preserves the
-first experiment batches, the pinned Hypothesis baseline, a current Wave 2
-shrink-table checkpoint, and negative results. `EVIDENCE.md` pins its current
-commit and maps product claims to their artefacts. Before making quantitative
-claims externally:
+A [public companion evidence repository](https://github.com/matthiasgoergens/tapecheck-evidence/commit/c7180809729f336cc1f69d53744b60d37f7928ee)
+preserves the first experiment batches, the pinned Hypothesis baseline, a
+current Wave 2 shrink-table checkpoint, and negative results. `EVIDENCE.md`
+pins its immutable commit and maps product claims to their artefacts. When
+making quantitative claims externally:
 
-- publish that repository at a stable URL;
 - keep the imported legacy outputs labelled as incomplete rather than
   promoting them into headline evidence;
 - include source revisions, seeds, environment metadata, and reproduction

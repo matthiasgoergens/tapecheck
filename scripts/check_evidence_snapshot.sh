@@ -13,7 +13,7 @@ fi
 
 # The backticks are literal Markdown delimiters, not shell expressions.
 # shellcheck disable=SC2016
-pin=$(sed -n 's/^here to commit `\([0-9a-f]\{40\}\)`.*/\1/p' \
+pin=$(sed -n 's/^Evidence pin: `\([0-9a-f]\{40\}\)`.*/\1/p' \
   "$product_dir/EVIDENCE.md")
 
 if test -z "$pin"; then

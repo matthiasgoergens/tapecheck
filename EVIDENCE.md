@@ -1,11 +1,12 @@
 # Evidence manifest
 
 This manifest separates claims which a clone can reproduce directly from
-historical or companion-repository evidence. The companion repository is
-currently local and unpublished at sibling path `../tapecheck-evidence`, pinned
-here to commit `c7180809729f336cc1f69d53744b60d37f7928ee`. Do not replace that
-pin with a public link until the referenced commit has actually been
-published.
+historical or companion-repository evidence. The public companion repository
+is pinned to an immutable commit.
+
+Evidence pin: `c7180809729f336cc1f69d53744b60d37f7928ee`.
+The [public commit](https://github.com/matthiasgoergens/tapecheck-evidence/commit/c7180809729f336cc1f69d53744b60d37f7928ee)
+contains the experiment paths used below.
 
 ## Product-repository evidence
 
@@ -77,7 +78,6 @@ and verifies the byte-exact legacy-import manifest.
 - The current unused-seam microbenchmark is machine-local and unstable across
   its two fresh batches. It rejects a blanket equivalence claim rather than
   establishing performance parity or superiority.
-- The companion repository has local Git history but no public URL yet.
 - The open `splittable_random` PR still contains an obsolete unused-cost claim
   and a v1 split contract; the unposted correction is retained under
   `proposals/COMMENT-splittable_random-2.md`.
@@ -85,6 +85,6 @@ and verifies the byte-exact legacy-import manifest.
   provenance-preserving imports, but their incomplete environment records make
   them audit trails rather than publication-grade performance evidence.
 
-When the evidence repository is published, update this file and the roadmap in
-one commit, link to the full pinned commit rather than a moving branch, and
-check every link from a fresh clone.
+The product checks the companion checkout against the immutable pin above;
+advance it only with a reviewed evidence commit and corresponding documentation
+update.

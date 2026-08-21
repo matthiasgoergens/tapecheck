@@ -93,8 +93,8 @@ strongest results; RO4 is useful but incomplete; RO2, RO3, and RO7 are
 prototypes rather than the automation the paper proposes.
 
 [**Evidence manifest**](EVIDENCE.md) maps the quantitative claims to runnable
-tests, preserved raw output, and a pinned local companion-repository commit. It
-also identifies the evidence which is still historical or not yet ready to
+tests, preserved raw output, and a pinned public companion-repository commit.
+It also identifies the evidence which is still historical or not yet ready to
 cite externally.
 
 [**Porting Hypothesis's shrinker to OCaml, and measuring what it
