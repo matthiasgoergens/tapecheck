@@ -42,9 +42,11 @@ A smaller installation control now exercises the user-facing boundary. In a
 disposable OCaml 5.3 switch, `scripts/test_opam_install.sh SWITCH` installs the
 three local preview pins and builds `install-smoke/` as a separate Dune
 project. That consumer compiles an unchanged `[@@deriving quickcheck]` type
-through the installed PPX and requires installed `Tape_engine` to shrink an
-integer exactly to `50`. The three pins are still a migration mechanism; they
-do not remove the reason to upstream the observer seam.
+through the installed PPX, runs the installed `Tape_test` facade through its
+`Base_quickcheck.Test.S`-compatible module type, and requires installed
+`Tape_engine` to shrink an integer exactly to `50`. The three pins are still a
+migration mechanism; they do not remove the reason to upstream the observer
+seam.
 
 ## Shrink-quality and performance claim boundary
 

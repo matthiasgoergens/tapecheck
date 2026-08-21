@@ -36,9 +36,9 @@ atomic positive control which must shrink exactly to `123457`.
 The remaining packaging blocker is the clean single-package route, not a
 missing engine or an untested installer. `scripts/test_opam_install.sh`
 installs the three preview pins in a disposable switch and builds an external
-consumer which uses the installed Base Quickcheck PPX and Tapecheck engine.
-Until the recording seam exists upstream, that explicit replacement stack is
-necessary.
+consumer which uses the installed Base Quickcheck PPX, runs the installed
+`Tape_test` facade, and checks an exact lower-level engine shrink. Until the
+recording seam exists upstream, that explicit replacement stack is necessary.
 
 ### Wave 2: generator cooperation
 
