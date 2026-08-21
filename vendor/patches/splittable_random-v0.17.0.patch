@@ -1,5 +1,5 @@
 diff --git a/src/splittable_random.ml b/src/splittable_random.ml
-index 6b8e31e..3ccefd2 100644
+index 6b8e31e..a6b9f5c 100644
 --- a/src/splittable_random.ml
 +++ b/src/splittable_random.ml
 @@ -21,22 +21,87 @@
@@ -134,7 +134,7 @@ index 6b8e31e..3ccefd2 100644
  ;;
  
  let next_int64 t = mix64 (next_seed t)
-@@ -104,11 +169,25 @@ let next_int64 t = mix64 (next_seed t)
+@@ -104,11 +169,29 @@ let next_int64 t = mix64 (next_seed t)
  (* [perturb] is not from any external source, but provides a way to mix in external
     entropy with a pseudo-random state. *)
  let perturb t salt =
@@ -157,11 +157,15 @@ index 6b8e31e..3ccefd2 100644
 +  | Some i -> i.bool state ~default
 +;;
 +
-+let bool state = intercept_bool state ~default:bool_default
++let bool state =
++  match state.intercept with
++  | None -> bool_default state
++  | Some i -> i.bool state ~default:bool_default
++;;
  
  (* We abuse terminology and refer to individual values as biased or unbiased.  More
     properly, what is unbiased is the sampler that results if we keep only these "unbiased"
-@@ -118,32 +197,11 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
+@@ -118,32 +201,11 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
    draw - remainder <= draw_maximum - remainder_maximum
  ;;
  
@@ -195,7 +199,7 @@ index 6b8e31e..3ccefd2 100644
    let open Int64.O in
    let rec between state ~lo ~hi =
      let draw = next_int64 state in
-@@ -171,6 +229,27 @@ let int64 =
+@@ -171,6 +233,31 @@ let int64 =
      else between state ~lo ~hi
  ;;
  
@@ -205,7 +209,11 @@ index 6b8e31e..3ccefd2 100644
 +  | Some i -> i.int64 state ~lo ~hi ~default
 +;;
 +
-+let int64 state ~lo ~hi = intercept_int64 state ~lo ~hi ~default:int64_default
++let int64 state ~lo ~hi =
++  match state.intercept with
++  | None -> int64_default state ~lo ~hi
++  | Some i -> i.int64 state ~lo ~hi ~default:int64_default
++;;
 +
 +let[@inline always] intercept_int state ~lo ~hi ~default =
 +  match state.intercept with
@@ -223,7 +231,7 @@ index 6b8e31e..3ccefd2 100644
  let int state ~lo ~hi =
    let lo = Int64.of_int lo in
    let hi = Int64.of_int hi in
-@@ -201,29 +280,78 @@ let int63 state ~lo ~hi =
+@@ -201,29 +288,82 @@ let int63 state ~lo ~hi =
  
  let double_ulp = 2. **. -53.
  
@@ -254,10 +262,13 @@ index 6b8e31e..3ccefd2 100644
 +  match state.intercept with
 +  | None -> default state
 +  | Some i -> i.unit_float state ~default
- ;;
- 
--let unit_float state = unit_float_from_int64 (next_int64 state)
-+let unit_float state = intercept_unit_float state ~default:unit_float_default
++;;
++
++let unit_float state =
++  match state.intercept with
++  | None -> unit_float_default state
++  | Some i -> i.unit_float state ~default:unit_float_default
++;;
 +
 +let bool_with_probability_default state ~probability =
 +  Float.(unit_float_default state < probability)
@@ -291,8 +302,9 @@ index 6b8e31e..3ccefd2 100644
 +  match state.intercept with
 +  | None -> sample state ~probability
 +  | Some i -> i.bool_with_probability state ~probability ~forced ~default:sample
-+;;
-+
+ ;;
+ 
+-let unit_float state = unit_float_from_int64 (next_int64 state)
 +let with_span
 +  ?(deletable = false)
 +  ?(discard_on_exception = false)
@@ -320,7 +332,7 @@ index 6b8e31e..3ccefd2 100644
  
  (* Note about roundoff error:
  
-@@ -233,16 +361,20 @@ let unit_float state = unit_float_from_int64 (next_int64 state)
+@@ -233,16 +373,20 @@ let unit_float state = unit_float_from_int64 (next_int64 state)
     with [x < 1.] such that [lo +. x *. (hi -. lo) = hi], so it would not be correct to
     document this as being exclusive of [hi].
  *)
@@ -344,7 +356,7 @@ index 6b8e31e..3ccefd2 100644
           (* Depending on rounding, the recursion with [~hi:mid] might be inclusive of [mid],
           which would mean the two cases overlap on [mid]. The alternative is to increment
           or decrement [mid] using [one_ulp] in either of the calls, but then if the first
-@@ -260,11 +392,15 @@ let float =
+@@ -260,11 +404,19 @@ let float =
      finite_float state ~lo ~hi
  ;;
  
@@ -355,15 +367,19 @@ index 6b8e31e..3ccefd2 100644
 +  match state.intercept with
 +  | None -> default state ~lo ~hi
 +  | Some i -> i.float state ~lo ~hi ~default
++;;
++
++let float state ~lo ~hi =
++  match state.intercept with
++  | None -> float_default state ~lo ~hi
++  | Some i -> i.float state ~lo ~hi ~default:float_default
  ;;
  
-+let float state ~lo ~hi = intercept_float state ~lo ~hi ~default:float_default
-+
 +
  module Log_uniform = struct
    module Make (M : sig
      include Int.S
-@@ -286,48 +422,14 @@ module Log_uniform = struct
+@@ -286,48 +438,14 @@ module Log_uniform = struct
        !n
      ;;
  
@@ -412,7 +428,7 @@ index 6b8e31e..3ccefd2 100644
  
      let log_uniform state ~lo ~hi =
        let min_bits = bits_to_represent lo in
-@@ -377,6 +479,106 @@ module Log_uniform = struct
+@@ -377,6 +495,117 @@ module Log_uniform = struct
    let nativeint = For_nativeint.log_uniform
  end
  
@@ -513,6 +529,17 @@ index 6b8e31e..3ccefd2 100644
 +
 +let with_intercept t intercept = { t with intercept = Some intercept }
 +
++module For_benchmark = struct
++  let bool_direct = bool_default
++
++  let int_direct state ~lo ~hi =
++    Int64.to_int_trunc
++      (int64_default state ~lo:(Int64.of_int lo) ~hi:(Int64.of_int hi))
++  ;;
++
++  let float_direct = float_default
++end
++
 +
 +
 +
@@ -520,7 +547,7 @@ index 6b8e31e..3ccefd2 100644
    type t = state
  
 diff --git a/src/splittable_random.mli b/src/splittable_random.mli
-index 787b052..2a128c9 100644
+index 787b052..20ff256 100644
 --- a/src/splittable_random.mli
 +++ b/src/splittable_random.mli
 @@ -19,6 +19,9 @@ open! Base
@@ -699,3 +726,16 @@ index 787b052..2a128c9 100644
  (** Produce a random number uniformly distributed in the given inclusive range.  (In the
      case of [float], [hi] may or may not be attainable, depending on rounding.)  *)
  val int : t -> lo:int -> hi:int -> int
+@@ -90,3 +243,12 @@ module Log_uniform : sig
+   val int64 : t -> lo:int64 -> hi:int64 -> int64
+   val nativeint : t -> lo:nativeint -> hi:nativeint -> nativeint
+ end
++
++(** Benchmark-only access to the production primitive bodies before the
++    inactive observer check.  This module exists only in the vendored
++    [sr_real] comparison library, not in Tapecheck's installed API. *)
++module For_benchmark : sig
++  val bool_direct : t -> bool
++  val int_direct : t -> lo:int -> hi:int -> int
++  val float_direct : t -> lo:float -> hi:float -> float
++end

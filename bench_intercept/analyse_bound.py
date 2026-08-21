@@ -11,9 +11,9 @@ import statistics
 import sys
 from pathlib import Path
 
-BLOCKS = 40
+BLOCKS = 60
 BOOTSTRAP_SAMPLES = 100_000
-BOOTSTRAP_SEED = 20_260_821
+BOOTSTRAP_SEED = 20_260_822
 DRAWS = ("bool", "int_0_1000", "float_0_1")
 CONTRASTS = ("isolated", "module", "active")
 METRICS = ("seconds", "instructions", "cycles", "branches", "branch_misses")

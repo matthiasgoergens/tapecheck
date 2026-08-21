@@ -9,7 +9,7 @@ fi
 result_dir=$1
 cpu=${TAPECHECK_BENCH_CPU:-31}
 draws=10000000
-blocks=40
+blocks=60
 
 if [[ -e "$result_dir" ]]; then
   echo "result directory already exists: $result_dir" >&2
@@ -114,7 +114,7 @@ for ((block = 0; block < blocks; block++)); do
     esac
     for draw_index in 0 1 2; do
       draw=${draw_kinds[$draw_index]}
-      seed=$((202608210 + block * 17 + contrast_index * 5 + draw_index))
+      seed=$((202608220 + block * 17 + contrast_index * 5 + draw_index))
       if (((block + contrast_index + draw_index) % 2 == 0)); then
         first=$numerator
         second=$denominator

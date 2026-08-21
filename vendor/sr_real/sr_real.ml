@@ -187,7 +187,11 @@ let[@inline always] intercept_bool state ~default =
   | Some i -> i.bool state ~default
 ;;
 
-let bool state = intercept_bool state ~default:bool_default
+let bool state =
+  match state.intercept with
+  | None -> bool_default state
+  | Some i -> i.bool state ~default:bool_default
+;;
 
 (* We abuse terminology and refer to individual values as biased or unbiased.  More
    properly, what is unbiased is the sampler that results if we keep only these "unbiased"
@@ -235,7 +239,11 @@ let[@inline always] intercept_int64 state ~lo ~hi ~default =
   | Some i -> i.int64 state ~lo ~hi ~default
 ;;
 
-let int64 state ~lo ~hi = intercept_int64 state ~lo ~hi ~default:int64_default
+let int64 state ~lo ~hi =
+  match state.intercept with
+  | None -> int64_default state ~lo ~hi
+  | Some i -> i.int64 state ~lo ~hi ~default:int64_default
+;;
 
 let[@inline always] intercept_int state ~lo ~hi ~default =
   match state.intercept with
@@ -292,7 +300,11 @@ let[@inline always] intercept_unit_float state ~default =
   | Some i -> i.unit_float state ~default
 ;;
 
-let unit_float state = intercept_unit_float state ~default:unit_float_default
+let unit_float state =
+  match state.intercept with
+  | None -> unit_float_default state
+  | Some i -> i.unit_float state ~default:unit_float_default
+;;
 
 let bool_with_probability_default state ~probability =
   Float.(unit_float_default state < probability)
@@ -398,7 +410,11 @@ let[@inline always] intercept_float state ~lo ~hi ~default =
   | Some i -> i.float state ~lo ~hi ~default
 ;;
 
-let float state ~lo ~hi = intercept_float state ~lo ~hi ~default:float_default
+let float state ~lo ~hi =
+  match state.intercept with
+  | None -> float_default state ~lo ~hi
+  | Some i -> i.float state ~lo ~hi ~default:float_default
+;;
 
 
 module Log_uniform = struct
