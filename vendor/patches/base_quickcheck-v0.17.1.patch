@@ -1,5 +1,5 @@
 diff --git a/src/generator.ml b/src/generator.ml
-index 75c8492..bcac63f 100644
+index 75c8492..c473a98 100644
 --- a/src/generator.ml
 +++ b/src/generator.ml
 @@ -1,5 +1,12 @@
@@ -97,7 +97,102 @@ index 75c8492..bcac63f 100644
  let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
    create (fun ~size ~random ->
      assert (min_length <= max_length);
-@@ -239,7 +321,11 @@ let result ok_t err_t =
+@@ -204,26 +286,77 @@ let sizes ?(min_length = 0) ?(max_length = Int.max_value) () =
+     in
+     (* pick a length, weighted low so that most of the size is spent on elements *)
+     let len = Splittable_random.Log_uniform.int random ~lo:min_length ~hi:max_length in
+-    (* if there are no elements return an empty array, otherwise return a non-empty array
+-       with the size distributed among the elements *)
++    (* WAVE 2 (tapecheck): one size draw PER ELEMENT, left to right, from a
++       running budget -- replacing a scheme that was anti-monotone in [len].
++
++       The original computed [remaining = size - (len - min_length)] and
++       distributed it with [remaining] index draws, then permuted with
++       [len - 1] swaps. Three separate dependencies on [len], and the
++       first is the damaging one: shortening a list REDISTRIBUTES the
++       freed size into the surviving elements, so they grow. For a
++       replay-based reducer that is fatal, because the move that should
++       make a counterexample smaller makes the recording bigger.
++
++       Measured before the change, on a stuck [G.list G.string] tape:
++       lowering the recorded length from 30 to 15 took the tape from 206
++       choices to 253 and the content from 14 characters to 24. The
++       proposal overran and was rejected, correctly, and the list length
++       therefore never came down at all -- with the engine reporting
++       converged.
++
++       Here each element draws its own size from what is left of the
++       budget, in order. Truncating [len] deletes exactly the trailing
++       draws and leaves every surviving element's size bit-identical, so
++       shortening a list is a strict reduction of the recording. The
++       budget is still bounded by [size], so recursive generators still
++       terminate.
++
++       Each element is ALSO charged 1 against the budget as it is drawn,
++       which is how the original made the length itself cost something
++       (its assertion was [sum + (len - min_length) = size]). Charging
++       per element as we go, rather than computing the charge from the
++       drawn length up front, is what keeps both properties at once: the
++       total stays bounded by [size], and truncating [len] still leaves
++       the surviving prefix bit-identical because the budget evolution
++       over that prefix does not depend on what came after it.
++
++       A first version of this change omitted the per-element charge, so
++       length became free. The means barely moved but the TAILS blew up:
++       at size 50 a recursive tree went from at most 51 nodes to 116,
++       and a list of strings from at most 50 characters to 78. Bounding
++       generated values by [size] is a contract callers rely on --
++       especially recursive ones through [fixed_point] -- so that
++       version was wrong even though every shrink-quality number
++       improved.
++
++       What this still costs, stated plainly: the distribution changes.
++       Sizes are front-loaded rather than permuted across positions, so
++       early elements are larger on average than late ones. And the old
++       exact-sum assertion becomes an inequality -- the total is at most
++       [size] rather than exactly it, because a log-uniform draw
++       weighted low usually leaves budget unspent. *)
+     if len = 0
+     then []
+     else (
+-      let sizes = Array.init len ~f:(fun _ -> 0) in
+-      let remaining = size - (len - min_length) in
+-      let max_index = len - 1 in
+-      for _ = 1 to remaining do
+-        (* pick an index, weighted low so that we see unbalanced distributions often *)
+-        let index = Splittable_random.Log_uniform.int random ~lo:0 ~hi:max_index in
+-        sizes.(index) <- sizes.(index) + 1
+-      done;
+-      (* permute the array so that no index is favored over another *)
+-      for i = 0 to max_index - 1 do
+-        let j = Splittable_random.int random ~lo:i ~hi:max_index in
+-        Array.swap sizes i j
+-      done;
+-      assert (Array.sum (module Int) sizes ~f:Fn.id + (len - min_length) = size);
+-      Array.to_list sizes))
++      (* An EXPLICIT in-order loop, not [List.init]: Base's [List.init]
++         evaluates [f (n-1)] first and counts down, so the draws would
++         come off the tape last-element-first and truncating [len] would
++         change the whole sequence rather than dropping its tail. That
++         is the entire property this change exists to establish, and it
++         was silently broken by the obvious spelling. Verified: with
++         [List.init 5], the evaluation order is 4,3,2,1,0. *)
++      let rec go i acc budget =
++        if i >= len
++        then List.rev acc
++        else if budget <= 0
++        then go (i + 1) (0 :: acc) budget
++        else (
++          (* the element itself costs 1, as in the original accounting *)
++          let budget = budget - 1 in
++          let s = Splittable_random.Log_uniform.int random ~lo:0 ~hi:budget in
++          go (i + 1) (s :: acc) (budget - s))
++      in
++      go 0 [] size))
+ ;;
+ 
+ let unit = return ()
+@@ -239,7 +372,11 @@ let result ok_t err_t =
  
  let list_generic ?min_length ?max_length elt_gen =
    let%bind sizes = sizes ?min_length ?max_length () in
@@ -110,7 +205,7 @@ index 75c8492..bcac63f 100644
  ;;
  
  let list elt_gen = list_generic elt_gen
-@@ -249,6 +335,99 @@ let list_with_length elt_gen ~length =
+@@ -249,6 +386,99 @@ let list_with_length elt_gen ~length =
    list_generic ~min_length:length ~max_length:length elt_gen
  ;;
  
@@ -210,7 +305,7 @@ index 75c8492..bcac63f 100644
  let list_filtered elts =
    let elts = Array.of_list elts in
    let length_of_input = Array.length elts in
-@@ -743,7 +922,13 @@ let sexp = sexp_of string
+@@ -743,7 +973,13 @@ let sexp = sexp_of string
  
  let map_tree_using_comparator ~comparator key_gen data_gen =
    let%bind keys = list key_gen in
@@ -225,7 +320,7 @@ index 75c8492..bcac63f 100644
    let%bind data = list_with_length data_gen ~length:(List.length keys) in
    return (Map.Using_comparator.Tree.of_alist_exn ~comparator (List.zip_exn keys data))
  ;;
-@@ -846,3 +1031,13 @@ module Debug = struct
+@@ -846,3 +1082,13 @@ module Debug = struct
        value)
    ;;
  end
