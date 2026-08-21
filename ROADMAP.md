@@ -26,22 +26,17 @@ desired permanent dependency story.
 
 ## Before outreach
 
-### 0. Correct the public upstream record
+### 0. Keep the public upstream record current
 
-`janestreet/splittable_random#2` remains open, but its description and an early
-comment cite the old minimum-of-five benchmark. A same-body study exposed an
-avoidable inactive-path wrapper; after its removal, a separately predeclared
-60-pair confirmation bounded the three measured primitive-loop costs below 5%
-on one host. The submitted v1 diff also leaves split children
-hook-free, whereas current generated-function support requires keyed observer
-propagation. `design/upstream-pr-splittable-random.md` audits the exact gap and
-`proposals/COMMENT-splittable_random-2.md` contains a factual draft correction.
-Obtain Matthias's approval before posting it; do not point paper authors at the
-thread while knowingly leaving the stronger stale claims unexplained.
+Completed on 2026-08-21: `janestreet/splittable_random#2` now contains the
+tested abstract observer contract with split/perturb propagation at `e50930a`.
+Its description states the narrow inactive-cost boundary, and the thread has a
+factual correction to the earlier “no measurable cost” claim. The retained
+delta and verification record remain useful provenance for that update.
 
 ### 1. Keep the published evidence reproducible
 
-A [public companion evidence repository](https://github.com/matthiasgoergens/tapecheck-evidence/commit/ade578a729359dfcc954320089a5cde7207e62a8)
+A [public companion evidence repository](https://github.com/matthiasgoergens/tapecheck-evidence/commit/3874cdb0bf3b876a1b37fc4b71618343ee0fdf9e)
 preserves the first experiment batches, the pinned Hypothesis baseline, a
 current Wave 2 shrink-table checkpoint, and negative results. `EVIDENCE.md`
 pins its immutable commit and maps product claims to their artefacts. When

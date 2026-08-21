@@ -1,10 +1,11 @@
 # Upstream `splittable_random` seam
 
-Current status, checked against the public repository on 2026-08-20:
+Current status, checked against the public repository on 2026-08-21:
 [`janestreet/splittable_random#2`](https://github.com/janestreet/splittable_random/pull/2)
 is open. The submitted branch is `tape-hooks-v017`, rebased onto upstream
-master. The last maintainer response, on 2026-08-13, said it remained on the
-back burner rather than rejecting it.
+master and updated to the tested propagation contract at `e50930a`. The last
+maintainer response, on 2026-08-13, said it remained on the back burner rather
+than rejecting it.
 
 This document supersedes the pre-submission draft formerly kept here. It
 separates what PR #2 actually contains from what the current Tapecheck engine
@@ -13,18 +14,17 @@ has since proved necessary.
 ## What the submitted PR contains
 
 The public diff adds an optional interceptor field to each random state and
-hooks `int64`, `float`, `unit_float`, and `bool`. It notifies `on_split` and
-`on_perturb`, but states produced by `split`, `split_into_capsule`, and capsule
-copying are hook-free. The interceptor is a public record, and each ordinary
-draw branches on its optional presence.
-
-That was enough for the first flat-stream engine, but it is not the interface
-the current product uses.
+hooks `int64`, `float`, `unit_float`, and `bool`. `Intercept.t` is abstract and
+constructed with optional delegating callbacks. Ordinary `split` installs the
+interceptor returned by `on_split`; `perturb` passes its salt and may install a
+replacement. Capsule states remain hook-free because ordinary closures cannot
+cross capsule boundaries. Each ordinary draw branches on the interceptor's
+optional presence.
 
 ## Corrections to the public claim boundary
 
-The PR description and the 2026-07-16 comment cite an alternating
-minimum-of-five microbenchmark as evidence of no measurable unused cost. A
+An early comment cited an alternating minimum-of-five microbenchmark as
+evidence of no measurable unused cost. A
 stronger same-body study found a real cost and exposed an avoidable wrapper on
 the inactive path. After removing that wrapper, a separately predeclared
 60-pair confirmation bounded the inactive cost below 5% for Boolean,
@@ -33,17 +33,12 @@ estimates were -0.7%, +0.6%, and +1.9%; the largest familywise-95% upper bound
 was 2.6%. The honest claim is this measured single-host bound, not zero cost or
 general end-to-end equivalence.
 
-The description also says the seam covers every existing generator. The draw
-hooks observe flat generators, but the submitted split contract is insufficient
-for generated functions: `Base_quickcheck.Generator.fn` draws the function body
-from split and perturbed child states. A hook-free child cannot record or replay
-those draws. Tapecheck's tested function support instead uses `on_split : unit
--> observer option` and `on_perturb : int -> observer option`, so each child is
-attached to its own keyed tape stream.
-
-`with_intercept` returns a snapshot record copy in the submitted implementation;
-the interface comment saying it shares the underlying PRNG should also be
-corrected.
+The public description and comment now state that narrower performance claim.
+The updated diff also uses the tested generated-function contract: `on_split :
+unit -> observer option` and `on_perturb : int -> observer option`, so split and
+perturbed states can attach to keyed tape streams. Its `with_intercept`
+documentation correctly describes a snapshot record copy rather than shared
+state.
 
 ## What the current local seam adds
 
@@ -76,32 +71,28 @@ predeclared batches, direct-dispatch ratios remained roughly 1.14 for Boolean,
 and choosing a complete direct or observed loop met a predeclared ±2%
 equivalence margin for every loop in both primary and confirmation batches.
 
-This supports a whole-generated-body split, not the current per-draw upstream
-field by itself. Actual dual AllegrOCaml code generation and artifact-level
-throughput remain unmeasured.
+This supports a whole-generated-body split, not the per-draw upstream field by
+itself. The dual AllegrOCaml path now compiles and passes behavioural controls.
+In a four-workload replication, Boolean and integer-list intervals met the
+predeclared ±2% margin while Boolean-list and nested-list intervals did not.
+Blanket equivalence and end-to-end artifact throughput therefore remain open.
 
-## Recommended upstream sequence
+## Upstream sequence
 
-Do not silently expand PR #2 to the complete experimental record.
+The first three preparation steps are complete: the stale claims were
+corrected, the abstract v2 contract was tested, and the existing PR was updated
+in place. The retained delta in `proposals/splittable_random-pr2-v2.patch` and
+its verification record in `proposals/SPLITTABLE-RANDOM-PR2-V2.md` preserve the
+transition from the original head.
 
-1. Correct the stale performance and coverage claims in the existing thread.
-2. Ask whether maintainers prefer the current PR to remain a design discussion
-   or be replaced by a narrower Wave 1 v2.
-3. If they want code, make the Wave 1 observer abstract rather than exposing a
-   record whose required fields cannot evolve. It must propagate keyed
-   observers through split and perturb, and its documentation must say snapshot
-   copy rather than shared state. The vendored prototype now implements this
-   shape: `Intercept.create` has optional delegating callbacks and `t` is
-   abstract at the interface. A minimal, locally checked delta against the
-   exact public PR head is retained in
-   `proposals/splittable_random-pr2-v2.patch`, with its verification boundary
-   in `proposals/SPLITTABLE-RANDOM-PR2-V2.md`.
-4. Keep weighted choices and spans in a separate Base Quickcheck-facing
-   proposal, after the primitive seam direction is accepted.
-5. Treat accelerated backends separately: expose one activity query and select
+The remaining scope boundaries are unchanged:
+
+1. Keep weighted choices and spans in a separate Base Quickcheck-facing
+   proposal, after the primitive interception direction is accepted.
+2. Treat accelerated backends separately: expose one activity query and select
    complete generated bodies once. Do not put an OCaml callback around every
    fast primitive.
-6. Before claiming inactive-path acceptability, measure complete ordinary and
+3. Before making a broad inactive-path claim, measure complete ordinary and
    staged generators—not only primitive loops—on Jane Street-relevant hardware.
 
 The current vendored seam remains a workable product path if Jane Street does

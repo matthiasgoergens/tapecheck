@@ -1,13 +1,14 @@
 # Minimal v2 delta for `splittable_random#2`
 
-`splittable_random-pr2-v2.patch` is a local, unposted review delta against the
-exact public PR head:
+`splittable_random-pr2-v2.patch` is the retained review delta that was applied
+to the public PR on 2026-08-21:
 
 - PR: `janestreet/splittable_random#2`
-- head: `3726e515f53cbbfd3e801d92aebfa8acd31c5adc`
+- original head: `3726e515f53cbbfd3e801d92aebfa8acd31c5adc`
+- updated head: `e50930a084696d85984fbdb6a4526fb59f489377`
 - base: `e20072cb64db9ddb0b50a5471b51014cae5981bc`
 - patch SHA-256: `e08b16717057470ed7bbc7a6d576a090828e83f391baa3564a166c9cf9365e05`
-- checked: 2026-08-20
+- checked: 2026-08-20 and rerun before publication on 2026-08-21
 
 It deliberately does not add Tapecheck's Wave 2 weighted choices or spans, and
 does not add the accelerated-backend `run_*` functions. It changes only the
@@ -47,7 +48,5 @@ Building the untouched PR source under the product's OCaml 5.3 switch is not a
 valid alternative verification: that switch lacks both `capsule0.prim` and the
 PR test suite's `expect_test_helpers_core` dependency.
 
-This patch is preparation, not authority to update the public branch. If the
-maintainer asks for a revision, re-fetch the live PR head, apply this delta in a
-fresh branch, and rerun against the then-current Jane Street toolchain before
-showing the final diff for approval.
+The updated PR branch is the authoritative review surface. This retained delta
+records exactly how the original submitted contract became commit `e50930a`.

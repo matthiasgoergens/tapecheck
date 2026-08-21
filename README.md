@@ -381,10 +381,10 @@ preview deliberately supplies replacement packages for both dependencies as
 well as the `tapecheck` package. This is not yet the desired single-package
 installation; upstream
 [splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)
-is the open discussion about removing the replacement pins. Its submitted v1 seam
-is not sufficient for the current engine: split children remain hook-free,
-while generated-function replay requires keyed observer propagation. A
-corrected v2 direction is documented in
+is the open discussion about removing the replacement pins. Its current diff
+now carries the tested v2 contract: the interceptor is abstract, and split and
+perturbed states can receive keyed interceptors for generated-function replay.
+The contract and its deliberately narrow scope are documented in
 [design/upstream-pr-splittable-random.md](design/upstream-pr-splittable-random.md).
 
 To exercise the exact installation path in a disposable OCaml 5.3 switch:
