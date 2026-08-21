@@ -128,8 +128,9 @@ failure to its boundary”.
 The root workspace now exposes a checked three-pin preview: replacement
 `splittable_random` and `base_quickcheck` packages plus `tapecheck`. Run
 `scripts/test_opam_install.sh` against a disposable OCaml 5.3 switch for the
-small installed-package control. A normal single-package release remains
-blocked on
+small installed-package control. It compiles the installed Quickcheck PPX,
+runs the installed `Tape_test` facade, and checks an exact `Tape_engine`
+shrink. A normal single-package release remains blocked on
 [janestreet/splittable_random#2](https://github.com/janestreet/splittable_random/pull/2)
 (the intercept-seam discussion). The submitted v1 diff does not propagate
 observers into split children and therefore cannot replace the current seam

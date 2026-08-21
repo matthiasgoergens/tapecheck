@@ -380,9 +380,10 @@ opam switch create tapecheck-preview 5.3.0
 The script installs the local `splittable_random`, `base_quickcheck`, and
 `tapecheck` pins in dependency order, then builds an external consumer. The
 consumer compiles an ordinary `[@@deriving quickcheck]` generator through the
-installed PPX and checks that installed `Tape_engine` shrinks to the exact
-boundary `50`. The script modifies the named switch, which is why the recipe
-uses a disposable one.
+installed PPX, runs the installed `Tape_test` facade through its
+`Base_quickcheck.Test.S`-compatible module type, and checks that installed
+`Tape_engine` shrinks to the exact boundary `50`. The script modifies the
+named switch, which is why the recipe uses a disposable one.
 
 For development in the source workspace, install the dependencies of all
 three local packages and run the full suite:
