@@ -52,9 +52,13 @@ jobs:
       # Install development and test dependencies for all three local
       # packages. The workspace build resolves their libraries directly;
       # the separate package-install job tests installed artefacts.
-      - run: opam install . --deps-only --with-test
+      - run: opam install . --deps-only --with-test --with-doc
 
       - run: opam exec -- dune build
+
+      # Every installed Tapecheck module has an explicit interface. Keep its
+      # generated API documentation buildable as those contracts evolve.
+      - run: opam exec -- dune build @doc
 
       # The suite is the point of this workflow, not the build. It
       # contains the regression guard (shrink quality AND cost, with

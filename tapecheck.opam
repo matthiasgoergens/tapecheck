@@ -19,6 +19,7 @@ build: [
 depends: [
   "ocaml"             {>= "5.3.0"}
   "dune"              {>= "3.11"}
+  "odoc"              {with-doc}
   "base"              {>= "v0.17" & < "v0.18~"}
   "base_quickcheck"   {= "v0.17.1+tapecheck"}
   "splittable_random" {= "v0.17.0+tapecheck"}
