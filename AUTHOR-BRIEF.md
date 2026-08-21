@@ -21,8 +21,10 @@ random-observer seam is upstream.
 ## Two separable upstream stages
 
 Wave 1 is already a useful adoption proposal with no changes to existing
-generator implementations. Wave 2 is the optional next step: small,
-generator-aware changes buy further improvements on structural data.
+generator implementations. Wave 2 is the natural next step: small,
+generator-aware changes buy further improvements on structural data. They are
+introduced as additions first to make migration reviewable, not as a claim
+that the current list representation should remain the default indefinitely.
 
 ### Wave 1: unchanged generators
 
@@ -65,10 +67,13 @@ On paired seeds which found a failure in both arms, structural lists used
 not share the same original value, so this is a complete-arm result rather
 than a pure shrink-pass effect.
 
-Structural lists should be proposed as an addition first, not made the default
-silently: each element receives the ambient size, while some existing
+Structural lists should be proposed as an addition first, then evaluated as a
+future default: each element receives the ambient size, while some existing
 `fixed_point` programmes rely on ordinary lists splitting that size to
-terminate. Recursive users need migration to an explicit leaf budget.
+terminate. Recursive users need migration to an explicit leaf budget. This is
+a compatibility plan, not evidence that Base Quickcheck's current list
+encoding is preferable; Hypothesis's continuation design has a clear
+shrinkability rationale, and Tapecheck's selected measurements favour it.
 
 ## Current comparison with Hypothesis
 

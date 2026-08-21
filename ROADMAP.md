@@ -11,7 +11,7 @@ Tapecheck has two distinct stages:
 
 1. **Wave 1** records and shrinks choices beneath existing
    `base_quickcheck` generators. The immutable checkpoint is `695082c`.
-2. **Wave 2** investigates generator cooperation: continuation choices,
+2. **Wave 2** develops the natural generator-layer evolution: continuation choices,
    structural spans, reorderable siblings, discarded attempts, and explicit
    recursive leaf budgets.
 

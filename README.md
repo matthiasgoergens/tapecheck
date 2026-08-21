@@ -31,8 +31,10 @@ generator expression.
 
 The adoption claim is deliberately asymmetric: Wave 1 is useful on its own
 and requires no changes to existing generator implementations; Wave 2 is an
-optional follow-up in which small structural changes improve selected
-shrinking results further.
+natural follow-up in which small structural changes improve selected shrinking
+results further. Its APIs are introduced opt-in so compatibility can be
+measured, not because the existing list representation is the intended end
+state.
 
 There are two deliberately distinct stages of this work:
 

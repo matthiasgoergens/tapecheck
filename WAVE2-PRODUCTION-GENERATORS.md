@@ -44,6 +44,13 @@ signals. Two 1,000-seed regressions exercise the catch-all and nesting cases.
 
 ## Why these are not the defaults yet
 
+Opt-in is a rollout strategy, not the intended permanent boundary. Hypothesis
+has principled reasons for continuation-encoded collections, and Tapecheck's
+predeclared selected comparisons strongly favour the structural
+representation. The remaining question is how to migrate size-dependent
+recursive users safely, not whether the existing list encoding is
+intrinsically valuable.
+
 Replacing `Generator.list` alone would make existing `Generator.fixed_point`
 programmes unsafe. Its documented termination story currently depends on list
 elements receiving strictly smaller portions of the ambient size. Structural
@@ -54,10 +61,10 @@ The opt-in checkpoint lets real consumers migrate and supplies a candidate
 upstream API without silently changing every existing generator. The current
 implementation depends on the companion `splittable_random` span/interception
 patch, so the two seams must be proposed together (or the span calls made
-optional) rather than sending this Base Quickcheck patch alone. Replacing the defaults
-requires a migration plan for `fixed_point`, `recursive_union`, and code which
-relies on the current `sizes` contract. The old APIs and distributions remain
-byte-for-byte unchanged in this checkpoint.
+optional) rather than sending this Base Quickcheck patch alone. Replacing the
+defaults requires a migration plan for `fixed_point`, `recursive_union`, and
+code which relies on the current `sizes` contract. The old APIs and
+distributions remain byte-for-byte unchanged in this checkpoint.
 
 ## Validation
 
@@ -84,7 +91,7 @@ committed.
 The calculator migration and descendant pass are now measured in
 `WAVE2-CALCULATOR-MIGRATION.md` and `WAVE2-PASS-TO-DESCENDANT.md`. The next
 upstream step is to propose these functions and their companion span seam as
-additions first. A later breaking release can consider making structural
-lists the default alongside a replacement or deprecation path for
-size-dependent `fixed_point` recursion. First-class string and bytes choices
-remain the next independent shrinking capability.
+additions first. After consumer migration evidence, a later breaking release
+should evaluate making structural lists the default alongside a replacement or
+deprecation path for size-dependent `fixed_point` recursion. First-class string
+and bytes choices remain the next independent shrinking capability.
