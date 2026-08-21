@@ -29,6 +29,11 @@ including those using everything `[@@deriving quickcheck]` produces,
 can participate by changing the test runner rather than rewriting the
 generator expression.
 
+The adoption claim is deliberately asymmetric: Wave 1 is useful on its own
+and requires no changes to existing generator implementations; Wave 2 is an
+optional follow-up in which small structural changes improve selected
+shrinking results further.
+
 There are two deliberately distinct stages of this work:
 
 - **Wave 1**, preserved at commit `695082c`, is the unchanged-generator

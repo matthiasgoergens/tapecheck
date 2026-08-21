@@ -20,6 +20,10 @@ random-observer seam is upstream.
 
 ## Two separable upstream stages
 
+Wave 1 is already a useful adoption proposal with no changes to existing
+generator implementations. Wave 2 is the optional next step: small,
+generator-aware changes buy further improvements on structural data.
+
 ### Wave 1: unchanged generators
 
 Wave 1 records beneath the generator layer through no-op-by-default hooks in
