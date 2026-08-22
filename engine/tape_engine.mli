@@ -52,6 +52,11 @@ module For_tape_test : sig
   val record_failed_case : stats -> unit
 end
 
+(** Run generation and shrinking directly. With [domains > 1], search cases
+    and shrink proposals are evaluated in a worker pool, but generation-phase
+    events, health checks, observations, timings, exhaustion detection, and
+    correlated-value generation are currently unavailable. Pass/discard counts
+    and shrink replay accounting are retained. *)
 val run
   :  ?seed:int
   -> ?count:int

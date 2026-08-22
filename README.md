@@ -288,7 +288,11 @@ evaluates generation cases and shrink proposals in parallel (worker
 pool). Accepted-edit sequences and results are identical to the
 sequential engine (lowest-index acceptance); with a pool the engine
 evaluates batches speculatively, so attempt COUNTS can exceed the
-sequential run's. Your generator and test function must be safe to
+sequential run's. This low-level parallel path is currently search-only:
+it counts passed and discarded cases and shrink replays, but does not collect
+`event` labels or run health checks, observations, timing, exhaustion detection,
+or correlated-value generation. The ordinary `Tape_test` facade does not expose
+`?domains`. Your generator and test function must be safe to
 call from multiple domains: in particular, recursive generators built
 on `Generator.fixed_point`/`recursive_union` memoize through OCaml's
 `Lazy`, which is not concurrency-safe, and a race surfaces as a raised
