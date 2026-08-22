@@ -221,6 +221,29 @@ let () =
   in
   check "huge truncated v2 input is rejected promptly"
     (Option.is_none (Tape.deserialize_image huge_truncated_v2));
+  let noncanonical streams : Tape.image = { main = [||]; streams } in
+  check "v2 root-keyed sub-stream is rejected"
+    (Option.is_none
+       (Tape.deserialize_image
+          (Tape.serialize_image
+             (noncanonical [| Tape.root, [| Tape.Bool true |] |]))));
+  let duplicate_key = [ Tape.Split 0 ] in
+  check "v2 duplicate sub-stream keys are rejected"
+    (Option.is_none
+       (Tape.deserialize_image
+          (Tape.serialize_image
+             (noncanonical
+                [| duplicate_key, [| Tape.Bool true |]
+                 ; duplicate_key, [| Tape.Bool false |]
+                |]))));
+  check "v2 out-of-order sub-stream keys are rejected"
+    (Option.is_none
+       (Tape.deserialize_image
+          (Tape.serialize_image
+             (noncanonical
+                [| [ Tape.Split 1 ], [| Tape.Bool true |]
+                 ; [ Tape.Split 0 ], [| Tape.Bool false |]
+                |]))));
 
   (* A kind mismatch consumes the offending input entry and realigns,
      instead of freezing the position and abandoning the rest. *)

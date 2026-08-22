@@ -891,7 +891,22 @@ let deserialize_image (s : string) : image option =
         streams ((k, arr) :: acc) (i + 1)
     in
     let* subs = streams [] 0 in
-    Some { main; streams = Array.of_list subs }
+    (* Engine-produced images contain only non-root sub-streams in strict key
+       order. Reject root aliases, duplicates, and out-of-order entries from
+       untrusted regression files; [start_replay_image] stores streams in a
+       hash table, where accepting them would silently replace the main input
+       or an earlier duplicate. *)
+    let rec canonical previous = function
+      | [] -> true
+      | (k, _) :: rest ->
+        compare_key k root <> 0
+        && (match previous with
+            | None -> true
+            | Some p -> compare_key p k < 0)
+        && canonical (Some k) rest
+    in
+    if canonical None subs then Some { main; streams = Array.of_list subs }
+    else None
   | _ -> None
 
 let deserialize (s : string) : choice array option =
