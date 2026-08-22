@@ -132,7 +132,7 @@ let () =
   done;
   Stdlib.Printf.printf "fn/orphan:     stuck %d of %d failing seeds\n"
     !stuck !found;
-  check "fn/orphan: found failures" (!found > 15);
+  check "fn/orphan: found failures on every pinned seed" (!found = 40);
   check "fn/orphan: no stuck shrinks (orphan adoption)" (!stuck = 0)
 
 (* Serialization round-trip for stream-carrying images, plus v1 compat:

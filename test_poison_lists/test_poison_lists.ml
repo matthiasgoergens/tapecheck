@@ -148,26 +148,17 @@ let () =
       !not_found;
   Stdio.printf "\n";
 
-  (* A FLOOR, not the exact minimum, and deliberately so -- the same
-     shape as test_poison's 10/34 and regression_guard's lengthlist row.
-     Hypothesis reaches 48/48; this engine reaches 22/48 and the gap is
-     real, so asserting 48 would mean a permanently red build that
-     everyone learns to ignore. The floor guards the two things that can
-     actually be lost silently:
+  (* Hypothesis reaches 48/48; this engine reaches 21/48 and the gap is real.
+     These cases and seeds are deterministic, so pin the measured result
+     rather than allowing it to decay behind a floor. A regression or an
+     improvement moves the published frontier and requires updating
+     CHALLENGE.md, the comparison board, and this test.
 
-       - a REGRESSION below what is measured today, and
-       - an IMPROVEMENT going unnoticed, which is why passing the floor
-         while beating the recorded figure is reported loudly. If this
-         reaches 48 the frontier has moved and CHALLENGE.md, the board
-         and this comment all want updating.
-
-     Two further live assertions, because a floor alone is satisfiable
-     by a broken benchmark: every case must actually FIND poison (a run
-     that generates none shrinks nothing and would sail past a floor of
-     20 by never being counted), and none may be cut off, since a
-     cut-off run measures the cutoff rather than the shrinker. *)
+     Two further live assertions prevent a broken benchmark from preserving
+     the headline accidentally: every case must find poison, and none may be
+     cut off, since a cut-off run measures the cutoff rather than the
+     shrinker. *)
   let recorded = 21 in
-  let floor = 20 in
   let ok = ref true in
   if found <> !cases then begin
     ok := false;
@@ -182,23 +173,17 @@ let () =
        shrinker\n"
       !truncated
   end;
-  if exact < floor then begin
+  if exact <> recorded then begin
     ok := false;
     Stdio.printf
-      "  FAIL  exact minima %d < floor %d (recorded %d, Hypothesis 48/48)\n"
-      exact floor recorded
-  end
-  else if exact > recorded then begin
-    ok := false;
-    Stdio.printf
-      "  FAIL  exact minima silently improved: %d > the recorded %d. The \
-       frontier moved -- raise both numbers here and update CHALLENGE.md.\n"
+      "  FAIL  exact minima %d differs from recorded %d. The frontier moved \
+       -- review it and update CHALLENGE.md.\n"
       exact recorded
   end
   else
     Stdio.printf
-      "  ok    exact minima %d/%d (floor %d, ceiling %d, Hypothesis 48/48)\n"
-      exact found floor recorded;
+      "  ok    exact minima %d/%d (recorded exactly, Hypothesis 48/48)\n"
+      exact found;
 
   if not !ok then begin
     Stdio.printf

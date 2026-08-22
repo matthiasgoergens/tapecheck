@@ -144,35 +144,31 @@ let () =
 
   Stdio.printf "\n  %d/%d exact minima reached\n" !passed !checks;
 
-  (* A FLOOR, like test_poison's 10/34 and test_poison_lists' 20/48.
-     Hypothesis passes all of these; this engine does not, and pinning
-     the exact figure means a red build nobody reads. The floor catches
-     a regression, and beating the recorded number is reported loudly so
-     an improvement is not absorbed silently.
+  (* These cases and seeds are deterministic, so pin the measured result.
+     Hypothesis passes all of them; this engine does not. Both a regression
+     and an improvement move the published frontier and require review rather
+     than being silently absorbed.
 
      [checks] is asserted too: a file that stops running its cases would
-     otherwise report 0/0 and sail past any floor. *)
+     otherwise report 0/0 and appear to preserve the recorded count. *)
   let recorded = 5 in
   let expected_checks = 8 in
-  let floor = 4 in
   let ok = ref true in
   if !checks <> expected_checks then begin
     ok := false;
     Stdio.printf "  FAIL  ran %d checks, expected %d -- cases stopped running\n"
       !checks expected_checks
   end;
-  if !passed < floor then begin
+  if !passed <> recorded then begin
     ok := false;
-    Stdio.printf "  FAIL  %d < floor %d (recorded %d, Hypothesis 8/8)\n" !passed
-      floor recorded
-  end
-  else if !passed > recorded then
     Stdio.printf
-      "  ****  IMPROVED: %d > the recorded %d. Raise both numbers here.\n"
+      "  FAIL  %d differs from recorded %d; review the changed frontier \
+       (Hypothesis 8/8)\n"
       !passed recorded
+  end
   else
-    Stdio.printf "  ok    %d/%d (floor %d, Hypothesis 8/8)\n" !passed !checks
-      floor;
+    Stdio.printf "  ok    %d/%d (recorded exactly, Hypothesis 8/8)\n"
+      !passed !checks;
   (* The three that remain are all the same family -- a length or a
      structure that will not come down -- which is what LENGTH-REPAIR.md
      is about. Listed rather than summarised so a change in WHICH ones
