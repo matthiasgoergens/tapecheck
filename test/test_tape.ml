@@ -213,6 +213,14 @@ let () =
     (Option.is_none (Tape.deserialize (String.sub bytes 0 (String.length bytes - 1))));
   check "bad version rejected"
     (Option.is_none (Tape.deserialize ("\002" ^ String.sub bytes 1 (String.length bytes - 1))));
+  (* A v2 count may be large even when the payload is already exhausted.
+     Reject at the first absent record rather than looping to the declared
+     count.  0x0fff_ffff is the largest accepted count. *)
+  let huge_truncated_v2 =
+    "\002\255\255\255\015\000\000\000\000"
+  in
+  check "huge truncated v2 input is rejected promptly"
+    (Option.is_none (Tape.deserialize_image huge_truncated_v2));
 
   (* A kind mismatch consumes the offending input entry and realigns,
      instead of freezing the position and abandoning the rest. *)
