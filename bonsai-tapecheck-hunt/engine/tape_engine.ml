@@ -263,9 +263,9 @@ let run_and_test_timed (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
   let random =
     Splittable_random.For_tape.attach (Splittable_random.of_int seed) tape
   in
-  let t0 = Stdlib.Sys.time () in
+  let t0 = Unix.gettimeofday () in
   let value = Base_quickcheck.Generator.generate gen ~size ~random in
-  let t1 = Stdlib.Sys.time () in
+  let t1 = Unix.gettimeofday () in
   Tape_stats.begin_case ();
   let verdict =
     match test value with
@@ -273,7 +273,7 @@ let run_and_test_timed (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
     | false -> Tape_stats.Case_failed
     | exception Tape_stats.Invalid_example -> Tape_stats.Case_invalid
   in
-  let t2 = Stdlib.Sys.time () in
+  let t2 = Unix.gettimeofday () in
   let out = Tape.finish tape in
   (value, verdict, out, t1 -. t0, t2 -. t1)
 
@@ -283,7 +283,7 @@ let run_and_test_timed (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
    worth paying for on this particular case.
 
    Why this matters (measured in
-   demo/stats_overhead_bench.ml): [Stdlib.Sys.time()] is a real
+   demo/stats_overhead_bench.ml): reading the wall clock is a real
    syscall, and THREE calls per case (around generate, around the test)
    turned out to dominate the entire per-case cost -- +327% versus a
    hand-rolled loop with none of RO6's bookkeeping, on a cheap
@@ -3254,7 +3254,7 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
           && !consecutive_repeats < repeats_before_giving_up
         do
           Tape.start_recording tape;
-          (* Only pay for per-case timing (three Sys.time() calls,
+          (* Only pay for per-case timing (three wall-clock reads,
              measured to be the dominant added cost -- see
              run_and_test_maybe_timed's comment and
              demo/stats_overhead_bench.ml) while the health-check window

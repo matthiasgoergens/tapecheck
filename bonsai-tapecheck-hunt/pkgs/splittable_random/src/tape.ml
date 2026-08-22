@@ -835,15 +835,19 @@ let take_count r =
   | _ -> None
 
 let take_choices r n =
-  let acc = ref [] in
-  let ok = ref true in
-  for _ = 1 to n do
-    if !ok then
+  (* Stop at the first malformed or truncated record.  The count is
+     attacker-controlled when a regression tape comes from disk; the old
+     [for] loop kept counting to [n] after parsing had already failed, so a
+     nine-byte input declaring 268 million absent choices consumed a full
+     268-million-iteration loop before returning [None]. *)
+  let rec loop i acc =
+    if i >= n then Some (Array.of_list (List.rev acc))
+    else
       match take_choice r with
-      | Some c -> acc := c :: !acc
-      | None -> ok := false
-  done;
-  if !ok then Some (Array.of_list (List.rev !acc)) else None
+      | Some c -> loop (i + 1) (c :: acc)
+      | None -> None
+  in
+  loop 0 []
 
 let deserialize_image (s : string) : image option =
   let r = { src = s; pos = 0 } in
