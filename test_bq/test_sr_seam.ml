@@ -37,6 +37,28 @@ let () =
   check "default perturb callback retains the observer"
     (Sr_real.Intercept.is_active delegating);
 
+  let invalid_hook_called = ref false in
+  let invalid_state =
+    Sr_real.with_intercept (Sr_real.of_int 1)
+      (Sr_real.Intercept.create
+         ~int64:(fun _ ~lo ~hi:_ ~default:_ ->
+           invalid_hook_called := true;
+           lo)
+         ~float:(fun _ ~lo ~hi:_ ~default:_ ->
+           invalid_hook_called := true;
+           lo)
+         ())
+  in
+  check "integer bounds are validated before interception"
+    (Result.is_error
+       (Result.try_with (fun () ->
+          ignore (Sr_real.int64 invalid_state ~lo:1L ~hi:0L : int64))));
+  check "float bounds are validated before interception"
+    (Result.is_error
+       (Result.try_with (fun () ->
+          ignore (Sr_real.float invalid_state ~lo:1. ~hi:0. : float))));
+  check "invalid draws never reach the interceptor" (not !invalid_hook_called);
+
   let events = ref [] in
   let weighted_calls = ref [] in
   let default_span_start label ~deletable ~discardable:_ ~descendable

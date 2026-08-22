@@ -1,5 +1,5 @@
 diff --git a/src/splittable_random.ml b/src/splittable_random.ml
-index 6b8e31e..a6b9f5c 100644
+index 6b8e31e..74acc22 100644
 --- a/src/splittable_random.ml
 +++ b/src/splittable_random.ml
 @@ -21,22 +21,87 @@
@@ -165,7 +165,7 @@ index 6b8e31e..a6b9f5c 100644
  
  (* We abuse terminology and refer to individual values as biased or unbiased.  More
     properly, what is unbiased is the sampler that results if we keep only these "unbiased"
-@@ -118,32 +201,11 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
+@@ -118,32 +201,16 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
    draw - remainder <= draw_maximum - remainder_maximum
  ;;
  
@@ -195,24 +195,38 @@ index 6b8e31e..a6b9f5c 100644
     OCaml standard library.  The purpose is to use the minimum number of calls to
     [next_int64] to produce a number uniformly chosen within the given range. *)
 -let int64 =
++let validate_int64_bounds ~lo ~hi =
++  if lo > hi
++  then Error.raise_s [%message "int64: crossed bounds" (lo : int64) (hi : int64)]
++;;
++
 +let int64_default =
    let open Int64.O in
    let rec between state ~lo ~hi =
      let draw = next_int64 state in
-@@ -171,6 +233,31 @@ let int64 =
+@@ -161,8 +228,7 @@ let int64 =
+     else non_negative_up_to state maximum
+   in
+   fun state ~lo ~hi ->
+-    if lo > hi
+-    then Error.raise_s [%message "int64: crossed bounds" (lo : int64) (hi : int64)];
++    validate_int64_bounds ~lo ~hi;
+     let diff = hi - lo in
+     if diff = Int64.max_value
+     then (next_int64 state land Int64.max_value) + lo
+@@ -171,6 +237,30 @@ let int64 =
      else between state ~lo ~hi
  ;;
  
 +let[@inline always] intercept_int64 state ~lo ~hi ~default =
++  validate_int64_bounds ~lo ~hi;
 +  match state.intercept with
 +  | None -> default state ~lo ~hi
 +  | Some i -> i.int64 state ~lo ~hi ~default
 +;;
 +
 +let int64 state ~lo ~hi =
-+  match state.intercept with
-+  | None -> int64_default state ~lo ~hi
-+  | Some i -> i.int64 state ~lo ~hi ~default:int64_default
++  intercept_int64 state ~lo ~hi ~default:int64_default
 +;;
 +
 +let[@inline always] intercept_int state ~lo ~hi ~default =
@@ -231,7 +245,7 @@ index 6b8e31e..a6b9f5c 100644
  let int state ~lo ~hi =
    let lo = Int64.of_int lo in
    let hi = Int64.of_int hi in
-@@ -201,29 +288,82 @@ let int63 state ~lo ~hi =
+@@ -201,29 +291,82 @@ let int63 state ~lo ~hi =
  
  let double_ulp = 2. **. -53.
  
@@ -332,11 +346,19 @@ index 6b8e31e..a6b9f5c 100644
  
  (* Note about roundoff error:
  
-@@ -233,16 +373,20 @@ let unit_float state = unit_float_from_int64 (next_int64 state)
+@@ -233,16 +376,28 @@ let unit_float state = unit_float_from_int64 (next_int64 state)
     with [x < 1.] such that [lo +. x *. (hi -. lo) = hi], so it would not be correct to
     document this as being exclusive of [hi].
  *)
 -let float =
++let validate_float_bounds ~lo ~hi =
++  if not (Float.is_finite lo && Float.is_finite hi)
++  then
++    raise_s [%message "float: bounds are not finite numbers" (lo : float) (hi : float)];
++  if Float.( > ) lo hi
++  then raise_s [%message "float: bounds are crossed" (lo : float) (hi : float)]
++;;
++
 +let float_default =
 +  (* Uses the [_default] internals: when a hook delegates to [default],
 +     the fallback must not re-enter the hooks, or a single [float] draw
@@ -356,7 +378,16 @@ index 6b8e31e..a6b9f5c 100644
           (* Depending on rounding, the recursion with [~hi:mid] might be inclusive of [mid],
           which would mean the two cases overlap on [mid]. The alternative is to increment
           or decrement [mid] using [one_ulp] in either of the calls, but then if the first
-@@ -260,11 +404,19 @@ let float =
+@@ -252,19 +407,22 @@ let float =
+       else finite_float state ~lo:mid ~hi)
+   in
+   fun state ~lo ~hi ->
+-    if not (Float.is_finite lo && Float.is_finite hi)
+-    then
+-      raise_s [%message "float: bounds are not finite numbers" (lo : float) (hi : float)];
+-    if Float.( > ) lo hi
+-    then raise_s [%message "float: bounds are crossed" (lo : float) (hi : float)];
++    validate_float_bounds ~lo ~hi;
      finite_float state ~lo ~hi
  ;;
  
@@ -364,22 +395,21 @@ index 6b8e31e..a6b9f5c 100644
 -  let int64 = 1L in
 -  fun () -> unit_float_from_int64 int64
 +let[@inline always] intercept_float state ~lo ~hi ~default =
++  validate_float_bounds ~lo ~hi;
 +  match state.intercept with
 +  | None -> default state ~lo ~hi
 +  | Some i -> i.float state ~lo ~hi ~default
 +;;
 +
 +let float state ~lo ~hi =
-+  match state.intercept with
-+  | None -> float_default state ~lo ~hi
-+  | Some i -> i.float state ~lo ~hi ~default:float_default
++  intercept_float state ~lo ~hi ~default:float_default
  ;;
  
 +
  module Log_uniform = struct
    module Make (M : sig
      include Int.S
-@@ -286,48 +438,14 @@ module Log_uniform = struct
+@@ -286,48 +444,14 @@ module Log_uniform = struct
        !n
      ;;
  
@@ -428,7 +458,7 @@ index 6b8e31e..a6b9f5c 100644
  
      let log_uniform state ~lo ~hi =
        let min_bits = bits_to_represent lo in
-@@ -377,6 +495,117 @@ module Log_uniform = struct
+@@ -377,6 +501,117 @@ module Log_uniform = struct
    let nativeint = For_nativeint.log_uniform
  end
  

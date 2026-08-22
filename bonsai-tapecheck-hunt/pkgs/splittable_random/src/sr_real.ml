@@ -205,6 +205,11 @@ let remainder_is_unbiased ~draw ~remainder ~draw_maximum ~remainder_maximum =
 (* This implementation of bounded randomness is adapted from [Random.State.int*] in the
    OCaml standard library.  The purpose is to use the minimum number of calls to
    [next_int64] to produce a number uniformly chosen within the given range. *)
+let validate_int64_bounds ~lo ~hi =
+  if lo > hi
+  then Error.raise_s [%message "int64: crossed bounds" (lo : int64) (hi : int64)]
+;;
+
 let int64_default =
   let open Int64.O in
   let rec between state ~lo ~hi =
@@ -223,8 +228,7 @@ let int64_default =
     else non_negative_up_to state maximum
   in
   fun state ~lo ~hi ->
-    if lo > hi
-    then Error.raise_s [%message "int64: crossed bounds" (lo : int64) (hi : int64)];
+    validate_int64_bounds ~lo ~hi;
     let diff = hi - lo in
     if diff = Int64.max_value
     then (next_int64 state land Int64.max_value) + lo
@@ -234,15 +238,14 @@ let int64_default =
 ;;
 
 let[@inline always] intercept_int64 state ~lo ~hi ~default =
+  validate_int64_bounds ~lo ~hi;
   match state.intercept with
   | None -> default state ~lo ~hi
   | Some i -> i.int64 state ~lo ~hi ~default
 ;;
 
 let int64 state ~lo ~hi =
-  match state.intercept with
-  | None -> int64_default state ~lo ~hi
-  | Some i -> i.int64 state ~lo ~hi ~default:int64_default
+  intercept_int64 state ~lo ~hi ~default:int64_default
 ;;
 
 let[@inline always] intercept_int state ~lo ~hi ~default =
@@ -373,6 +376,14 @@ let with_span
    with [x < 1.] such that [lo +. x *. (hi -. lo) = hi], so it would not be correct to
    document this as being exclusive of [hi].
 *)
+let validate_float_bounds ~lo ~hi =
+  if not (Float.is_finite lo && Float.is_finite hi)
+  then
+    raise_s [%message "float: bounds are not finite numbers" (lo : float) (hi : float)];
+  if Float.( > ) lo hi
+  then raise_s [%message "float: bounds are crossed" (lo : float) (hi : float)]
+;;
+
 let float_default =
   (* Uses the [_default] internals: when a hook delegates to [default],
      the fallback must not re-enter the hooks, or a single [float] draw
@@ -396,24 +407,19 @@ let float_default =
       else finite_float state ~lo:mid ~hi)
   in
   fun state ~lo ~hi ->
-    if not (Float.is_finite lo && Float.is_finite hi)
-    then
-      raise_s [%message "float: bounds are not finite numbers" (lo : float) (hi : float)];
-    if Float.( > ) lo hi
-    then raise_s [%message "float: bounds are crossed" (lo : float) (hi : float)];
+    validate_float_bounds ~lo ~hi;
     finite_float state ~lo ~hi
 ;;
 
 let[@inline always] intercept_float state ~lo ~hi ~default =
+  validate_float_bounds ~lo ~hi;
   match state.intercept with
   | None -> default state ~lo ~hi
   | Some i -> i.float state ~lo ~hi ~default
 ;;
 
 let float state ~lo ~hi =
-  match state.intercept with
-  | None -> float_default state ~lo ~hi
-  | Some i -> i.float state ~lo ~hi ~default:float_default
+  intercept_float state ~lo ~hi ~default:float_default
 ;;
 
 
