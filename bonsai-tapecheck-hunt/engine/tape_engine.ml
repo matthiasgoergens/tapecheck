@@ -282,21 +282,18 @@ let run_and_test_timed (type a) ~tape ~(gen : a Base_quickcheck.Generator.t)
    loop below can call ONE function regardless of whether timing is
    worth paying for on this particular case.
 
-   Why this matters (measured in
-   demo/stats_overhead_bench.ml): reading the wall clock is a real
-   syscall, and THREE calls per case (around generate, around the test)
-   turned out to dominate the entire per-case cost -- +327% versus a
-   hand-rolled loop with none of RO6's bookkeeping, on a cheap
-   single-int-draw property. Health checks only need per-case timing
-   during Hypothesis's own bounded early window (closed by
+   Clock reads are not free on a cheap generator. Health checks only need
+   per-case timing during Hypothesis's own bounded early window (closed by
    Tape_health.max_valid_draws/max_invalid_draws/max_large_draws, at
    most on the order of tens of cases); a run of thousands of cases
    pays the timing cost on none of the rest once the window closes.
    [gen_dt]/[run_dt] are simply 0. on an untimed case, so
    [stats.generate_time]/[stats.run_time] undercount a long run
    slightly (they reflect the health-check sampling window, not every
-   case) -- an accepted, documented trade-off for keeping the actually
-   -expensive part of the passing path cheap; see the write-up. *)
+   case) -- an accepted, documented trade-off for keeping the passing path
+   cheap. [demo/stats_overhead_bench.ml] remains the calibration harness; its
+   historical figures predate the switch from process CPU time to wall time
+   and must be remeasured before they are quoted for this implementation. *)
 let run_and_test_maybe_timed (type a) ~timed ~tape
     ~(gen : a Base_quickcheck.Generator.t) ~size ~seed ~(test : a -> bool) :
     a * Tape_stats.verdict option * Tape.output * float * float =
@@ -3254,12 +3251,10 @@ let run (type a) ?(seed = 0) ?(count = 100) ?(size = 10) ?(budget = 2000)
           && !consecutive_repeats < repeats_before_giving_up
         do
           Tape.start_recording tape;
-          (* Only pay for per-case timing (three wall-clock reads,
-             measured to be the dominant added cost -- see
-             run_and_test_maybe_timed's comment and
-             demo/stats_overhead_bench.ml) while the health-check window
-             is still open; once it has closed, nothing downstream reads
-             gen_dt/run_dt for this case, so skip computing them. *)
+          (* Only pay for per-case timing (three wall-clock reads; see
+             [run_and_test_maybe_timed]) while the health-check window is
+             still open. Once it has closed, nothing downstream reads
+             [gen_dt]/[run_dt] for this case, so skip computing them. *)
           let timed = not (Tape_health.is_closed health) in
           let value, tested, out, gen_dt, run_dt =
             run_and_test_maybe_timed ~timed ~tape ~gen ~size
