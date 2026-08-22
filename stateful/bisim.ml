@@ -372,11 +372,23 @@ module Make (S : Spec) = struct
       | None -> fun cmd -> op_label (S.sexp_of_cmd cmd)
     in
     let left = S.init_left () in
-    let right = S.init_right () in
+    let right =
+      match S.init_right () with
+      | right -> right
+      | exception exn ->
+        S.cleanup_left left;
+        raise exn
+    in
     Exn.protect
       ~finally:(fun () ->
-        S.cleanup_left left;
-        S.cleanup_right right)
+        match S.cleanup_left left with
+        | () -> S.cleanup_right right
+        | exception exn ->
+          (* Cleanup is best-effort for both implementations. Do not let a
+             failing left cleanup prevent the right resource from being
+             released; retain the first exception for diagnosis. *)
+          (try S.cleanup_right right with _ -> ());
+          raise exn)
       ~f:(fun () ->
         let rec go state idx = function
           | [] -> Ok_run

@@ -166,6 +166,39 @@ module B_legit = Bisim.Make (Legit_spec)
 module B_collapsed = Bisim.Make (Collapsed_spec)
 module B_rare = Bisim.Make (Rare_spec)
 
+(* Resource-safety calibration: initialising the right-hand implementation can
+   fail after the left has allocated a resource, and either cleanup can itself
+   fail. Both sides must still be offered cleanup. *)
+module Cleanup_spec = struct
+  type state = unit
+  type left = unit
+  type right = unit
+  type cmd = Nop
+  type res = unit
+
+  let init_state = ()
+  let left_cleaned = ref 0
+  let right_cleaned = ref 0
+  let fail_right_init = ref false
+  let fail_left_cleanup = ref false
+  let init_left () = ()
+  let init_right () = if !fail_right_init then failwith "right init" else ()
+  let cleanup_left () =
+    Int.incr left_cleaned;
+    if !fail_left_cleanup then failwith "left cleanup"
+  let cleanup_right () = Int.incr right_cleaned
+  let arb_cmd _ = Base_quickcheck.Generator.return Nop
+  let precond _ _ = true
+  let next_state _ _ = ()
+  let run_left _ _ = ()
+  let run_right _ _ = ()
+  let equal_res () () = true
+  let sexp_of_cmd _ = Sexp.Atom "Nop"
+  let sexp_of_res () = Sexp.List []
+end
+
+module B_cleanup = Bisim.Make (Cleanup_spec)
+
 let seed = Base_quickcheck.Test.default_config.seed
 
 let drive (type c) ~(gen : c list Base_quickcheck.Generator.t)
@@ -209,6 +242,15 @@ let report_of name ?op_label ?expected_raising run =
   stats
 
 let () =
+  Cleanup_spec.fail_right_init := true;
+  (try ignore (B_cleanup.run_cmds [] : B_cleanup.outcome) with _ -> ());
+  let right_init_released_left = !(Cleanup_spec.left_cleaned) = 1 in
+  Cleanup_spec.fail_right_init := false;
+  Cleanup_spec.fail_left_cleanup := true;
+  (try ignore (B_cleanup.run_cmds [] : B_cleanup.outcome) with _ -> ());
+  let left_cleanup_failure_still_released_right =
+    !(Cleanup_spec.right_cleaned) = 1
+  in
   Stdio.printf "=== A: legitimate exception agreement ===\n";
   let a =
     report_of "A, default" (fun ~report ?op_label ?expected_raising () ->
@@ -265,6 +307,10 @@ let () =
       , Set.length (flagged b_labelled) = 5 )
     ; ( "C: a rare broken op is surfaced as undersampled, not dropped"
       , not (List.is_empty (Bisim.ops_undersampled c)) )
+    ; ( "cleanup: failed right initialisation releases the left resource"
+      , right_init_released_left )
+    ; ( "cleanup: failed left cleanup still releases the right resource"
+      , left_cleanup_failure_still_released_right )
     ]
   in
   Stdio.printf "=== ASSERTIONS ===\n";

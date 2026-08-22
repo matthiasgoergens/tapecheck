@@ -52,6 +52,9 @@ module Make (S : Spec) : sig
     | Invariant_failed of int * S.cmd option
 
   val sexp_of_outcome : outcome -> Sexp.t
+  (** Run a command trace against a fresh system under test. A command whose
+      precondition does not hold produces [Precond_violated]; generated traces
+      should never do so when [Spec.arb_cmd] is implemented correctly. *)
   val run_cmds : S.cmd list -> outcome
   val test : S.cmd list -> bool
 end

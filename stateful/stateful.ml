@@ -30,9 +30,8 @@
    replayed as a stale fixed value. A [Bundle]-consuming command whose
    argument is "an index into whatever the bundle currently holds"
    therefore re-targets a surviving entry automatically when an earlier
-   producer is deleted, rather than being filtered out wholesale
-   (see stateful/README-design-note.md... no such file: the point is
-   argued and measured in outreach/agent-tapecheck-stateful.md instead).
+   producer is deleted, rather than being filtered out wholesale. The
+   behaviour is exercised directly by [test_stateful].
 
    Deliberately NOT ported: Hypothesis's own reflection-based rule
    collection (@rule/@precondition method decorators discovered via
@@ -165,14 +164,10 @@ module Make (S : Spec) = struct
 
   (* Execute the whole command list against a fresh [sut], checking
      [precond]/[postcond]/[invariant] as we go. A [precond] violation is
-     treated as a no-op skip rather than aborting the run: this keeps
-     replay of an EDITED tape total (every edited proposal produces some
-     interpretable trace) rather than the interpreter rejecting the
-     proposal outright the way qcheck-stm's [Shrink.filter (cmds_ok
-     init_state)] does -- see the module doc comment for why that
-     matters to shrink quality. In practice this should rarely fire: it
-     only would if [arb_cmd] offered a command whose own precondition it
-     did not respect. *)
+     a specification error: [gen_cmds] draws each command from the current
+     state, so a well-formed [arb_cmd] must not produce one. Return the
+     dedicated diagnostic outcome instead of silently skipping the command;
+     callers can also supply command lists directly to [run_cmds]. *)
   let run_cmds (cmds : S.cmd list) : outcome =
     let sut = S.init_sut () in
     Exn.protect
@@ -181,7 +176,7 @@ module Make (S : Spec) = struct
         let rec go state idx = function
           | [] -> Ok_run
           | cmd :: rest ->
-            if not (S.precond cmd state) then go state (idx + 1) rest
+            if not (S.precond cmd state) then Precond_violated (idx, cmd)
             else begin
               let res = S.run cmd sut in
               if not (S.postcond cmd state res) then Postcond_failed (idx, cmd)

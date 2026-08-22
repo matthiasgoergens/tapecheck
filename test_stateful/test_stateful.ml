@@ -91,6 +91,15 @@ module M = Stateful.Make (HandleAlloc)
 let sexp_of_cmds cmds = [%sexp_of: HandleAlloc.cmd list] cmds
 
 let () =
+  (* A manually supplied invalid trace must diagnose the broken precondition
+     rather than silently skipping it. This also makes the public
+     [Precond_violated] outcome reachable and useful. *)
+  (match M.run_cmds [ HandleAlloc.Use 0 ] with
+   | M.Precond_violated (0, HandleAlloc.Use 0) -> ()
+   | outcome ->
+     failwith
+       ("FAILED: invalid trace was not diagnosed: "
+        ^ Sexp.to_string (M.sexp_of_outcome outcome)));
   let trials = 200 in
   let found = ref 0 in
   let minimal_count = ref 0 in
