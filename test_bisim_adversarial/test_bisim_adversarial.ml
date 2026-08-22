@@ -34,7 +34,7 @@ module Legit_spec = struct
   type state = int
   type left = int list ref
   type right = int list ref
-  type cmd = Pop_empty | Push of int
+  type cmd = Pop_empty | Push of int | Discard
   type res = int
 
   let init_state = 0
@@ -42,6 +42,7 @@ module Legit_spec = struct
   let init_right () = ref []
   let cleanup_left _ = ()
   let cleanup_right _ = ()
+  let push_calls = ref 0
 
   let arb_cmd _ =
     let open Base_quickcheck.Generator.Let_syntax in
@@ -57,7 +58,11 @@ module Legit_spec = struct
   let step cmd l =
     match cmd with
     | Pop_empty -> failwith "empty" (* both sides, identically: correct *)
+    | Discard ->
+      Tape_stats.assume false;
+      0
     | Push v ->
+      Int.incr push_calls;
       l := v :: !l;
       List.length !l
 
@@ -67,6 +72,7 @@ module Legit_spec = struct
 
   let sexp_of_cmd = function
     | Pop_empty -> Sexp.Atom "Pop_empty"
+    | Discard -> Sexp.Atom "Discard"
     | Push v -> Sexp.List [ Sexp.Atom "Push"; Sexp.Atom (Int.to_string v) ]
 
   let sexp_of_res = Int.sexp_of_t
@@ -242,6 +248,20 @@ let report_of name ?op_label ?expected_raising run =
   stats
 
 let () =
+  Legit_spec.push_calls := 0;
+  let mutual_raise_is_terminal =
+    match B_legit.run_cmds [ Legit_spec.Pop_empty; Legit_spec.Push 1 ] with
+    | B_legit.Ok_run -> !(Legit_spec.push_calls) = 0
+    | B_legit.Diverged _ -> false
+  in
+  let assume_escapes_for_engine_classification =
+    try
+      ignore (B_legit.run_cmds [ Legit_spec.Discard ] : B_legit.outcome);
+      false
+    with
+    | Tape_stats.Invalid_example -> true
+    | _ -> false
+  in
   Cleanup_spec.fail_right_init := true;
   (try ignore (B_cleanup.run_cmds [] : B_cleanup.outcome) with _ -> ());
   let right_init_released_left = !(Cleanup_spec.left_cleaned) = 1 in
@@ -311,6 +331,10 @@ let () =
       , right_init_released_left )
     ; ( "cleanup: failed left cleanup still releases the right resource"
       , left_cleanup_failure_still_released_right )
+    ; ( "mutual raise terminates before unspecified post-exception state"
+      , mutual_raise_is_terminal )
+    ; ( "assume escapes bisim capture for engine discard classification"
+      , assume_escapes_for_engine_classification )
     ]
   in
   Stdio.printf "=== ASSERTIONS ===\n";

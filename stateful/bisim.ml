@@ -45,6 +45,7 @@ type 'a outcome =
 let capture (f : unit -> 'a) : 'a outcome =
   match f () with
   | v -> Returned v
+  | exception Tape_stats.Invalid_example -> raise Tape_stats.Invalid_example
   | exception exn -> Raised exn
 
 module type Spec = sig
@@ -422,9 +423,17 @@ module Make (S : Spec) = struct
                 (match (outcome_l, outcome_r) with
                  | Returned _, Returned _ ->
                    stats.agree <- stats.agree + 1;
-                   counts.op_agree <- counts.op_agree + 1
-                 | _ -> () (* Agreed_by_raising already counted above *));
-                go (S.next_state cmd state) (idx + 1) rest
+                   counts.op_agree <- counts.op_agree + 1;
+                   go (S.next_state cmd state) (idx + 1) rest
+                 | Raised _, Raised _ ->
+                   (* Once an operation raises, neither implementation's
+                      post-exception state is specified. Continuing would apply
+                      [next_state] to a step that did not return and could hide
+                      or invent a later divergence after partial mutation. The
+                      equal exception is the terminal observation for this
+                      trace. *)
+                   Ok_run
+                 | Raised _, Returned _ | Returned _, Raised _ -> assert false)
             end
         in
         go S.init_state 0 cmds)
