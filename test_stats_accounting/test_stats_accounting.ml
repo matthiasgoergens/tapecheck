@@ -74,6 +74,28 @@ let () =
     ~actual:0;
   Stdio.printf "       (%d generation calls, correctly not counted)\n" !n;
 
+  (* [generate_time] is documented as wall time.  Process CPU time makes
+     blocking generators appear free and prevents Too_slow from detecting
+     them, so a short sleep is a direct calibration case for the clock. *)
+  let st_wall = Tape_engine.no_stats () in
+  let sleeping_gen =
+    G.create (fun ~size:_ ~random:_ ->
+      Unix.sleepf 0.03;
+      0)
+  in
+  let (_ : int Tape_engine.result) =
+    Tape_engine.run sleeping_gen ~test:(fun _ -> true) ~count:1 ~stats:st_wall
+  in
+  let measured_wall = (snapshot st_wall).generate_time in
+  if Float.(measured_wall >= 0.02) then
+    Stdio.printf "  ok   %-44s %.4fs\n"
+      "generate_time includes blocked wall time" measured_wall
+  else begin
+    Int.incr failures;
+    Stdio.printf "  FAIL %-44s %.4fs (expected at least 0.02s)\n"
+      "generate_time includes blocked wall time" measured_wall
+  end;
+
   (* 2. Failing run: everything after the first failure is shrink work. *)
   let f, n, ff = counting prop in
   let st = Tape_engine.no_stats () in
