@@ -118,7 +118,15 @@ module Regressions = struct
     match Stdlib.Sys.file_exists path with
     | false -> Ok []
     | true ->
-      let lines = Stdlib.In_channel.with_open_text path Stdlib.In_channel.input_lines in
+      let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
+      let ic = Unix.in_channel_of_descr fd in
+      let lines =
+        Exn.protect
+          ~f:(fun () ->
+            Unix.lockf fd Unix.F_RLOCK 0;
+            Stdlib.In_channel.input_lines ic)
+          ~finally:(fun () -> Stdlib.close_in_noerr ic)
+      in
       List.filter_mapi lines ~f:(fun lineno line ->
         let payload =
           match String.lsplit2 line ~on:'#' with
@@ -148,12 +156,27 @@ module Regressions = struct
                  (bad_lines : int list)])
 
   let append path ~image ~size ~comment =
-    Stdlib.Out_channel.with_open_gen
-      [ Open_append; Open_creat; Open_text ] 0o644 path
-      (fun oc ->
-        Stdlib.Printf.fprintf oc "%s @%d # %s\n"
-          (hex_of_string (Tape.serialize_image image))
-          size comment)
+    let line =
+      Printf.sprintf "%s @%d # %s\n"
+        (hex_of_string (Tape.serialize_image image))
+        size comment
+    in
+    let fd =
+      Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND ] 0o644
+    in
+    Exn.protect
+      ~f:(fun () ->
+        Unix.lockf fd Unix.F_LOCK 0;
+        let rec write pos =
+          if pos < String.length line then
+            let written =
+              Unix.single_write_substring fd line pos (String.length line - pos)
+            in
+            if written = 0 then failwith "regression append made no progress"
+            else write (pos + written)
+        in
+        write 0)
+      ~finally:(fun () -> Unix.close fd)
 end
 
 (* Hypothesis's own numbers (outreach/hypothesis-sources/engine_hypothesis.py):
@@ -311,7 +334,18 @@ let report_failure (type a e) ~(f : a -> (unit, e) Result.t)
     raise (Flaky_test msg)
   | Error e ->
     Option.iter regressions ~f:(fun path ->
-      Regressions.append path ~image ~size ~comment:(Sexp.to_string (sexp_of minimal)));
+      try
+        Regressions.append path ~image ~size
+          ~comment:(Sexp.to_string (sexp_of minimal))
+      with exn ->
+        (* Persistence is secondary to reporting the counterexample we already
+           found. A read-only/full filesystem must not turn a useful property
+           failure into an unrelated I/O exception. *)
+        Stdlib.prerr_endline
+          (Printf.sprintf
+             "tapecheck: could not append regression %S (%s); the failure is still being reported"
+             path (Exn.to_string exn));
+        Stdlib.flush Stdlib.stderr);
     (* Phase.explain, switched off by default (?explain:false):
        free-variation analysis over the just-shrunk minimal example,
        printed for a human the way Hypothesis prints its own
@@ -407,14 +441,22 @@ let result (type a e) ~(f : a -> (unit, e) Result.t)
               failure that involves a generated function only
               reproduces if the function's streams stay
               tape-controlled during [f]. *)
-           let value, verdict =
+           match
              Tape_engine.replay_image_and_apply M.quickcheck_generator
                ~size image ~f
-           in
-           count_verdict verdict;
-           match verdict with
-           | Error e -> Some (Error (value, e))
-           | Ok () ->
+           with
+           | value, verdict ->
+             count_verdict verdict;
+             (match verdict with
+              | Error e -> Some (Error (value, e))
+              | Ok () ->
+                stale_entries := line :: !stale_entries;
+                None)
+           | exception Tape_stats.Invalid_example ->
+             (* A regression that is now rejected by [assume] no longer
+                guards a failure. Count the discard and report the entry as
+                stale after fresh coverage, just like a replay that passes. *)
+             Tape_engine.For_tape_test.record_invalid_case stats;
              stale_entries := line :: !stale_entries;
              None))
   in

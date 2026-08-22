@@ -15,6 +15,9 @@ exception Flaky_test of string
 
 val default_config : Config.t
 
+(** Preview Base Quickcheck's stock sample sequence. This is retained for
+    source compatibility and does not preview Tapecheck's taped, edge-biased
+    generation schedule. *)
 val with_sample
   :  f:('a Sequence.t -> unit Or_error.t)
   -> ?config:Config.t
@@ -22,6 +25,7 @@ val with_sample
   -> 'a Base_quickcheck.Generator.t
   -> unit Or_error.t
 
+(** Raising form of [with_sample], with the same stock-sampling semantics. *)
 val with_sample_exn
   :  f:('a Sequence.t -> unit)
   -> ?config:Config.t

@@ -53,4 +53,15 @@ let () =
     Stdio.printf "\nFAIL: expected Too_big->500 and Odd_one->101\n";
     Stdlib.exit 1
   end;
+  let discard_reports =
+    Tape_engine.run_multi
+      (G.int_uniform_inclusive 0 1000)
+      ~test:(fun _ -> Tape_stats.assume false)
+      ~seed:9 ~count:50 ~size:10
+  in
+  if not (List.is_empty discard_reports) then begin
+    Stdio.printf "\nFAIL: assume-rejected cases were reported as bugs\n";
+    Stdlib.exit 1
+  end;
+  Stdio.printf "  assume-rejected cases reported as bugs: false\n";
   Stdio.printf "\nmulti-bug reporting works; no origin slipped\n"

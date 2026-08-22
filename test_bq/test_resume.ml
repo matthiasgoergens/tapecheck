@@ -310,6 +310,41 @@ let () =
      check "regression-entry failure prints the summary line"
        (String.is_substring printed_regression ~substring:"tapecheck:"));
 
+  (* A saved failure can become ineligible under a new [assume]. That is a
+     stale regression, not an uncaught [Invalid_example]. *)
+  let assume_regressions_path = "test_resume_assume_regressions.txt" in
+  (match converged_run with
+   | Tape_engine.Passed _ -> assert false
+   | Tape_engine.Failed { image; _ } ->
+     append_regression assume_regressions_path ~image ~size:10
+       ~comment:"assume-stale reproducer";
+     let classified_as_stale =
+       try
+         ignore
+           (Tape_test.result
+              ~f:(fun _ ->
+                Tape_test.assume false;
+                Ok ())
+              ~config:
+                { Tape_test.default_config with
+                  test_count = 0
+                ; sizes = Sequence.empty
+                }
+              ~regressions:assume_regressions_path
+              ~report:`Silent
+              (module M : Base_quickcheck.Test.S with type t = int)
+             : (unit, int * unit) Result.t);
+         false
+       with
+       | Tape_stats.Invalid_example -> false
+       | exn ->
+         String.is_substring (Exn.to_string exn)
+           ~substring:"regression tape entries replay to passing values"
+     in
+     Stdlib.Sys.remove assume_regressions_path;
+     check "assume-rejected regression is stale, not an escaped discard"
+       classified_as_stale);
+
   (* User-supplied examples bypass the engine's generated-case loop.  They
      must still take the same reporting exit as every other failure. *)
   let no_generated_cases =

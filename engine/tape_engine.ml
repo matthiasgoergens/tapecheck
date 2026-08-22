@@ -315,7 +315,7 @@ module Pool = struct
     ; nonempty : Stdlib.Condition.t
     ; all_done : Stdlib.Condition.t
     ; mutable queue : (int * (unit -> 'r)) list
-    ; mutable results : ('r, exn) Result.t option array
+    ; mutable results : ('r, exn * Stdlib.Printexc.raw_backtrace) Result.t option array
     ; mutable pending : int
     ; mutable stop : bool
     ; mutable workers : unit Stdlib.Domain.t list
@@ -344,7 +344,8 @@ module Pool = struct
       let r =
         match task () with
         | r -> Ok r
-        | exception exn -> Error exn
+        | exception exn ->
+          Error (exn, Stdlib.Printexc.get_raw_backtrace ())
       in
       Stdlib.Mutex.lock t.mutex;
       t.results.(i) <- Some r;
@@ -391,8 +392,22 @@ module Pool = struct
       ; workers = []
       }
     in
-    t.workers <-
-      List.init n ~f:(fun _ -> Stdlib.Domain.spawn (fun () -> worker_loop t));
+    let rec spawn remaining workers =
+      if remaining = 0 then List.rev workers
+      else
+        match Stdlib.Domain.spawn (fun () -> worker_loop t) with
+        | worker -> spawn (remaining - 1) (worker :: workers)
+        | exception exn ->
+          (* Already-spawned workers are blocked on [nonempty]. Wake and join
+             them before propagating a later spawn failure. *)
+          Stdlib.Mutex.lock t.mutex;
+          t.stop <- true;
+          Stdlib.Condition.broadcast t.nonempty;
+          Stdlib.Mutex.unlock t.mutex;
+          List.iter workers ~f:Stdlib.Domain.join;
+          raise exn
+    in
+    t.workers <- spawn n [];
     t
 
   (* Run tasks to completion; returns results in task order. A task
@@ -413,7 +428,8 @@ module Pool = struct
     Stdlib.Mutex.unlock t.mutex;
     List.map (List.filter_opt (Array.to_list results)) ~f:(function
       | Ok r -> r
-      | Error exn -> raise exn)
+      | Error (exn, backtrace) ->
+        Stdlib.Printexc.raise_with_backtrace exn backtrace)
 
   let shutdown t =
     Stdlib.Mutex.lock t.mutex;
@@ -1704,17 +1720,22 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () && live () do
       let k = ref 1 in
-      while !k <= max_window && budget_ok () && live () do
+      while
+        !s < seg_count !best
+        && !k <= max_window
+        && budget_ok ()
+        && live ()
+      do
         let arr = seg_get !best !s in
         let n = Array.length arr in
         let groups = Hashtbl.create (module String) in
         let i = ref 0 in
-        while !i + !k <= n do
+        while !s < seg_count !best && !i + !k <= n do
           Hashtbl.add_multi groups ~key:(signature arr !i !k) ~data:!i;
           Int.incr i
         done;
         Hashtbl.iteri groups ~f:(fun ~key:_ ~data:positions ->
-          if budget_ok () && live () then begin
+          if !s < seg_count !best && budget_ok () && live () then begin
             (* [add_multi] prepends, so restore ascending order, then
                keep a greedy non-overlapping subset. *)
             let ascending = List.rev positions in
@@ -1760,7 +1781,11 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && budget_ok () do
+      while
+        !s < seg_count !best
+        && !i < Array.length (seg_get !best !s)
+        && budget_ok ()
+      do
         (match (seg_get !best !s).(!i) with
          | Tape.Integer { value = m; lo = lo1; hi = hi1 }
            when Int64.(m > clamp64 0L ~lo:lo1 ~hi:hi1) ->
@@ -1775,6 +1800,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                 let t2 = clamp64 0L ~lo:lo2 ~hi:hi2 in
                 let try_k k =
                   if Int64.(k > m - t1) || Int64.(k > n - t2) then false
+                  else if !s >= seg_count !best then false
                   else begin
                     let arr = seg_get !best !s in
                     if
@@ -1896,7 +1922,12 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () && live () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && budget_ok () && live () do
+      while
+        !s < seg_count !best
+        && !i < Array.length (seg_get !best !s)
+        && budget_ok ()
+        && live ()
+      do
         let arr = seg_get !best !s in
         Int.incr scan_i_visits;
         (match arr.(!i) with
@@ -2050,7 +2081,12 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
               improved := true
             end;
           let again = ref (not !accepted) in
-          while !again && budget_ok () && live () do
+          while
+            !again
+            && !s < seg_count !best
+            && budget_ok ()
+            && live ()
+          do
             again := computed_repair ();
             if !again then begin
               accepted := true;
@@ -2065,6 +2101,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
             let j = ref (!i + 1) in
             while
               (not !accepted)
+              && !s < seg_count !best
               && !j <= Array.length (seg_get !best !s) - !k
               && budget_ok ()
               && live ()
@@ -2095,7 +2132,9 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
                 let jj = !j + offset in
                 let greedy_start = !attempts in
                 let again = ref true in
-                while !again && budget_ok () do
+                while
+                  !again && !s < seg_count !best && budget_ok ()
+                do
                   let arr = seg_get !best !s in
                   match
                     (if !i < Array.length arr then Some arr.(!i) else None)
@@ -2164,7 +2203,11 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && budget_ok () do
+      while
+        !s < seg_count !best
+        && !i < Array.length (seg_get !best !s)
+        && budget_ok ()
+      do
         let arr = seg_get !best !s in
         Int.incr scan_i_visits;
         (match arr.(!i) with
@@ -2279,9 +2322,11 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
        What this adds is deletion from the FRONT of the element region,
        which is what walks a late failing element leftward. *)
     let try_value v =
-      let arr = seg_get !best s in
-      if i >= Array.length arr then false
+      if s >= seg_count !best then false
       else begin
+        let arr = seg_get !best s in
+        if i >= Array.length arr then false
+        else begin
         let lowered =
           with_choice arr i (Tape.Integer { value = v; lo; hi })
         in
@@ -2313,6 +2358,7 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
               end
               else false
             end
+        end
       end
     in
     if Int64.(value <> target) && not (try_value target) then begin
@@ -2340,9 +2386,14 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
   let minimize_float s i value lo hi =
     let target = clampf 0. ~lo ~hi in
     let try_value v =
-      attempt
-        (seg_set !best s
-           (with_choice (seg_get !best s) i (Tape.Float { value = v; lo; hi })))
+      if s >= seg_count !best then false
+      else
+        let arr = seg_get !best s in
+        if i >= Array.length arr then false
+        else
+          attempt
+            (seg_set !best s
+               (with_choice arr i (Tape.Float { value = v; lo; hi })))
     in
     if Float.( <> ) value target && not (try_value target) then begin
       (* Prefer round values, then bisect a bounded number of steps. *)
@@ -2368,7 +2419,11 @@ let shrink (type a) ~tape ~(gen : a Base_quickcheck.Generator.t) ~size
     let s = ref 0 in
     while !s < seg_count !best && budget_ok () do
       let i = ref 0 in
-      while !i < Array.length (seg_get !best !s) && budget_ok () do
+      while
+        !s < seg_count !best
+        && !i < Array.length (seg_get !best !s)
+        && budget_ok ()
+      do
         let before = !best in
         (match (seg_get !best !s).(!i) with
         | Tape.Integer { value; lo; hi } -> minimize_integer !s !i value lo hi
@@ -2950,6 +3005,10 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
     last_origin := None;
     match test v with
     | () -> true
+    | exception Tape_stats.Invalid_example ->
+      (* [assume false] is a discarded case, not a distinct bug origin. Let
+         [run_and_test] classify it as [Case_invalid]. *)
+      raise Tape_stats.Invalid_example
     | exception e ->
       last_origin := Some (origin_of_exn e (Stdlib.Printexc.get_raw_backtrace ()));
       false
@@ -2973,6 +3032,7 @@ let run_multi (type a) ?(seed = 0) ?(count = 100) ?(size = 10)
     let same_origin_only value =
       match test value with
       | () -> true
+      | exception Tape_stats.Invalid_example -> raise Tape_stats.Invalid_example
       | exception e ->
         let o' = origin_of_exn e (Stdlib.Printexc.get_raw_backtrace ()) in
         (* "true" means passing, i.e. not a candidate. A DIFFERENT bug
