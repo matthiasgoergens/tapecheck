@@ -1,0 +1,8 @@
+(test
+ (name test_real_world)
+ (enabled_if
+  (<> %{profile} oxcaml))
+ (libraries base stdio base_quickcheck splittable_random tapecheck
+   core_kernel.fheap core_kernel.pairing_heap ipaddr cstruct)
+ (preprocess
+  (pps base_quickcheck.ppx_quickcheck ppx_sexp_conv)))

@@ -6,7 +6,7 @@
 ; building it from here would clash with vendor/'s library names. It must
 ; be data_only, not just excluded from (dirs): its nested dune-project
 ; would otherwise still pull it into this build as a second project.
-(data_only_dirs bonsai-tapecheck-hunt install-smoke outreach)
+(data_only_dirs bonsai-tapecheck-hunt install-smoke real-world-smoke outreach)
 
 ; outreach is retained research material with independent toolchains (for
 ; example, tracing-poc requires bisect_ppx). It is data from the product

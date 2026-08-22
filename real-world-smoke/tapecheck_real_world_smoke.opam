@@ -1,0 +1,20 @@
+opam-version: "2.0"
+synopsis: "Real-world consumer properties for Tapecheck"
+maintainer: "Matthias Goergens <matthias.goergens@gmail.com>"
+authors: ["Matthias Goergens"]
+license: "MIT"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml"             {>= "5.3.0"}
+  "dune"              {>= "3.11"}
+  "tapecheck"         {= "0.1.0~dev"}
+  "base"              {>= "v0.17" & < "v0.18~"}
+  "base_quickcheck"   {= "v0.17.1+tapecheck"}
+  "splittable_random" {= "v0.17.0+tapecheck"}
+  "core_kernel"       {>= "v0.17" & < "v0.18~"}
+  "ipaddr"            {>= "5.6"}
+  "cstruct"           {>= "6.2"}
+  "ppx_sexp_conv"     {>= "v0.17" & < "v0.18~"}
+]
