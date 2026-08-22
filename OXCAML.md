@@ -23,7 +23,7 @@ detects an ox switch and fails with *"OxCaml switch detected: build with
 
 ## But it violates two of their house rules
 
-Building emits OxCaml-specific alerts, at `engine/tape_engine.ml:204`:
+Building emits OxCaml-specific alerts at the worker-pool spawn:
 
 ```
 Alert do_not_spawn_domains: Stdlib.Domain.spawn
@@ -39,28 +39,26 @@ Alert unsafe_multidomain: Stdlib.Domain.spawn
 This is the parallel worker pool behind `?domains`. Two distinct
 complaints:
 
-1. **`do_not_spawn_domains`** — a policy alert. Our pool spawns
-   `domains` workers on request, and nothing currently clamps that to
-   `recommended_domain_count`. On their guidance that is a GC-performance
-   footgun, and the alert exists because they have been bitten.
+1. **`do_not_spawn_domains`** — a policy alert. The pool now clamps requests
+   to `recommended_domain_count`, so the concrete oversubscription footgun is
+   fixed, but direct `Domain.spawn` still violates Jane Street's preferred
+   scheduling policy.
 2. **`unsafe_multidomain`** — use `Domain.Safe.spawn`, which carries the
    mode discipline OxCaml uses to make cross-domain sharing sound.
 
 They are alerts, not errors, so the build succeeds. But shipping
 something to Jane Street that trips their own lints on every build is a
-poor first impression, and the first alert is arguably a real bug: a
-user passing `~domains:64` on an 8-core box gets exactly the degradation
-the alert warns about.
+poor first impression, even though the most direct performance bug behind
+the first alert is fixed.
 
-## Suggested fixes, not yet done
+## Remaining fixes
 
-- Clamp `domains` to `Domain.recommended_domain_count ()` and say so.
-  That is a genuine fix independent of OxCaml.
 - Switch to `Domain.Safe.spawn` where available, or route through
   `Multicore` on the ox profile.
 - Consider making `?domains` default to 1 (it already does) and
-  documenting that >1 is for long shrinks only — shrinking is off the CI
-  happy path, which is the only place the pool pays.
+  documenting that >1 is useful only for generation-dominated workloads with
+  sufficiently expensive test bodies. Measured shrink-heavy workloads become
+  slower as speculative attempts increase.
 
 ## For the email
 

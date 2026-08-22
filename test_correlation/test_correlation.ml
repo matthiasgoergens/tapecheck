@@ -11,6 +11,23 @@ module G = Base_quickcheck.Generator
 let wide = G.int_uniform_inclusive 0 100_000
 
 let () =
+  (* The low-level parallel generation path intentionally does not run the
+     sequential path's correlated-value mutation. Pin that semantic boundary
+     so documentation cannot drift back to claiming equivalent generation. *)
+  let one_case ~domains =
+    Tape_engine.run (G.both wide wide) ~seed:1 ~count:1 ~domains
+      ~test:(fun (a, b) -> a <> b)
+  in
+  Test_support.report "sequential one-case run tries a correlated variant"
+    (match one_case ~domains:1 with
+     | Tape_engine.Failed _ -> true
+     | Tape_engine.Passed _ -> false)
+    "expected a correlated equality failure";
+  Test_support.report "pooled one-case run is base-case search only"
+    (match one_case ~domains:4 with
+     | Tape_engine.Passed _ -> true
+     | Tape_engine.Failed _ -> false)
+    "expected no correlated variant in the pool";
   (* The hardest measured case: two independent draws from a 100_000-wide
      range must coincide. Floor of 90% leaves room for seed variation
      while catching the mutation being lost entirely. *)

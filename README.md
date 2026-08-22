@@ -286,9 +286,13 @@ sorted event table. The mutable engine representation is not part of this API.
 `Tape_engine.run` is the lower-level entry point; `?domains:n`
 evaluates generation cases and shrink proposals in parallel (worker
 pool). Accepted-edit sequences and results are identical to the
-sequential engine (lowest-index acceptance); with a pool the engine
-evaluates batches speculatively, so attempt COUNTS can exceed the
-sequential run's. This low-level parallel path is currently search-only:
+sequential engine during shrinking when starting from the same failure
+(lowest-index acceptance). Generation is not equivalent: the sequential path
+also tries correlated-value mutations, while the pool evaluates only its base
+cases, so a failure reachable only through that mutation can be found at
+`~domains:1` and missed at `~domains:n`. The pool also evaluates batches
+speculatively, so shrink attempt counts can exceed the sequential run's. This
+low-level parallel path is currently search-only:
 it counts passed and discarded cases and shrink replays, but does not collect
 `event` labels or run health checks, observations, timing, exhaustion detection,
 or correlated-value generation. The ordinary `Tape_test` facade does not expose
